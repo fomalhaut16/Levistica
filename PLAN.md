@@ -383,3 +383,19 @@ GitHubではPR #6のCIがmacOS arm64ランナーの供給不足で取得でき�
 今回の回帰確認では単体28件が成功した。UIの統合実行では9経路中8経路が成功し、復元試験だけがテスト対象の行を見つけられず失敗した（`.local/artifacts/tests.iS5mK2/Results.xcresult`）。対象をタブのタイトルへ修正し、復元試験を単独で再実行して成功した（`.local/artifacts/tests.RKchbe/Results.xcresult`）。この2回で全9経路を確認したもので、統合実行の失敗を成功に書き換えない。途中で出たmacOSの一時的な入力ソース表示は、消えるのを待ってから入力するよう試験側を修正した。戻る後の進む操作も、ボタンが有効になる条件を待つ。計測パーサー12件とスクリプト構文も確認した。
 
 最終差分のReleaseビルドと隔離起動も成功した。署名検証を通り、Releaseのentitlementはapp-sandboxとnetwork.clientだけである。起動確認はプロセスの継続であり、通常プロファイルの受入とは区別する。
+
+### 関連ページとリンクの別タブ表示
+
+次の実装として、Commandクリック・中クリックによる背面タブ、Shift併用時の選択、`target=_blank` と利用者操作の `window.open` を追加した。新しい通常ウィンドウの管理は増やさず、BrowserSessionがタブとPageRuntimeを所有する。元ページとの通信が必要なWebViewも同じタブUIに載せる。幅・高さなどwindowFeaturesの反映はこの段階では行わない。要求元はsourceFrameのsecurityOriginから作り、URLのパスや認証パラメータを表示・ログへ加えない。
+
+[AppleのcreateWebViewWithの仕様](https://developer.apple.com/documentation/webkit/wkuidelegate/webview(_:createwebviewwith:for:windowfeatures:))とローカルSDKのWKUIDelegate.hを照合した。渡されたconfigurationを使って作ったWebViewを返すと、WebKitが元のリクエストを読み込む。この経路でアプリがURLを取り出して別途loadしないため、POST本文やopenerとの関連を失わず、二重送信も避ける。通常リンクの別タブ表示はGETだけを明示的に読み込み、関連ページ生成と分ける。
+
+空の関連ページを先に作るフローでは、その初期段階だけabout:blankを認める。通常のURL入力や既存タブの主フレームへ許可schemeを広げない。外部scheme・file・javascript・dataの新規ページは拒否する。カメラ・マイクの拒否とTLS検証も従来どおりで、User-Agentの偽装や汎用bridgeは追加しない。
+
+[JavaScriptの自動ウィンドウ生成設定](https://developer.apple.com/documentation/webkit/wkpreferences/javascriptcanopenwindowsautomatically)をfalseに固定する。加えて、同じPageRuntimeで直近1秒の生成要求が5件に達したらそれ以上の追加を拒否して通知する。元タブを閉じても子タブは残し、子のclose通知ではその子だけを解放する。関連を含むJavaScript状態は再起動や閉じたタブの再読込では復元しない。疑似ページでのCookie・opener通信・closeの成立を、Googleや大学SSOの対応済みという意味にはしない。
+
+検証では、最初の統合実行で単体32件とUI13経路のうち12経路が通った。空の子ページを開く経路だけが失敗したため、URL未設定の新規contextも初期空ページとして扱うよう修正した。通常の主フレームではnil URLとabout:blankを引き続き拒否する。単独再試験は `.local/artifacts/tests.U2Q0Ao/Results.xcresult` で成功。その後、大量生成と参照解放の試験を加え、最終差分で単体34件・UI14経路の統合実行がすべて成功した（`.local/artifacts/tests.OEsSRZ/Results.xcresult`）。計測パーサー12件とスクリプト構文も確認した。
+
+Releaseのビルド・署名検証・隔離起動も成功した。同じReleaseを使い、認証不要のYouTube公開動画Big Buck Bunnyを消音で再生し、2分34秒まで進むこと、全画面で動画が表示領域に広がること、動画領域へフォーカスした後にEscapeで通常表示へ戻ることを確認した。状態取得が全画面の切替直後に旧ウィンドウを返す場面があり、画像と取得し直した通常ウィンドウのURL欄・タブ一覧でも復帰を確認した。小さいページが左下に残る状態は見られなかった。聴感による音声、他の動画・codec・解像度の保証まで広げない。試験後は動画タブを閉じてWebView 0の空タブへ戻し、通常のログインデータは使っていない。
+
+PR #7とmainのCIは再びmacOSランナーを取得できないまま終了し、未実行だった。今回の作業はPR #7に依存するブランチへ分け、CI成功が確認できるまで統合を保留する。新たな認証・課金・ツール導入は必要なく、現時点でPMの判断を要する製品条件の変更もない。次は資料閲覧に必要なダウンロードとファイル選択を、保存先・取消・失敗・権限の境界とともに実装する。

@@ -3,6 +3,120 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testOneUserActionCannotOpenTwentyRelatedTabs() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/popup-burst", in: app)
+        let button = app.webViews.buttons["Open twenty related pages"]
+        XCTAssertTrue(button.waitForExistence(timeout: 10))
+        button.click()
+        XCTAssertTrue(app.webViews.staticTexts["Burst child"].waitForExistence(timeout: 10))
+        app.typeKey("[", modifierFlags: [.command, .shift])
+        // The newest child is inserted immediately after its opener.
+        XCTAssertTrue(app.webViews.buttons["Open twenty related pages"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["errorMessage"].waitForExistence(timeout: 5))
+        let summary = app.staticTexts["tabLoadSummary"]
+        let text = (summary.value as? String) ?? summary.label
+        let count = try XCTUnwrap(Int(text.prefix(while: { $0.isNumber })))
+        XCTAssertGreaterThan(count, 1)
+        XCTAssertLessThanOrEqual(count, 6)
+        app.terminate()
+    }
+
+    @MainActor
+    func testRelatedPageSharesCookieReturnsMessageAndCloses() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/related", in: app)
+        let draft = app.webViews.textFields["Draft"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        waitForInputIndicator(in: app)
+        draft.click()
+        waitForInputIndicator(in: app)
+        draft.typeText("keep this synthetic draft")
+        app.webViews.buttons["Open related page"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Shared fixture cookie"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み2"].exists)
+        XCTAssertTrue(app.staticTexts["pageOpenerOrigin"].exists)
+        app.webViews.buttons["Send result and close"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Related page completed"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.webViews.textFields["Draft"].value as? String, "keep this synthetic draft")
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].exists)
+        app.webViews.buttons["Open blank related page"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Shared fixture cookie"].waitForExistence(timeout: 10))
+        app.webViews.buttons["Send result and close"].click()
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].waitForExistence(timeout: 10))
+        app.terminate()
+    }
+
+    @MainActor
+    func testCommandClickKeepsTheOpenerAndTargetBlankOpensAnotherTab() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/related", in: app)
+        let link = app.webViews.links["Ordinary link"]
+        XCTAssertTrue(link.waitForExistence(timeout: 10))
+        XCUIElement.perform(withKeyModifiers: .command) { link.click() }
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み2"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.webViews.buttons["Open related page"].exists)
+        app.typeKey("]", modifierFlags: [.command, .shift])
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        app.typeKey("w", modifierFlags: .command)
+        let blankLink = app.webViews.links["New target link"]
+        XCTAssertTrue(blankLink.waitForExistence(timeout: 10))
+        blankLink.click()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み2"].exists)
+        app.typeKey("w", modifierFlags: .command)
+        app.webViews.links["Blocked new target"].click()
+        XCTAssertTrue(app.staticTexts["errorMessage"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].exists)
+        app.terminate()
+    }
+
+    @MainActor
+    func testRelatedPostIsDeliveredOnceAndNotReplayedOnReopen() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/related", in: app)
+        let button = app.webViews.buttons["Submit in related page"]
+        XCTAssertTrue(button.waitForExistence(timeout: 10))
+        button.click()
+        XCTAssertTrue(app.webViews.staticTexts["Popup POST received"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.webViews.staticTexts["POST deliveries: 1"].exists)
+        app.typeKey("w", modifierFlags: .command)
+        app.typeKey("t", modifierFlags: [.command, .shift])
+        XCTAssertTrue(app.staticTexts["送信後のページです。URLを確認してから開いてください。"].exists)
+        XCTAssertEqual(app.webViews.count, 0)
+        app.terminate()
+    }
+
+    @MainActor
+    func testUnsolicitedPopupIsBlocked() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/automatic-popup", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Automatic popup blocked"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].exists)
+        app.terminate()
+    }
+
+    @MainActor
     func testNavigationAndRestart() throws {
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
         XCTAssertTrue(base.hasPrefix("http://127.0.0.1:"), "Run script/test.sh to start the isolated fixture server.")

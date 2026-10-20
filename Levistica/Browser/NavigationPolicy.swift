@@ -16,6 +16,15 @@ enum NavigationPolicy {
         port.map(restrictedPorts.contains) ?? false
     }
 
+    static func allowsNewContext(_ url: URL?) -> Bool {
+        // window.open() may create an empty related page before assigning its URL.
+        isBlankContextURL(url) || allows(url, isMainFrame: true)
+    }
+
+    static func isBlankContextURL(_ url: URL?) -> Bool {
+        url == nil || url?.absoluteString.isEmpty == true || url?.absoluteString == "about:blank"
+    }
+
     static func allows(_ url: URL?, isMainFrame: Bool) -> Bool {
         guard let url, let scheme = url.scheme?.lowercased() else { return false }
         if scheme == "https" || scheme == "http" {

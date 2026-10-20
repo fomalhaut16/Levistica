@@ -11,8 +11,34 @@ import threading
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    popup_posts = 0
+    counter_lock = threading.Lock()
+
     def do_GET(self):
         pages = {
+            "/related": '''<title>Related page opener</title><h1>Related page opener</h1>
+                <input aria-label="Draft"><p id="result">Waiting for related page</p>
+                <a href="/two">Ordinary link</a>
+                <a href="/two" target="_blank">New target link</a>
+                <a href="levistica-test-native:blocked" target="_blank">Blocked new target</a>
+                <button onclick="child=window.open('/popup-child', 'auth-fixture', 'width=640,height=500')">Open related page</button>
+                <button onclick="child=window.open('', 'blank-fixture'); if(child) child.location.href='/popup-child'">Open blank related page</button>
+                <form action="/popup-post" method="post" target="post-fixture"><input name="draft" value="synthetic"><button>Submit in related page</button></form>
+                <script>let child;
+                document.cookie='levistica_fixture=synthetic; SameSite=Lax; path=/';
+                addEventListener('message', event => {
+                  if(event.origin===location.origin && event.source===child && event.data==='synthetic-complete')
+                    document.getElementById('result').textContent='Related page completed';
+                });</script>''',
+            "/popup-child": '''<title>Related child</title><h1>Related child</h1><p id="cookie"></p>
+                <button onclick="window.opener.postMessage('synthetic-complete', location.origin); window.close()">Send result and close</button>
+                <script>document.getElementById('cookie').textContent = document.cookie.includes('levistica_fixture=synthetic') ? 'Shared fixture cookie' : 'Missing fixture cookie';</script>''',
+            "/automatic-popup": '''<title>Automatic popup fixture</title><p id="state">Waiting</p>
+                <script>setTimeout(() => { const child=window.open('/popup-child','unsolicited-fixture');
+                document.getElementById('state').textContent=child ? 'Automatic popup opened' : 'Automatic popup blocked'; }, 100);</script>''',
+            "/popup-burst": '''<title>Popup burst fixture</title><h1>Popup burst fixture</h1>
+                <button onclick="for(let i=0;i<20;i++) window.open('/burst-child','burst-'+i)">Open twenty related pages</button>''',
+            "/burst-child": '<title>Burst child</title><h1>Burst child</h1>',
             "/tab-state": '<title>State tab</title><h1>State tab</h1><input aria-label="Draft"><p id="loads"></p><script>const n=+(sessionStorage.getItem("loads")||0)+1;sessionStorage.setItem("loads",n);document.getElementById("loads").textContent="Document loads: "+n;</script>',
             "/post-form": '<h1>Post fixture</h1><form action="/submitted" method="post"><input name="draft" value="synthetic"><button>Submit fixture</button></form>',
             "/submitted": '<h1>Unexpected GET replay</h1>',
@@ -35,6 +61,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         self.rfile.read(int(self.headers.get("Content-Length", 0)))
         body = b"<!doctype html><title>Submitted</title><h1>Submission received</h1>"
+        if self.path == "/popup-post":
+            with self.counter_lock:
+                Handler.popup_posts += 1
+                count = Handler.popup_posts
+            body = f"<!doctype html><title>Popup POST</title><h1>Popup POST received</h1><p>POST deliveries: {count}</p>".encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

@@ -6,6 +6,11 @@ import WebKit
 final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     let webView: WKWebView
     var onMetadataChange: (() -> Void)?
+    var onCreatePage: ((WKWebViewConfiguration, String, Bool) -> WKWebView?)?
+    var onOpenLink: ((URLRequest, Bool, String) -> Void)?
+    var onClose: (() -> Void)?
+    private var permitsInitialBlankPage: Bool
+    private var recentPageCreations: [TimeInterval] = []
     private(set) var url: URL?
     private(set) var title = "Levistica"
     private(set) var isLoading = false
@@ -22,9 +27,14 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     @ObservationIgnored private var lastRequest: URLRequest?
     @ObservationIgnored private var activeNavigation: WKNavigation?
 
-    init(dataStore: WKWebsiteDataStore = .default()) {
+    convenience init(dataStore: WKWebsiteDataStore = .default()) {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
+        self.init(configuration: configuration)
+    }
+
+    init(configuration: WKWebViewConfiguration, permitsInitialBlankPage: Bool = false) {
+        self.permitsInitialBlankPage = permitsInitialBlankPage
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.preferences.isElementFullscreenEnabled = true
         webView = WKWebView(frame: .zero, configuration: configuration)
@@ -96,12 +106,16 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func load(_ url: URL) {
+        load(URLRequest(url: url))
+    }
+
+    func load(_ request: URLRequest) {
         invalidateFindResult()
         failure = nil
-        self.url = url
-        lastRequest = URLRequest(url: url)
-        canRetry = true
-        activeNavigation = webView.load(URLRequest(url: url))
+        url = request.url
+        lastRequest = request
+        canRetry = request.httpMethod == "GET"
+        activeNavigation = webView.load(request)
         if activeNavigation == nil {
             failure = "このURLの読み込みを開始できませんでした。URLと接続先を確認してください。"
         }
@@ -129,18 +143,29 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
-        guard action.targetFrame != nil else {
-            failure = "別ウィンドウを開く操作は、まだ対応していません。"
-            decisionHandler(.cancel)
+        if action.targetFrame == nil {
+            let allowed = NavigationPolicy.allowsNewContext(action.request.url)
+            if !allowed { failure = "この種類のリンクは別タブに開けません。" }
+            decisionHandler(allowed ? .allow : .cancel)
             return
         }
         let main = action.targetFrame?.isMainFrame == true
-        guard NavigationPolicy.allows(action.request.url, isMainFrame: main) else {
+        let initialBlank = main && permitsInitialBlankPage && NavigationPolicy.isBlankContextURL(action.request.url)
+        guard initialBlank || NavigationPolicy.allows(action.request.url, isMainFrame: main) else {
             if main { failure = "この種類のリンクは開けません。外部アプリの起動にはまだ対応していません。" }
             decisionHandler(.cancel)
             return
         }
+        if action.navigationType == .linkActivated && action.request.httpMethod == "GET",
+           NavigationPolicy.allows(action.request.url, isMainFrame: true),
+           action.modifierFlags.contains(.command) || action.buttonNumber == 2,
+           let onOpenLink {
+            onOpenLink(action.request, action.modifierFlags.contains(.shift), Self.origin(of: action.sourceFrame))
+            decisionHandler(.cancel)
+            return
+        }
         if main {
+            if !initialBlank { permitsInitialBlankPage = false }
             lastRequest = action.request
             canRetry = action.request.httpMethod == "GET"
             url = action.request.url
@@ -148,6 +173,38 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
             onMetadataChange?()
         }
         decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard NavigationPolicy.allowsNewContext(action.request.url) else {
+            failure = "この種類のリンクは別タブに開けません。"
+            return nil
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        recentPageCreations.removeAll { now - $0 >= 1 }
+        guard recentPageCreations.count < 5 else {
+            failure = "短時間に多くの別タブを開く要求があったため、追加を止めました。"
+            return nil
+        }
+        recentPageCreations.append(now)
+        // WebKit loads the original request, including POST bodies, exactly once.
+        // Do not replace its related configuration or manually replay the request.
+        let background = (action.modifierFlags.contains(.command) || action.buttonNumber == 2)
+            && !action.modifierFlags.contains(.shift)
+        return onCreatePage?(configuration, Self.origin(of: action.sourceFrame), !background)
+    }
+
+    func webViewDidClose(_ webView: WKWebView) { onClose?() }
+
+    private static func origin(of frame: WKFrameInfo) -> String {
+        let origin = frame.securityOrigin
+        guard ["http", "https"].contains(origin.protocol), !origin.host.isEmpty else { return "不明な要求元" }
+        var components = URLComponents()
+        components.scheme = origin.protocol
+        components.host = origin.host
+        if origin.port > 0 { components.port = origin.port }
+        return components.string ?? "不明な要求元"
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse,
