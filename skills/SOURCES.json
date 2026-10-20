@@ -146,7 +146,7 @@
       "adopted_commit": "d5770817d2622e1585b1f7eaebc791a9cb0959c8",
       "method": "Official skill-installer --method git with pinned ref; MIT LICENSE obtained via GitHub API at same ref.",
       "license": "MIT; included LICENSE from pinned commit",
-      "dependencies": "No package, hook, global setting, MCP or external account required. Reference-only skill. swift-testing-pro requires Swift >=6.2; selected Xcode compiler pending license acceptance.",
+      "dependencies": "No package, hook, global setting, MCP or external account required. Reference-only skill. Swift >=6.2 prerequisite satisfied by local Xcode 27.1 / Swift 6.4 and CI Xcode 26.6.",
       "recognition": "SKILL.md and references readable manually. Relative link configured; auto-discovery not yet verified, check next turn.",
       "files": [
         {
@@ -241,7 +241,7 @@
       "adopted_commit": "2d6bba14a3c8bf3694f218b92fffe617c41ae43e",
       "method": "Official installer rejected nested plugin symlink. Retrieved SKILL.md, agents/openai.yaml and all five reference files byte-for-byte via GitHub contents API at pinned ref; nested plugin wrapper and assets omitted; MIT LICENSE included.",
       "license": "MIT; included LICENSE from pinned commit",
-      "dependencies": "No package, hook, global setting, MCP or external account required. Reference-only skill. swift-testing-pro requires Swift >=6.2; selected Xcode compiler pending license acceptance.",
+      "dependencies": "No package, hook, global setting, MCP or external account required. Reference-only skill. Swift >=6.2 prerequisite satisfied by local Xcode 27.1 / Swift 6.4 and CI Xcode 26.6.",
       "recognition": "SKILL.md and references readable manually. Relative link configured; auto-discovery not yet verified, check next turn.",
       "files": [
         {

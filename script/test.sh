@@ -15,7 +15,7 @@ BUILD_ARGS=(-project "$ROOT_DIR/Levistica.xcodeproj" -scheme Levistica
     -configuration Debug -destination 'platform=macOS'
     -derivedDataPath "$ROOT_DIR/.local/DerivedData" -resultBundlePath "$RUN_DIR/Results.xcresult")
 if [[ "$MODE" == --unit ]]; then
-    BUILD_ARGS+=(-only-testing:LevisticaTests)
+    if [[ -z "${TEST_ONLY:-}" ]]; then BUILD_ARGS+=(-only-testing:LevisticaTests); fi
 else
     /usr/bin/openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 -subj /CN=localhost \
         -keyout "$RUN_DIR/key.pem" -out "$RUN_DIR/cert.pem" >"$RUN_DIR/cert.log" 2>&1
@@ -32,11 +32,12 @@ else
     export LEVISTICA_TLS_FIXTURE_URL
     LEVISTICA_FAILURE_FIXTURE_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["failureUrl"])' "$RUN_DIR/fixture.json")"
     export LEVISTICA_FAILURE_FIXTURE_URL
-    if [[ "$MODE" == --ui ]]; then BUILD_ARGS+=(-only-testing:LevisticaUITests); fi
+    if [[ "$MODE" == --ui && -z "${TEST_ONLY:-}" ]]; then BUILD_ARGS+=(-only-testing:LevisticaUITests); fi
 fi
 if [[ -n "${LEVISTICA_FIXTURE_URL:-}" ]]; then BUILD_ARGS+=("LEVISTICA_FIXTURE_URL=$LEVISTICA_FIXTURE_URL"); fi
 if [[ -n "${LEVISTICA_TLS_FIXTURE_URL:-}" ]]; then BUILD_ARGS+=("LEVISTICA_TLS_FIXTURE_URL=$LEVISTICA_TLS_FIXTURE_URL"); fi
 if [[ -n "${LEVISTICA_FAILURE_FIXTURE_URL:-}" ]]; then BUILD_ARGS+=("LEVISTICA_FAILURE_FIXTURE_URL=$LEVISTICA_FAILURE_FIXTURE_URL"); fi
+if [[ -n "${TEST_ONLY:-}" ]]; then BUILD_ARGS+=("-only-testing:$TEST_ONLY"); fi
 echo "Test artifacts: $RUN_DIR"
 if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" test >"$RUN_DIR/xcodebuild.log" 2>&1; then
     tail -n 90 "$RUN_DIR/xcodebuild.log" >&2

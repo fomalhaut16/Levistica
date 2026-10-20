@@ -9,11 +9,8 @@ final class BrowserFlowTests: XCTestCase {
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
         app.launch()
         app.activate()
-        let address = app.textFields["addressField"]
-        XCTAssertTrue(address.waitForExistence(timeout: 10))
-        address.click()
-        address.typeText(base + "/one\n")
-        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 15))
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 15), "Fixture: \(base)\n\(app.debugDescription)")
         app.webViews.links["Blocked native link"].click()
         XCTAssertTrue(app.staticTexts["errorMessage"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].exists)
@@ -38,10 +35,7 @@ final class BrowserFlowTests: XCTestCase {
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
         app.launch()
         app.activate()
-        let address = app.textFields["addressField"]
-        XCTAssertTrue(address.waitForExistence(timeout: 10))
-        address.click()
-        address.typeText("javascript:alert(1)\n")
+        submit("javascript:alert(1)", in: app)
         XCTAssertTrue(app.staticTexts["errorMessage"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.webViews.count, 0)
         app.terminate()
@@ -55,10 +49,7 @@ final class BrowserFlowTests: XCTestCase {
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
         app.launch()
         app.activate()
-        let address = app.textFields["addressField"]
-        XCTAssertTrue(address.waitForExistence(timeout: 10))
-        address.click()
-        address.typeText(url + "/one\n")
+        submit(url + "/one", in: app)
         let error = app.staticTexts["errorMessage"]
         XCTAssertTrue(error.waitForExistence(timeout: 15))
         let message = error.value as? String ?? error.label
@@ -68,7 +59,7 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testConnectionFailureKeepsAddressAndOffersRetry() throws {
+    func testNetworkFailureKeepsAddressAndOffersRetry() throws {
         let url = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FAILURE_FIXTURE_URL"])
         XCTAssertTrue(url.hasPrefix("http://127.0.0.1:"))
         let app = XCUIApplication()
@@ -76,12 +67,23 @@ final class BrowserFlowTests: XCTestCase {
         app.launch()
         app.activate()
         let address = app.textFields["addressField"]
-        XCTAssertTrue(address.waitForExistence(timeout: 10))
-        address.click()
-        address.typeText(url + "/\n")
-        XCTAssertTrue(app.staticTexts["errorMessage"].waitForExistence(timeout: 15))
+        submit(url + "/", in: app)
+        XCTAssertTrue(app.staticTexts["errorMessage"].waitForExistence(timeout: 15), "Disconnected: \(url)\n\(app.debugDescription)")
         XCTAssertEqual(address.value as? String, url + "/")
         XCTAssertTrue(app.buttons["再試行"].exists)
         app.terminate()
+    }
+
+    @MainActor
+    private func submit(_ text: String, in app: XCUIApplication,
+                        file: StaticString = #filePath, line: UInt = #line) {
+        let address = app.textFields["addressField"]
+        XCTAssertTrue(address.waitForExistence(timeout: 10), file: file, line: line)
+        address.click()
+        address.typeKey("a", modifierFlags: .command)
+        address.typeText(text)
+        // Verify the injected text before Return, so a lost key cannot be mistaken for a navigation failure.
+        XCTAssertEqual(address.value as? String, text, file: file, line: line)
+        address.typeKey(.return, modifierFlags: [])
     }
 }
