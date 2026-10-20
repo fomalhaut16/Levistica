@@ -3,7 +3,9 @@
 import http.server
 import json
 import pathlib
+import ssl
 import sys
+import threading
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -24,5 +26,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-pathlib.Path(sys.argv[1]).write_text(json.dumps({"url": f"http://127.0.0.1:{server.server_port}"}))
+tls_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain(sys.argv[2], sys.argv[3])
+tls_server.socket = context.wrap_socket(tls_server.socket, server_side=True)
+threading.Thread(target=tls_server.serve_forever, daemon=True).start()
+pathlib.Path(sys.argv[1]).write_text(json.dumps({
+    "url": f"http://127.0.0.1:{server.server_port}",
+    "tlsUrl": f"https://127.0.0.1:{tls_server.server_port}",
+}))
 server.serve_forever()

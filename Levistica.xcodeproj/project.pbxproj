@@ -45,6 +45,7 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = "nonisolated";
 				SWIFT_STRICT_CONCURRENCY = "complete";
 				SDKROOT = "macosx";
+				ARCHS = "arm64";
 				SWIFT_VERSION = "6.0";
 				SWIFT_APPROACHABLE_CONCURRENCY = "NO";
 				CLANG_ENABLE_OBJC_ARC = "YES";
@@ -78,6 +79,7 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = "nonisolated";
 				SWIFT_STRICT_CONCURRENCY = "complete";
 				SDKROOT = "macosx";
+				ARCHS = "arm64";
 				SWIFT_VERSION = "6.0";
 				SWIFT_APPROACHABLE_CONCURRENCY = "NO";
 				CLANG_ENABLE_OBJC_ARC = "YES";

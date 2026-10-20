@@ -8,6 +8,7 @@ final class BrowserFlowTests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
         app.launch()
+        app.activate()
         let address = app.textFields["addressField"]
         XCTAssertTrue(address.waitForExistence(timeout: 10))
         address.click()
@@ -25,6 +26,7 @@ final class BrowserFlowTests: XCTestCase {
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
         app.launch()
+        app.activate()
         XCTAssertTrue(app.textFields["addressField"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.webViews.count, 0, "M1 starts blank and must not allocate a WebView.")
         app.terminate()
@@ -35,12 +37,49 @@ final class BrowserFlowTests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
         app.launch()
+        app.activate()
         let address = app.textFields["addressField"]
         XCTAssertTrue(address.waitForExistence(timeout: 10))
         address.click()
         address.typeText("javascript:alert(1)\n")
         XCTAssertTrue(app.staticTexts["errorMessage"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.webViews.count, 0)
+        app.terminate()
+    }
+
+    @MainActor
+    func testUntrustedCertificateIsRejected() throws {
+        let url = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_TLS_FIXTURE_URL"])
+        XCTAssertTrue(url.hasPrefix("https://127.0.0.1:"))
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        let address = app.textFields["addressField"]
+        XCTAssertTrue(address.waitForExistence(timeout: 10))
+        address.click()
+        address.typeText(url + "/one\n")
+        let error = app.staticTexts["errorMessage"]
+        XCTAssertTrue(error.waitForExistence(timeout: 15))
+        let message = error.value as? String ?? error.label
+        XCTAssertTrue(message.contains("安全な接続"), message)
+        XCTAssertFalse(app.webViews.staticTexts["Levistica fixture one"].exists)
+        app.terminate()
+    }
+
+    @MainActor
+    func testConnectionFailureKeepsAddressAndOffersRetry() {
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        let address = app.textFields["addressField"]
+        XCTAssertTrue(address.waitForExistence(timeout: 10))
+        address.click()
+        address.typeText("http://127.0.0.1:1/\n")
+        XCTAssertTrue(app.staticTexts["errorMessage"].waitForExistence(timeout: 15))
+        XCTAssertEqual(address.value as? String, "http://127.0.0.1:1/")
+        XCTAssertTrue(app.buttons["再試行"].exists)
         app.terminate()
     }
 }

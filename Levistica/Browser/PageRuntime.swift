@@ -43,7 +43,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     private func updateSnapshot() {
-        if failure == nil, let current = webView.url { url = current }
+        if failure == nil, let current = webView.url, current.absoluteString != "about:blank" { url = current }
         title = webView.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Levistica"
         isLoading = webView.isLoading
         canGoBack = webView.canGoBack
@@ -57,6 +57,9 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         lastRequest = URLRequest(url: url)
         canRetry = true
         activeNavigation = webView.load(URLRequest(url: url))
+        if activeNavigation == nil {
+            failure = "このURLの読み込みを開始できませんでした。URLと接続先を確認してください。"
+        }
     }
 
     func back() { failure = nil; activeNavigation = webView.goBack() }
@@ -126,8 +129,10 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
                  withError error: Error) { navigationFailed(navigation, error: error) }
 
     private func navigationFailed(_ navigation: WKNavigation?, error: Error) {
-        guard navigation === activeNavigation else { return }
+        if let navigation, let activeNavigation, navigation !== activeNavigation { return }
         let error = error as NSError
+        if let failedURL = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL,
+           let requestedURL = lastRequest?.url, failedURL != requestedURL { return }
         guard !(error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled) else { return }
         updateSnapshot()
         url = lastRequest?.url ?? url

@@ -15,7 +15,9 @@ BUILD_ARGS=(-project "$ROOT_DIR/Levistica.xcodeproj" -scheme Levistica
 if [[ "$MODE" == --unit ]]; then
     BUILD_ARGS+=(-only-testing:LevisticaTests)
 else
-    python3 "$ROOT_DIR/script/test-fixture.py" "$RUN_DIR/fixture.json" >"$RUN_DIR/fixture.log" 2>&1 &
+    /usr/bin/openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 -subj /CN=localhost \
+        -keyout "$RUN_DIR/key.pem" -out "$RUN_DIR/cert.pem" >"$RUN_DIR/cert.log" 2>&1
+    python3 "$ROOT_DIR/script/test-fixture.py" "$RUN_DIR/fixture.json" "$RUN_DIR/cert.pem" "$RUN_DIR/key.pem" >"$RUN_DIR/fixture.log" 2>&1 &
     FIXTURE_PID=$!
     for ((attempt=0; attempt<100; attempt++)); do
         [[ -f "$RUN_DIR/fixture.json" ]] && break
@@ -24,9 +26,12 @@ else
     done
     LEVISTICA_FIXTURE_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["url"])' "$RUN_DIR/fixture.json")"
     export LEVISTICA_FIXTURE_URL
+    LEVISTICA_TLS_FIXTURE_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tlsUrl"])' "$RUN_DIR/fixture.json")"
+    export LEVISTICA_TLS_FIXTURE_URL
     if [[ "$MODE" == --ui ]]; then BUILD_ARGS+=(-only-testing:LevisticaUITests); fi
 fi
 if [[ -n "${LEVISTICA_FIXTURE_URL:-}" ]]; then BUILD_ARGS+=("LEVISTICA_FIXTURE_URL=$LEVISTICA_FIXTURE_URL"); fi
+if [[ -n "${LEVISTICA_TLS_FIXTURE_URL:-}" ]]; then BUILD_ARGS+=("LEVISTICA_TLS_FIXTURE_URL=$LEVISTICA_TLS_FIXTURE_URL"); fi
 echo "Test artifacts: $RUN_DIR"
 if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" test >"$RUN_DIR/xcodebuild.log" 2>&1; then
     tail -n 90 "$RUN_DIR/xcodebuild.log" >&2

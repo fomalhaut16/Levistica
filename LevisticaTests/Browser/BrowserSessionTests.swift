@@ -31,4 +31,13 @@ struct BrowserSessionTests {
         #expect(runtime == nil)
         #expect(view == nil)
     }
+
+    @Test func processTerminationIsReportedWithoutReplacingThePage() {
+        let page = PageRuntime(dataStore: .nonPersistent())
+        let view = page.webView
+        page.webViewWebContentProcessDidTerminate(view)
+        #expect(page.failure != nil)
+        #expect(page.webView === view)
+        #expect(page.isLoading == false)
+    }
 }

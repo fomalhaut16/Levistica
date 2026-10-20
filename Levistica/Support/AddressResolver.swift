@@ -29,8 +29,8 @@ enum AddressResolver {
         let hasScheme = text.range(of: #"^[A-Za-z][A-Za-z0-9+.-]*:"#,
                                   options: .regularExpression) != nil
         if hasScheme && !hasHostPort {
-            guard let scheme = URLComponents(string: text)?.scheme?.lowercased(),
-                  ["http", "https"].contains(scheme) else { throw AddressError.unsupportedScheme }
+            let scheme = String(text.prefix { $0 != ":" }).lowercased()
+            guard ["http", "https"].contains(scheme) else { throw AddressError.unsupportedScheme }
             return try webURL(text)
         }
 
