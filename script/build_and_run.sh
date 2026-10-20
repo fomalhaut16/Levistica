@@ -46,7 +46,11 @@ case "$MODE" in
     --build) exit 0 ;;
     --debug) exec /usr/bin/xcrun lldb -- "$APP_BINARY" ;;
 esac
-/usr/bin/open -n "$APP_BUNDLE"
+if [[ "${LEVISTICA_EPHEMERAL:-0}" == 1 ]]; then
+    /usr/bin/open -n --env LEVISTICA_EPHEMERAL=1 "$APP_BUNDLE"
+else
+    /usr/bin/open -n "$APP_BUNDLE"
+fi
 case "$MODE" in
     --verify)
         sleep 2

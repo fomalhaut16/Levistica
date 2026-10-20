@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Read-only, local-only footprint snapshots for this checkout's Release app.
+"""Read-only, local-only footprint snapshots for Release Levistica or isolated Chrome.
 
-Attribution uses `launchctl print pid/PID` services, not PPID or process-name guesses.
+Attribution verifies PID-domain XPC; Chrome also verifies descendants and its isolated Crashpad.
 launchctl's human-readable format is not a stable API: parsing fails closed.
 Raw launchctl output can contain environment values and is never saved or printed.
 """
@@ -28,11 +28,11 @@ def run(args, timeout=30):
                                    env={**os.environ, "LC_ALL": "C"})
 
 
-def parse_domain(text, pid, app):
+def parse_domain(text, pid, app, creator_name="Levistica"):
     if not text.startswith(f"pid/{pid} = {{\n"):
         raise ValueError("Unexpected PID domain")
     origin = re.search(r"^\toriginator = (.+)$", text, re.M)
-    creator = re.search(r"^\tcreator = Levistica\[(\d+)\]$", text, re.M)
+    creator = re.search(rf"^\tcreator = {re.escape(creator_name)}\[(\d+)\]$", text, re.M)
     if not origin or pathlib.Path(origin[1]).resolve() != pathlib.Path(app).resolve():
         raise ValueError("Domain originator is not this checkout's app")
     if not creator or int(creator[1]) != pid:
@@ -65,8 +65,31 @@ def identities(pids):
     return result
 
 
-def snapshot(pid):
-    services = parse_domain(run(["/bin/launchctl", "print", f"pid/{pid}"]), pid, APP)
+def has_path_argument(text, flag, path):
+    return re.search(r"(?<!\S)" + re.escape(flag + str(path)) + r"(?=\s|$)", text) is not None
+
+
+def descendants(rows, root):
+    """Follow explicit parent relationships; never include namesake processes."""
+    result = {root}
+    while True:
+        expanded = result | {pid for pid, parent in rows if parent in result}
+        if expanded == result:
+            return result
+        result = expanded
+
+
+def live_descendants(rows, root):
+    members = descendants([(pid, parent) for pid, parent, state in rows], root)
+    exited = {pid for pid, parent, state in rows if state.startswith("Z") and pid in members}
+    if root in exited:
+        raise ValueError("Chrome root has exited")
+    return members - exited, exited
+
+
+def snapshot(pid, app=APP, binary=BINARY, chrome_profile=None):
+    creator = "Google Chrome" if chrome_profile else "Levistica"
+    services = parse_domain(run(["/bin/launchctl", "print", f"pid/{pid}"]), pid, app, creator)
     for service in services:
         text = run(["/bin/launchctl", "print", f"pid/{pid}/{service['service']}"])
         if not re.search(rf"^\tdomain = pid/{pid}(?:\s|$)", text, re.M):
@@ -75,10 +98,35 @@ def snapshot(pid):
         if not actual or int(actual[1]) != service["pid"]:
             raise ValueError("Service PID changed during attribution")
     process_ids = sorted({pid, *(s["pid"] for s in services)})
+    exited = set()
+    if chrome_profile:
+        root_args = run(["/bin/ps", "-p", str(pid), "-o", "args="])
+        if not has_path_argument(root_args, "--user-data-dir=", chrome_profile):
+            raise ValueError("Chrome root does not use the isolated profile")
+        rows = []
+        detached = []
+        for line in run(["/bin/ps", "-axo", "pid=,ppid=,stat=,comm="]).splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) != 4:
+                raise ValueError("Unrecognized process table")
+            child, parent = map(int, fields[:2])
+            rows.append((child, parent, fields[2]))
+            if not fields[2].startswith("Z") and fields[3].startswith(str(app) + "/") and fields[3].endswith("/chrome_crashpad_handler"):
+                args = run(["/bin/ps", "-p", str(child), "-o", "args="])
+                if has_path_argument(args, "--database=", chrome_profile / "Crashpad"):
+                    detached.append(child)
+        children, exited = live_descendants(rows, pid)
+        child_identity = identities(sorted(children))
+        unexpected = [item["executable"] for item in child_identity.values()
+                      if not item["executable"].startswith(str(app) + "/")]
+        if unexpected:
+            raise ValueError("Unexpected Chrome descendant executable: " + repr(unexpected))
+        process_ids = sorted(set(process_ids) | children | set(detached))
     identity = identities(process_ids)
-    if pathlib.Path(identity[pid]["executable"]).resolve() != BINARY.resolve():
+    if pathlib.Path(identity[pid]["executable"]).resolve() != binary.resolve():
         raise ValueError("PID no longer refers to this checkout's Release app")
-    return {"services": sorted(services, key=lambda s: s["service"]), "identities": identity}
+    return {"services": sorted(services, key=lambda s: s["service"]), "identities": identity,
+            "exited_descendant_pids": sorted(exited)}
 
 
 def metrics(document, expected):
@@ -95,14 +143,17 @@ def metrics(document, expected):
     return values, missing
 
 
-def find_app():
+def find_app(binary=BINARY, chrome_profile=None):
     matches = []
     for row in run(["/bin/ps", "-axo", "pid=,comm="]).splitlines():
         fields = row.strip().split(None, 1)
-        if len(fields) == 2 and fields[1] == str(BINARY):
-            matches.append(int(fields[0]))
+        if len(fields) == 2 and fields[1] == str(binary):
+            pid = int(fields[0])
+            if chrome_profile and not has_path_argument(run(["/bin/ps", "-p", str(pid), "-o", "args="]), "--user-data-dir=", chrome_profile):
+                continue
+            matches.append(pid)
     if len(matches) != 1:
-        raise ValueError("Start exactly one Release app via CONFIGURATION=Release ./script/build_and_run.sh")
+        raise ValueError("Start exactly one matching app (Release Levistica, or Chrome with the isolated profile)")
     return matches[0]
 
 
@@ -119,6 +170,9 @@ def role(pid, root_pid, services):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ready-file", type=pathlib.Path, help="Optional synthetic fixture state; wait 60s after readiness")
+    parser.add_argument("--browser", choices=["levistica", "chrome"], default="levistica")
+    parser.add_argument("--chrome-profile", type=pathlib.Path)
     parser.add_argument("--label", required=True, help="Non-private state label, never a URL")
     parser.add_argument("--loaded-pages", type=int, choices=[0, 1], required=True)
     parser.add_argument("--samples", type=int, default=3)
@@ -128,47 +182,80 @@ def main():
         parser.error("Use a short lowercase label without URLs or private data")
     if not 1 <= args.samples <= 10 or not 0 <= args.interval <= 60:
         parser.error("samples must be 1..10; interval must be 0..60 seconds")
-    pid = find_app()
+    app, binary, profile = APP, BINARY, None
+    if args.browser == "chrome":
+        if not args.chrome_profile:
+            parser.error("Chrome requires an isolated --chrome-profile")
+        profile = args.chrome_profile.resolve()
+        if not profile.is_relative_to(ROOT / ".local") or not profile.is_dir():
+            parser.error("The isolated Chrome profile must exist inside this checkout's .local")
+        app = pathlib.Path("/Applications/Google Chrome.app")
+        binary = app / "Contents/MacOS/Google Chrome"
+    elif args.chrome_profile:
+        parser.error("--chrome-profile requires --browser chrome")
+    fixture = None
+    if args.ready_file:
+        fixture = json.loads(args.ready_file.read_text())
+        ready = fixture.get("ready_monotonic")
+        viewport = fixture.get("viewport", {})
+        if not ready or viewport.get("sections") != 240 or viewport.get("visibility") != "visible":
+            parser.error("Fixture must report a complete, visible document")
+        remaining = ready + 60 - time.monotonic()
+        if remaining > 0:
+            print(f"Waiting {remaining:.1f}s after fixture readiness", flush=True)
+            time.sleep(remaining)
+    pid = find_app(binary, profile)
     output_parent = ROOT / ".local/artifacts/memory"
     output_parent.mkdir(parents=True, exist_ok=True)
     output = pathlib.Path(tempfile.mkdtemp(prefix=args.label + ".", dir=output_parent))
     record = {
-        "schema": 1, "label": args.label, "loaded_pages": args.loaded_pages,
-        "pid": pid, "source_head_at_sampling": run(["git", "rev-parse", "HEAD"]).strip(),
-        "binary_sha256": hashlib.sha256(BINARY.read_bytes()).hexdigest(),
+        "schema": 1, "label": args.label, "fixture": fixture, "loaded_pages": args.loaded_pages,
+        "browser": args.browser, "pid": pid, "source_head_at_sampling": run(["git", "rev-parse", "HEAD"]).strip(),
+        "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "worktree_dirty": bool(run(["git", "status", "--porcelain", "--untracked-files=no"]).strip()),
         "os_version": run(["/usr/bin/sw_vers", "-productVersion"]).strip(),
         "os_build": run(["/usr/bin/sw_vers", "-buildVersion"]).strip(),
         "architecture": run(["/usr/bin/uname", "-m"]).strip(),
-        "scope": "UI plus verified running XPC services in this app's PID domain",
+        "scope": "UI plus verified PID-domain XPC; Chrome also includes descendants and profile-matched Crashpad",
         "limits": ["Shared memory can be charged to multiple processes; sum is not exclusive RAM.",
                    "Shared system services outside this PID domain are excluded.",
                    "This snapshot tool alone does not establish comparison conditions or a performance target.",
                    "A single WKWebView can retain multiple WebContent processes, including cached or prewarmed pages."],
         "samples": [],
     }
-    with (APP / "Contents/Info.plist").open("rb") as file:
+    with (app / "Contents/Info.plist").open("rb") as file:
         info = plistlib.load(file)
     record["bundle"] = {key: info.get(key) for key in (
         "CFBundleIdentifier", "CFBundleVersion", "CFBundleShortVersionString",
         "DTXcodeBuild", "DTSDKName", "LSMinimumSystemVersion")}
+    record["power_source"] = run(["/usr/bin/pmset", "-g", "batt"]).splitlines()[0]
+    record["system_before"] = {
+        "swap": run(["/usr/sbin/sysctl", "vm.swapusage"]).strip(),
+        "memory_pressure_level": run(["/usr/sbin/sysctl", "-n", "kern.memorystatus_vm_pressure_level"]).strip(),
+        "vm_stat": run(["/usr/bin/vm_stat"]),
+    }
     for index in range(args.samples):
         sample = {"time_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(), "valid": False}
         try:
-            before = snapshot(pid)
+            if args.ready_file and json.loads(args.ready_file.read_text()) != fixture:
+                raise ValueError("Fixture changed after readiness")
+            before = snapshot(pid, app, binary, profile)
             pids = sorted(before["identities"])
             raw = output / f"footprint-{index + 1}.json"
             # The standard tool accepts explicit positional PID lists. Never query all processes.
             run(["/usr/bin/footprint", "-f", "bytes", "-j", str(raw), *map(str, pids)])
             document = json.loads(raw.read_text())
             values, missing = metrics(document, pids)
-            after = snapshot(pid)
+            after = snapshot(pid, app, binary, profile)
+            if args.ready_file and json.loads(args.ready_file.read_text()) != fixture:
+                raise ValueError("Fixture changed during measurement")
+            sample["exited_descendant_pids"] = before["exited_descendant_pids"]
             sample["identity_stable"] = before == after
             sample["missing_pids"] = missing
             sample["tool_errors"] = document.get("errors", [])
             sample["tool_warnings"] = document.get("warnings", [])
             sample["processes"] = [
-                {"pid": p, "role": role(p, pid, before["services"]), **before["identities"][p],
+                {"pid": p, "role": ("Chrome-child-or-helper" if profile and p != pid else role(p, pid, before["services"])), **before["identities"][p],
                  "services": [s["service"] for s in before["services"] if s["pid"] == p],
                  "physical_footprint_bytes": values.get(p)} for p in pids
             ]
