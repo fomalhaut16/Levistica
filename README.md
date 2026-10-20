@@ -43,7 +43,7 @@ Runボタンは同じ `script/build_and_run.sh` を呼びます。アプリと�
 
 このMacではルート直下の `research-reference` から調査資料を参照できます。元資料は変更しません。このリンクは他プロジェクトへの絶対パスを指すためGit対象外で、別のMacへは引き継がれません。
 
-GitHub Actionsはmacos-26／Xcode 26.6でReleaseビルドと単体試験を実行します。UI試験は実機で確認し、CIの合格と区別します。ローカルのXcode 27.1とCIの版は別に記録し、環境更新を製品仕様の変更と混同しません。
+GitHub Actionsはmacos-26／Xcode 26.6でReleaseビルド、単体試験、計測パーサーの試験を実行します。UI試験は実機で確認し、CIの合格と区別します。ローカルのXcode 27.1とCIの版は別に記録し、環境更新を製品仕様の変更と混同しません。
 
 メモリの取得経路は次で確認できます。Releaseを起動し、表示状態を整えてから実行します。`--loaded-pages` は空画面なら0、1ページを表示中なら1です。
 
@@ -51,4 +51,16 @@ GitHub Actionsはmacos-26／Xcode 26.6でReleaseビルドと単体試験を実�
 python3 script/measure-memory.py --label one-page --loaded-pages 1 --samples 3 --interval 5
 ```
 
-このツールはアプリのPIDドメインで実行中のXPCサービスを照合し、前後でPID・開始時刻・実行パスが変わった値を集計から外します。取得失敗を0にせず、`phys_footprint` を記録します。合計は共有メモリが重複し得るため専有RAMとは呼びません。URL、Cookie、フォーム値、launchctlの環境値を記録せず、結果は `.local/artifacts/memory/` に置きます。短い連続測定だけでは、Chromeとの比較や受入目標は決めません。
+このツールはアプリのPIDドメインで実行中のXPCサービスを照合し、前後でPID・開始時刻・実行パスが変わった値を集計から外します。取得失敗を0にせず、`phys_footprint` を記録します。合計は共有メモリが重複し得るため専有RAMとは呼びません。閲覧先のURL、Cookie、フォーム値、launchctlの環境値を記録せず、結果は `.local/artifacts/memory/` に置きます。短い連続測定だけでは、Chromeとの比較や受入目標は決めません。
+
+固定fixtureのloopback URLと表示領域は比較条件として記録します。固定ページの比較には、次のサーバーを別のターミナルで起動します。表示されたローカルURLを使い、測定後はCtrl+Cで終了します。
+
+```sh
+python3 script/memory-fixture.py .local/artifacts/comparison/fixture-state.json
+```
+
+Levisticaを隔離データで起動する場合は、`LEVISTICA_EPHEMERAL=1 CONFIGURATION=Release ./script/build_and_run.sh` を使います。この起動ではログイン情報を終了後に残しません。通常起動の保存データは使いません。
+
+比較用Chromeは `python3 script/comparison-chrome.py start --url 表示されたローカルURL` で、新しいプロジェクト内プロファイルに起動します。返されたprofileを指定して、計測コマンドに `--browser chrome --chrome-profile プロファイルの絶対パス` を加えます。両ブラウザとも `--ready-file .local/artifacts/comparison/fixture-state.json` を加えると、ページの準備完了から60秒待って測ります。一度に測るのは片方だけにし、その間は別ページを読み込まないでください。
+
+Chromeの試行後は `python3 script/comparison-chrome.py stop --profile プロファイルの絶対パス` で、作成済みの比較用インスタンスだけを終了できます。専用プロファイル、実行パス、PID、開始時刻を照合し、合わなければ終了しません。通常利用のChromeは対象外です。起動用のフラグはChromiumの[ユーザーデータディレクトリの公式資料](https://chromium.googlesource.com/chromium/src/+/main/docs/user_data_dir.md)に従っています。

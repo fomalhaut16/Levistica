@@ -46,11 +46,11 @@ case "$MODE" in
     --build) exit 0 ;;
     --debug) exec /usr/bin/xcrun lldb -- "$APP_BINARY" ;;
 esac
-LAUNCH_ENV=()
 if [[ "${LEVISTICA_EPHEMERAL:-0}" == 1 ]]; then
-    LAUNCH_ENV=(--env LEVISTICA_EPHEMERAL=1)
+    /usr/bin/open -n --env LEVISTICA_EPHEMERAL=1 "$APP_BUNDLE"
+else
+    /usr/bin/open -n "$APP_BUNDLE"
 fi
-/usr/bin/open -n "${LAUNCH_ENV[@]}" "$APP_BUNDLE"
 case "$MODE" in
     --verify)
         sleep 2

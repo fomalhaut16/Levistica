@@ -314,3 +314,36 @@ M1全体は継続中。次は代表3サイトの表示・動画・認証の成�
 これらは比較前の診断値で、個別PIDのphysical footprintの和には共有領域の重複があり得る。システム共用サービスや別PIDドメインの値は含めず、ブラウザの専有RAMとは扱わない。動画の再生・停止・全画面に伴う保持と計測時刻の影響が残る。Chrome/Safari比、広告やcache条件をそろえたエンジン効率、100タブの目標へ外挿しない。結果は `.local/artifacts/memory/empty-window.7z9qt38y/` と `youtube-paused-after-fullscreen.vk51hqaq/`。空画面の軽さだけでは動画時のメモリ最優先という目的を達成したことにならず、WebContent・GPUを含む比較を続ける。
 
 検証はSwift Testing 13件、UI 5経路の統合実行（`.local/artifacts/tests.QKudL1/Results.xcresult`）、計測パーサー8件。パーサー試験は無関係なservice stubsの除外、未起動の除外、別checkout/creatorの拒否、形式変更、単位・指標の取り違え、値の欠落や余分なPIDの拒否を含み、CIにも追加した。M1の残りは本人操作のログイン、IME、OSによるWebContent終了、同条件の比較と目標提案である。
+
+### M1の固定文書による初期比較
+
+2026-10-21、`script/memory-fixture.py` の固定文書を、正式Releaseと通常配布のChrome 155.0.8059.85で比較した。209,779byte、240節のHTML・CSS・短い準備完了通知だけで、外部画像・動画・広告はない。本文のSHA-256は `88eefd6976126b202579c5d5c88f19f63ad5cf3df786c23d51b89d65db97c941`。同じloopback URL、Cache-Control: no-store、読込済み1ページ、表示領域1100×683ポイント、DPR 2でそろえた。load後の2回のrequestAnimationFrameと240節の存在を確認し、その通知から60秒後に計測を始めた。表示開始の確認であり、CPUやメモリの完全な定常状態を保証する通知ではない。
+
+Levisticaは `LEVISTICA_EPHEMERAL=1` を明示した起動でnonPersistentデータストアを使う。この指定をReleaseでも使えるようにし、正式な起動スクリプトからopenの `--env` で渡す。指定がない通常起動は従来のdefaultデータストアを使う。Chromeは試行ごとに `.local/artifacts/comparison/` 内へ新規user-data-dirを作り、no-first-runとno-default-browser-checkを指定した。ログイン・拡張・個人の履歴は使わず、通常プロファイルは変更しない。Chromeの起動方法は[Chromium公式資料](https://chromium.googlesource.com/chromium/src/+/main/docs/user_data_dir.md)に基づく。OSや共用ライブラリのキャッシュを消す操作はしていないため、OS全体でのcold-cache比較とは呼ばない。
+
+順序はL1→C1→C2→L2→L3→C3。各試行は対象アプリを新しく起動し、前の比較用インスタンスを終了する。同一起動内では5秒間隔で3標本を試みた。Chromeの停止は専用プロファイル・作成記録・実行パス・PID・開始時刻を照合した本体PIDだけにSIGTERMを送り、名前一致での終了やforce-killはしない。通常利用のChromeと他アプリは終了しない。試行前のプロセス帰属確認に使った空画面の専用Chromeも、各試行と別に存在した。その他の利用中アプリとともに周辺条件として残し、合計には混ぜていない。
+
+ChromeではPIDドメインのXPCに加え、本体からの親子関係をたどった実行中の子プロセスを含める。親が1になったCrashpadは実行パスと専用プロファイルのdatabase引数が一致するときだけ加える。実行パスの照合ではzombieの `<defunct>` が見つかり、当初の試験は無効になった。修正後はOSのプロセス状態で終了済みPIDを別記し、実行中の集合から外す。取得途中に終了したプロセスやPID集合の変化は引き続き標本を無効にする。終了済みの除外、別ブラウザの子プロセスの混入防止、似たプロファイルパスの拒否を含め、パーサー試験は12件となった。
+
+比較対象の指標は前節と同じく、帰属を確認した集合のphysical footprintの和である。共用領域の重複や集合外の共用サービスの限界も同じで、専有RAMやエンジン単体の効率とは扱わない。Chrome側の子プロセスの個別役割はまだ一括表示であり、GPU等の詳細分類は次の分析で補う。OS 26.6（25G72）、arm64、32GiB、バッテリー駆動で実施。電源種別、swap、vm_stat、memory pressureの生のlevelを試行ごとにローカル記録した。
+
+| 試行 | 有効標本／試行標本 | 有効標本の中央値MiB | 有効標本の範囲MiB |
+|---|---|---|---|
+| L1 | 3/3 | 144.47 | 144.46〜144.50 |
+| L2 | 3/3 | 151.75 | 151.74〜151.75 |
+| L3 | 3/3 | 117.63 | 117.63〜117.66 |
+| C1 | 3/3 | 330.04 | 313.73〜331.52 |
+| C2 | 2/3 | 335.32 | 333.71〜336.93 |
+| C3 | 1/3 | 330.59 | 330.59〜330.59 |
+
+Levisticaの試行ごとの中央値は117.63〜151.75MiBで、中央の試行は144.47MiBだった。ChromeはC1の3標本が有効、C2は2標本、C3は1標本だけが有効だった。C3の中央値と範囲は1標本からの値で、ばらつきの評価には使えない。Chrome側では取得中のプロセス終了と前後の集合変化により、合計3/9標本を無効にした。表は有効な状態で観測できた暫定値であり、欠測がなく比較できた3組とは扱わない。最初のC1とL1でも、差はこの文書とこの条件に限る。全体の削減率・統計的優位・製品目標の合格はまだ示さない。
+
+Levisticaの試行間では、WebContentの標本が約32.6MiBと約59.0MiB、UIが約47.5〜55.5MiBだった。GCや圧縮等の原因は特定していない。同じバイナリでも起動し直した値が変わるため、同一起動の3標本だけを独立した3試行の代わりにしない。3試行のReleaseバイナリSHA-256はすべて `2f0fd25ea6c3` で始まる同一値だった。各結果の完全なSHA-256・HEAD・dirty状態と固定文書のhashをローカルJSONへ残した。
+
+証拠は `.local/artifacts/memory/` の `fixed-document-l1.v9468igx`、`fixed-document-l2.xokqa006`、`fixed-document-l3.jztiy3mg`、`fixed-document-c1-final.q4a7ark0`、`fixed-document-c2.fj5o9zfp`、`fixed-document-c3.rdt7tf22`。zombie判定修正前の失敗試験と、120秒以降に取得した帰属確認用の値はこの表に混ぜていない。fixtureの準備通知ファイルを読み込み中に更新すると空のJSONが見えることもあったため、保存を一時ファイルからの置換へ修正した。
+
+次の比較では両ブラウザについて60秒・120秒の時点をあらかじめそろえ、各標本の前後の実行中集合と終了済み集合の差も残して、Chromeの欠測理由を絞る。終了済み集合だけの変化と、実行中集合の変化を分けて再評価する。欠測のない再測定と動画の同条件比較を済ませるまで、静止文書だけからRAM上限やChrome比を承認済みにしない。M1のログイン・音声・IME・OSによるWebContent終了も残っているため、M2の機能拡大にはまだ進まない。
+
+今回のアプリ変更後もSwift Testing 13件とUI 5件の統合試験が成功（`.local/artifacts/tests.P7dvO6/Results.xcresult`）。パーサー12件、Python構文検査、起動スクリプトの構文検査、Releaseの起動、sandboxとnetwork.clientだけのRelease entitlementも確認した。追加ツールの依存はPython標準ライブラリとmacOS既存コマンドで、新たなスキル・サービス・課金・グローバル設定は追加していない。
+
+通常起動への戻しでは、macOS標準Bashのset -uで空配列が未定義扱いになる起動スクリプトの問題も見つかった。openの呼び出しを明示的な分岐に修正し、隔離指定あり・なしのRelease起動を続けて確認した。比較専用Chromeと帰属確認用の空画面Chrome、fixtureサーバーは終了し、事前に確認した通常利用のChrome本体PIDが引き続き起動していることも確認した。

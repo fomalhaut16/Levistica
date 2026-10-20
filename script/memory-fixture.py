@@ -25,7 +25,9 @@ state = {'document_sha256': hashlib.sha256(body).hexdigest(), 'document_bytes': 
 
 
 def save():
-    output.write_text(json.dumps(state, indent=2) + '\n')
+    temporary = output.with_suffix('.tmp')
+    temporary.write_text(json.dumps(state, indent=2) + '\n')
+    temporary.replace(output)
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
