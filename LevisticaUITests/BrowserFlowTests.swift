@@ -3,6 +3,173 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testQuittingCancelsAnUnfinishedTransfer() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let (app, folder) = try fileTestApplication()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        app.launch()
+        app.activate()
+        submit(base + "/files", in: app)
+        let link = app.webViews.links["Slow download"]
+        XCTAssertTrue(link.waitForExistence(timeout: 10))
+        link.click()
+        let save = app.windows.buttons["保存"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
+        save.click()
+        XCTAssertTrue(app.staticTexts["ダウンロード中"].waitForExistence(timeout: 10))
+        app.typeKey("q", modifierFlags: .command)
+        let quit = try nativeDialogButton("転送を取り消して終了", in: app)
+        quit.click()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("fixture-download.txt").path))
+    }
+
+    @MainActor
+    func testCancellingTransferPreservesExistingFileAndQuitCanBeCancelled() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let (app, folder) = try fileTestApplication()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let target = folder.appendingPathComponent("fixture-download.txt")
+        try Data("keep the original".utf8).write(to: target)
+        app.launch()
+        app.activate()
+        submit(base + "/files", in: app)
+        let link = app.webViews.links["Slow download"]
+        XCTAssertTrue(link.waitForExistence(timeout: 10))
+        link.click()
+        let save = app.windows.buttons["保存"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
+        save.click()
+        let replaceEnglish = app.buttons["Replace"].firstMatch
+        let replaceJapanese = app.buttons["置き換える"].firstMatch
+        XCTAssertTrue(replaceEnglish.waitForExistence(timeout: 3) || replaceJapanese.waitForExistence(timeout: 3), app.debugDescription)
+        let replacements = [app.dialogs.buttons["Replace"].firstMatch, app.sheets.buttons["Replace"].firstMatch,
+                            app.windows.buttons["Replace"].firstMatch, app.dialogs.buttons["置き換える"].firstMatch,
+                            app.sheets.buttons["置き換える"].firstMatch, app.windows.buttons["置き換える"].firstMatch]
+        let replace = try XCTUnwrap(replacements.first(where: { $0.exists }), app.debugDescription)
+        replace.click()
+        XCTAssertTrue(app.staticTexts["ダウンロード中"].waitForExistence(timeout: 10), app.debugDescription)
+        attachWindowImage(app, name: "active-download")
+        XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "keep the original")
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["ダウンロード中です。転送を取り消すか、完了してからタブを閉じてください。"].waitForExistence(timeout: 5))
+        app.typeKey("q", modifierFlags: .command)
+        let stay = try nativeDialogButton("アプリに戻る", in: app)
+        stay.click()
+        XCTAssertEqual(app.state, .runningForeground)
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "cancelDownload-")).firstMatch.click()
+        XCTAssertTrue(app.staticTexts["取り消しました"].waitForExistence(timeout: 10))
+        XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "keep the original")
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
+    @MainActor
+    func testFailedTransferDoesNotCreateACompletedFile() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let (app, folder) = try fileTestApplication()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        app.launch()
+        app.activate()
+        submit(base + "/files", in: app)
+        let link = app.webViews.links["Failed download"]
+        XCTAssertTrue(link.waitForExistence(timeout: 10))
+        link.click()
+        let save = app.windows.buttons["保存"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
+        save.click()
+        XCTAssertTrue(app.staticTexts["ダウンロードに失敗しました。元のリンクから試してください。"].waitForExistence(timeout: 15))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("fixture-download.txt").path))
+        app.terminate()
+    }
+
+    @MainActor
+    func testDownloadingDoesNotEnableReloadOfAPostResponse() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let (app, folder) = try fileTestApplication()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        app.launch()
+        app.activate()
+        submit(base + "/post-form", in: app)
+        let submitButton = app.webViews.buttons["Submit fixture"]
+        XCTAssertTrue(submitButton.waitForExistence(timeout: 10))
+        submitButton.click()
+        let link = app.webViews.links["Download fixture"]
+        XCTAssertTrue(link.waitForExistence(timeout: 10))
+        link.click()
+        XCTAssertTrue(app.windows.buttons["保存"].firstMatch.waitForExistence(timeout: 10))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(app.staticTexts["取り消しました"].waitForExistence(timeout: 10))
+        app.buttons["reloadButton"].click()
+        XCTAssertTrue(app.staticTexts["送信内容の重複を避けるため、このページは自動で再送しません。URLを入力して開き直してください。"].waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
+    @MainActor
+    private func nativeDialogButton(_ title: String, in app: XCUIApplication) throws -> XCUIElement {
+        XCTAssertTrue(app.buttons[title].firstMatch.waitForExistence(timeout: 5))
+        let candidates = [app.dialogs.buttons[title].firstMatch, app.sheets.buttons[title].firstMatch,
+                          app.windows.buttons[title].firstMatch]
+        return try XCTUnwrap(candidates.first(where: { $0.exists }), app.debugDescription)
+    }
+
+    @MainActor
+    private func fileTestApplication() throws -> (XCUIApplication, URL) {
+        let id = UUID()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("LevisticaFiles-" + id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_FILE_TEST_ID"] = id.uuidString
+        app.launchEnvironment["LEVISTICA_FILE_TEST_DIRECTORY"] = folder.path
+        return (app, folder)
+    }
+
+    @MainActor
+    func testDownloadAndSelectOnlyTheSyntheticUpload() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let id = UUID()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("LevisticaFiles-" + id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let upload = folder.appendingPathComponent("synthetic-upload.txt")
+        try Data("levistica synthetic upload\n".utf8).write(to: upload)
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_FILE_TEST_ID"] = id.uuidString
+        app.launchEnvironment["LEVISTICA_FILE_TEST_DIRECTORY"] = folder.path
+        app.launch()
+        app.activate()
+        submit(base + "/files", in: app)
+        let link = app.webViews.links["Download fixture"]
+        XCTAssertTrue(link.waitForExistence(timeout: 10))
+        link.click()
+        let save = app.windows.buttons["保存"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 10), app.windows.debugDescription)
+        save.click()
+        XCTAssertTrue(app.staticTexts["保存しました"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["errorMessage"].exists)
+        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/files")
+        let downloaded = folder.appendingPathComponent("fixture-download.txt")
+        XCTAssertEqual(try String(contentsOf: downloaded, encoding: .utf8), "levistica synthetic download\n")
+        XCTAssertNotNil(try downloaded.resourceValues(forKeys: [.quarantinePropertiesKey]).quarantineProperties)
+        let input = app.webViews.buttons["Attachment"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.click()
+        let choose = app.sheets.buttons["選択"].firstMatch
+        XCTAssertTrue(choose.waitForExistence(timeout: 10))
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(upload.path)
+        app.typeKey(.return, modifierFlags: [])
+        choose.click()
+        XCTAssertTrue(app.webViews.staticTexts["synthetic-upload.txt"].waitForExistence(timeout: 10))
+        app.webViews.buttons["Upload synthetic fixture"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Synthetic upload received"].waitForExistence(timeout: 10))
+        attachWindowImage(app, name: "download-and-upload-complete")
+        app.terminate()
+    }
+
+    @MainActor
     func testOneUserActionCannotOpenTwentyRelatedTabs() throws {
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
         let app = XCUIApplication()

@@ -4,10 +4,13 @@ struct BrowserRootView: View {
     @Bindable var session: BrowserSession
 
     var body: some View {
-        HSplitView {
-            TabSidebar(session: session)
-            tabContent(session.activeTab)
-                .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
+        VStack(spacing: 0) {
+            HSplitView {
+                TabSidebar(session: session)
+                tabContent(session.activeTab)
+                    .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
+            }
+            DownloadShelf(manager: session.downloads)
         }
         .frame(minWidth: 800, minHeight: 420)
     }

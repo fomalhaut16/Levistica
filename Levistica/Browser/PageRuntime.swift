@@ -9,6 +9,8 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     var onCreatePage: ((WKWebViewConfiguration, String, Bool) -> WKWebView?)?
     var onOpenLink: ((URLRequest, Bool, String) -> Void)?
     var onClose: (() -> Void)?
+    var onDownload: ((WKDownload) -> Void)?
+    @ObservationIgnored private var filePanel: NSOpenPanel?
     private var permitsInitialBlankPage: Bool
     private var recentPageCreations: [TimeInterval] = []
     private(set) var url: URL?
@@ -25,6 +27,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     private(set) var canRetry = false
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var lastRequest: URLRequest?
+    @ObservationIgnored private var committedRequest: URLRequest?
     @ObservationIgnored private var activeNavigation: WKNavigation?
 
     convenience init(dataStore: WKWebsiteDataStore = .default()) {
@@ -150,10 +153,18 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
             return
         }
         let main = action.targetFrame?.isMainFrame == true
+        if action.shouldPerformDownload && action.request.url?.scheme == "blob" {
+            decisionHandler(.download)
+            return
+        }
         let initialBlank = main && permitsInitialBlankPage && NavigationPolicy.isBlankContextURL(action.request.url)
         guard initialBlank || NavigationPolicy.allows(action.request.url, isMainFrame: main) else {
             if main { failure = "この種類のリンクは開けません。外部アプリの起動にはまだ対応していません。" }
             decisionHandler(.cancel)
+            return
+        }
+        if action.shouldPerformDownload {
+            decisionHandler(.download)
             return
         }
         if action.navigationType == .linkActivated && action.request.httpMethod == "GET",
@@ -209,13 +220,51 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse,
                  decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {
-        guard response.canShowMIMEType else {
-            failure = "このファイルのダウンロードには、まだ対応していません。"
-            decisionHandler(.cancel)
-            return
-        }
-        decisionHandler(.allow)
+        let disposition = (response.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")?
+            .split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased()
+        decisionHandler(!response.canShowMIMEType || disposition == "attachment" ? .download : .allow)
     }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        acceptDownload(download)
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        acceptDownload(download)
+    }
+
+    private func acceptDownload(_ download: WKDownload) {
+        // A download did not replace the displayed document. Preserve its POST guard
+        // and never persist the download URL as a page to reopen on the next launch.
+        lastRequest = committedRequest
+        canRetry = committedRequest?.httpMethod == "GET"
+        url = webView.url.flatMap { $0.absoluteString == "about:blank" ? nil : $0 }
+        isLoading = false
+        failure = nil
+        onMetadataChange?()
+        if let onDownload { onDownload(download) } else { download.cancel { _ in } }
+    }
+
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor ([URL]?) -> Void) {
+        guard filePanel == nil, let window = webView.window else { completionHandler(nil); return }
+        let panel = NSOpenPanel()
+        filePanel = panel
+        panel.title = parameters.allowsDirectories ? "サイトへ渡すフォルダを選択" : "サイトへ渡すファイルを選択"
+        panel.prompt = "選択"
+        if let directory = FilePanelDefaults.testDirectory { panel.directoryURL = directory }
+        panel.message = "要求元: " + Self.origin(of: frame)
+            + (parameters.allowsDirectories ? "\n選択したフォルダ内のファイルもサイトへ渡します。" : "")
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.canChooseFiles = !parameters.allowsDirectories
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.beginSheetModal(for: window) { [weak self] result in
+            self?.filePanel = nil
+            completionHandler(result == .OK ? panel.urls : nil)
+        }
+    }
+
+    func cancelFileSelection() { filePanel?.cancel(nil) }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         activeNavigation = navigation
@@ -224,7 +273,11 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { updateSnapshot() }
-    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { invalidateFindResult(); updateSnapshot() }
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        committedRequest = lastRequest
+        invalidateFindResult()
+        updateSnapshot()
+    }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
                  withError error: Error) { navigationFailed(navigation, error: error) }
