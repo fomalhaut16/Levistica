@@ -93,6 +93,80 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testTabSwitchKeepsDraftAndCloseCanBeReopened() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/tab-state", in: app)
+        let draft = app.webViews.textFields["Draft"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        draft.click()
+        draft.typeText("keep this draft")
+        app.typeKey("t", modifierFlags: .command)
+        XCTAssertEqual(app.webViews.count, 0)
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        app.typeKey("[", modifierFlags: [.command, .shift])
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        XCTAssertEqual(draft.value as? String, "keep this draft")
+        XCTAssertTrue(app.webViews.staticTexts["Document loads: 1"].exists)
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        app.typeKey("t", modifierFlags: [.command, .shift])
+        XCTAssertTrue(app.webViews.textFields["Draft"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.webViews.textFields["Draft"].value as? String, "")
+        app.terminate()
+    }
+
+    @MainActor
+    func testPageFindReportsMatchesAndNoMatches() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        app.typeKey("f", modifierFlags: .command)
+        let find = app.textFields["pageFindField"]
+        XCTAssertTrue(find.waitForExistence(timeout: 5))
+        find.click()
+        find.typeText("fixture")
+        app.buttons["findNextButton"].click()
+        XCTAssertTrue(app.staticTexts["見つかりました"].waitForExistence(timeout: 5))
+        find.click()
+        find.typeKey("a", modifierFlags: .command)
+        find.typeText("zzzz-no-match-zzzz")
+        app.buttons["findNextButton"].click()
+        XCTAssertTrue(app.staticTexts["見つかりません"].waitForExistence(timeout: 5))
+        app.buttons["closeFindButton"].click()
+        XCTAssertFalse(find.exists)
+        app.terminate()
+    }
+
+    @MainActor
+    func testReopeningPostDoesNotAutomaticallyLoadIt() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/post-form", in: app)
+        let button = app.webViews.buttons["Submit fixture"]
+        XCTAssertTrue(button.waitForExistence(timeout: 10))
+        button.click()
+        XCTAssertTrue(app.webViews.staticTexts["Submission received"].waitForExistence(timeout: 10))
+        app.typeKey("w", modifierFlags: .command)
+        app.typeKey("t", modifierFlags: [.command, .shift])
+        XCTAssertEqual(app.webViews.count, 0)
+        XCTAssertTrue(app.staticTexts["送信後のページです。URLを確認してから開いてください。"].exists)
+        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/submitted")
+        app.terminate()
+    }
+
+    @MainActor
     private func submit(_ text: String, in app: XCUIApplication,
                         file: StaticString = #filePath, line: UInt = #line) {
         let address = app.textFields["addressField"]

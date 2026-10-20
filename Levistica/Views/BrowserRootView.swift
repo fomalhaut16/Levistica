@@ -2,51 +2,44 @@ import SwiftUI
 
 struct BrowserRootView: View {
     @Bindable var session: BrowserSession
-    @State private var address = ""
-    @FocusState private var addressFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Button("戻る", systemImage: "chevron.left") { session.page?.back() }
-                    .disabled(session.page?.canGoBack != true).accessibilityIdentifier("backButton")
-                Button("進む", systemImage: "chevron.right") { session.page?.forward() }
-                    .disabled(session.page?.canGoForward != true).accessibilityIdentifier("forwardButton")
-                TextField("URLまたは検索語を入力", text: $address)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($addressFocused)
-                    .accessibilityIdentifier("addressField")
-                    .onSubmit {
-                        if session.navigate(address) { addressFocused = false }
-                    }
-                if session.page?.isLoading == true {
-                    Button("停止", systemImage: "xmark") { session.page?.stop() }
-                        .accessibilityIdentifier("stopButton")
-                } else {
-                    Button("再読み込み", systemImage: "arrow.clockwise") { session.page?.reload() }
-                        .disabled(session.page == nil).accessibilityIdentifier("reloadButton")
-                }
-            }
-            .labelStyle(.iconOnly)
-            .padding(10)
+        HSplitView {
+            TabSidebar(session: session)
+            tabContent(session.activeTab)
+                .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(minWidth: 800, minHeight: 420)
+    }
 
-            if let message = session.inputError ?? session.page?.failure {
+    private func tabContent(_ tab: BrowserTab) -> some View {
+        VStack(spacing: 0) {
+            BrowserNavigationBar(session: session, tab: tab).id(tab.id)
+            if let message = tab.inputError ?? tab.page?.failure {
                 HStack {
                     Text(message).textSelection(.enabled).accessibilityIdentifier("errorMessage")
                     Spacer()
-                    if session.inputError == nil && session.page?.canRetry == true {
-                        Button("再試行") { session.page?.retry() }
+                    if tab.inputError == nil && tab.page?.canRetry == true {
+                        Button("再試行") { tab.page?.retry() }
                     }
-                    Button("閉じる") {
-                        session.inputError = nil
-                        session.page?.dismissFailure()
-                    }
+                    Button("閉じる") { tab.inputError = nil; tab.page?.dismissFailure() }
                 }
                 .padding(10).background(.regularMaterial)
             }
+            if let notice = tab.restorationNotice {
+                HStack {
+                    Text(notice).font(.caption)
+                    Spacer()
+                    Button("閉じる") { tab.restorationNotice = nil }
+                }.padding(8)
+            }
+            if let page = tab.page, tab.isFindBarVisible {
+                PageFindBar(session: session, tab: tab, page: page).id(tab.id)
+            }
             Divider()
-            if let page = session.page {
-                WebPageView(page: page).accessibilityIdentifier("pageView")
+            if let page = tab.page {
+                // Each runtime supplies its own existing NSView; rendering never starts a load.
+                WebPageView(page: page).id(tab.id).accessibilityIdentifier("pageView")
                     .overlay(alignment: .top) {
                         if page.isLoading {
                             ProgressView(value: page.progress).progressViewStyle(.linear)
@@ -57,15 +50,6 @@ struct BrowserRootView: View {
                                        description: Text("URLを入力してページを開きます。"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }
-        .frame(minWidth: 640, minHeight: 420)
-        .onAppear { addressFocused = true }
-        .onChange(of: session.addressFocusRequest) { addressFocused = true }
-        .onChange(of: session.page?.url) { _, url in
-            if !addressFocused { address = url?.absoluteString ?? "" }
-        }
-        .onChange(of: addressFocused) { _, focused in
-            if !focused, session.inputError == nil { address = session.page?.url?.absoluteString ?? address }
         }
     }
 }
