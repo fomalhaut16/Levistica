@@ -79,6 +79,14 @@ def descendants(rows, root):
         result = expanded
 
 
+def live_descendants(rows, root):
+    members = descendants([(pid, parent) for pid, parent, state in rows], root)
+    exited = {pid for pid, parent, state in rows if state.startswith("Z") and pid in members}
+    if root in exited:
+        raise ValueError("Chrome root has exited")
+    return members - exited, exited
+
+
 def snapshot(pid, app=APP, binary=BINARY, chrome_profile=None):
     creator = "Google Chrome" if chrome_profile else "Levistica"
     services = parse_domain(run(["/bin/launchctl", "print", f"pid/{pid}"]), pid, app, creator)
@@ -90,31 +98,35 @@ def snapshot(pid, app=APP, binary=BINARY, chrome_profile=None):
         if not actual or int(actual[1]) != service["pid"]:
             raise ValueError("Service PID changed during attribution")
     process_ids = sorted({pid, *(s["pid"] for s in services)})
+    exited = set()
     if chrome_profile:
         root_args = run(["/bin/ps", "-p", str(pid), "-o", "args="])
         if not has_path_argument(root_args, "--user-data-dir=", chrome_profile):
             raise ValueError("Chrome root does not use the isolated profile")
         rows = []
         detached = []
-        for line in run(["/bin/ps", "-axo", "pid=,ppid=,comm="]).splitlines():
-            fields = line.strip().split(None, 2)
-            if len(fields) != 3:
+        for line in run(["/bin/ps", "-axo", "pid=,ppid=,stat=,comm="]).splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) != 4:
                 raise ValueError("Unrecognized process table")
             child, parent = map(int, fields[:2])
-            rows.append((child, parent))
-            if fields[2].startswith(str(app) + "/") and fields[2].endswith("/chrome_crashpad_handler"):
+            rows.append((child, parent, fields[2]))
+            if not fields[2].startswith("Z") and fields[3].startswith(str(app) + "/") and fields[3].endswith("/chrome_crashpad_handler"):
                 args = run(["/bin/ps", "-p", str(child), "-o", "args="])
                 if has_path_argument(args, "--database=", chrome_profile / "Crashpad"):
                     detached.append(child)
-        children = descendants(rows, pid)
+        children, exited = live_descendants(rows, pid)
         child_identity = identities(sorted(children))
-        if any(not item["executable"].startswith(str(app) + "/") for item in child_identity.values()):
-            raise ValueError("Unexpected executable in Chrome's descendant tree")
+        unexpected = [item["executable"] for item in child_identity.values()
+                      if not item["executable"].startswith(str(app) + "/")]
+        if unexpected:
+            raise ValueError("Unexpected Chrome descendant executable: " + repr(unexpected))
         process_ids = sorted(set(process_ids) | children | set(detached))
     identity = identities(process_ids)
     if pathlib.Path(identity[pid]["executable"]).resolve() != binary.resolve():
         raise ValueError("PID no longer refers to this checkout's Release app")
-    return {"services": sorted(services, key=lambda s: s["service"]), "identities": identity}
+    return {"services": sorted(services, key=lambda s: s["service"]), "identities": identity,
+            "exited_descendant_pids": sorted(exited)}
 
 
 def metrics(document, expected):
@@ -237,6 +249,7 @@ def main():
             after = snapshot(pid, app, binary, profile)
             if args.ready_file and json.loads(args.ready_file.read_text()) != fixture:
                 raise ValueError("Fixture changed during measurement")
+            sample["exited_descendant_pids"] = before["exited_descendant_pids"]
             sample["identity_stable"] = before == after
             sample["missing_pids"] = missing
             sample["tool_errors"] = document.get("errors", [])

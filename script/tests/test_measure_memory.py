@@ -39,6 +39,14 @@ class AttributionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             measure.parse_domain(self.domain().replace("200 -", "unexpected 200 -"), 100, "/tmp/Levistica.app")
 
+    def test_exited_chrome_children_are_explicitly_separated(self):
+        rows = [(10, 1, "S"), (11, 10, "Z"), (12, 10, "S"), (20, 1, "S")]
+        live, exited = measure.live_descendants(rows, 10)
+        self.assertEqual(live, {10, 12})
+        self.assertEqual(exited, {11})
+        with self.assertRaises(ValueError):
+            measure.live_descendants([(10, 1, "Z")], 10)
+
     def test_profile_argument_does_not_match_a_similar_directory(self):
         self.assertTrue(measure.has_path_argument("chrome --user-data-dir=/tmp/test --x", "--user-data-dir=", "/tmp/test"))
         self.assertFalse(measure.has_path_argument("chrome --user-data-dir=/tmp/test-other", "--user-data-dir=", "/tmp/test"))
