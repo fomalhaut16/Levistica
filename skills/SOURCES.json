@@ -1,0 +1,124 @@
+{
+  "acquired_on": "2026-10-20",
+  "upstream": "https://github.com/openai/plugins/tree/main/plugins/build-macos-apps",
+  "adopted_plugin_version": "0.1.4",
+  "commit": null,
+  "license": "MIT as declared in upstream .codex-plugin/plugin.json; standalone license text not located",
+  "method": "Official installer failed DNS resolution; browser tool text/plain source retrieved with all numbered lines present, then written to project skills. Text rendering/newline normalization may differ from upstream bytes. Hashes identify installed copies, not upstream blobs.",
+  "recognition": "Manual SKILL.md loading verified; automatic discovery not verified because .agents is read-only. No global changes.",
+  "files": [
+    {
+      "path": "skills/build-run-debug/SKILL.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/build-run-debug/SKILL.md",
+      "sha256": "4e1623150ab5aa037b64dbd287858d1cf72b35c0e7e5fbaf340448ce19bb075d"
+    },
+    {
+      "path": "skills/build-run-debug/references/run-button-bootstrap.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/build-run-debug/references/run-button-bootstrap.md",
+      "sha256": "666a13475eb6b4f998c5313984446972e2d845155d3f9b7d53cc00a0955cbc41"
+    },
+    {
+      "path": "skills/swiftui-patterns/SKILL.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/swiftui-patterns/SKILL.md",
+      "sha256": "9c242b62dcad1370cc055e476885860314c1a0f84737374d93e3e24cec305159"
+    },
+    {
+      "path": "skills/swiftui-patterns/references/commands-menus.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/swiftui-patterns/references/commands-menus.md",
+      "sha256": "6b2fbdc897a5d6f5f8c671ca638ac5232bea81ac988ae425ffc737d0ed164013"
+    },
+    {
+      "path": "skills/swiftui-patterns/references/components-index.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/swiftui-patterns/references/components-index.md",
+      "sha256": "41359fbeabf308d5c86036b2394c2cab24544dc52a93bf73066ba70f24e69bc1"
+    },
+    {
+      "path": "skills/swiftui-patterns/references/menu-bar-extra.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/swiftui-patterns/references/menu-bar-extra.md",
+      "sha256": "b6c5ad53453adc9c200864af4520fba39c6a8316bc6a6bca2be8f4d5c213c012"
+    },
+    {
+      "path": "skills/swiftui-patterns/references/settings.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/swiftui-patterns/references/settings.md",
+      "sha256": "77b1f462031b44b9c4c3b0595a6f53b6f088f1051c36d1a8b08db4530143a0e7"
+    },
+    {
+      "path": "skills/swiftui-patterns/references/split-inspectors.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/swiftui-patterns/references/split-inspectors.md",
+      "sha256": "e424fb43b9746a20244e6fb2d20ebc6e1826eaf48f7bafbea440932d390a81ea"
+    },
+    {
+      "path": "skills/swiftui-patterns/references/windowing.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/swiftui-patterns/references/windowing.md",
+      "sha256": "23e30b44fda42ef350ba878c47db4258b70056345cde85ccb8b47de4716f39ea"
+    },
+    {
+      "path": "skills/appkit-interop/SKILL.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/appkit-interop/SKILL.md",
+      "sha256": "0c743aa8f0c98d11b3cab702b9b4df5aa21175a22fc9ff6cf3092f92f7a533c9"
+    },
+    {
+      "path": "skills/appkit-interop/references/drag-drop-pasteboard.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/appkit-interop/references/drag-drop-pasteboard.md",
+      "sha256": "e852ffcc14cd3a739b5c1f161c846b054d91ea959b824df844e07e500b45c4aa"
+    },
+    {
+      "path": "skills/appkit-interop/references/representables.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/appkit-interop/references/representables.md",
+      "sha256": "d306d35492b0304e44ffb4953d4b1099de66361c7db48a4d734ea0c731b0d4cc"
+    },
+    {
+      "path": "skills/appkit-interop/references/responder-menus.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/appkit-interop/references/responder-menus.md",
+      "sha256": "ba301c757103b651bd8404419a9f51a79b2d733770f1cb9c965d31a4af9b6829"
+    },
+    {
+      "path": "skills/appkit-interop/references/window-panels.md",
+      "source": "https://raw.githubusercontent.com/openai/plugins/main/plugins/build-macos-apps/skills/appkit-interop/references/window-panels.md",
+      "sha256": "c71d6a6e4d658943b9d6528c97fae3b18532c20eeca554567482509e6ba9155a"
+    }
+  ],
+  "additional_skills": [
+    {
+      "name": "imozuru",
+      "source": "https://github.com/MaryCache/imozuru",
+      "adopted_commit": "4f8fec7 (existing .installed-from marker; not independently refetched)",
+      "method": "Project-local copy of existing installation; each copied file verified byte-for-byte against source. Original installation unchanged.",
+      "license": "MIT; included skills/imozuru/LICENSE",
+      "files": [
+        {
+          "path": "skills/imozuru/.installed-from",
+          "sha256": "5075b317b74eada33c86980da06a367fbc6fd5ea0fd5fb98c919188fb1a454c9"
+        },
+        {
+          "path": "skills/imozuru/LICENSE",
+          "sha256": "6cb8cc064f163d233449e415d0faa33758d315c05dc724354a0c149eeb167342"
+        },
+        {
+          "path": "skills/imozuru/SKILL.md",
+          "sha256": "80b5481c7587bce4fca6956f2d5468182fed851de66eda5a6a5fde95c6b9a39b"
+        },
+        {
+          "path": "skills/imozuru/references/theory.md",
+          "sha256": "b96892de5dde66e2bc9f99b7b21ff119625ba4f285e8b5b0ef3a76095523d02a"
+        },
+        {
+          "path": "skills/imozuru/scripts/chain.py",
+          "sha256": "224ce4eef4c4e4aed8092648f2858fbd1f8f727fb3ca2d97c6397bc01acb6fb4"
+        },
+        {
+          "path": "skills/imozuru/scripts/fetch.py",
+          "sha256": "3cc1b173a92054da1a40498e05661dfcaa7cab5e91edc27c8d2ac0d981d8d306"
+        },
+        {
+          "path": "skills/imozuru/scripts/report.py",
+          "sha256": "d084ca3d887e83e66955be6dacc5e0920fc925325b26ce3bb7d9df5d546a8267"
+        },
+        {
+          "path": "skills/imozuru/scripts/watch.py",
+          "sha256": "fd5c102683069450850929082959dbb201feb61b34eb4a058e4b331bb129c397"
+        }
+      ]
+    }
+  ]
+}

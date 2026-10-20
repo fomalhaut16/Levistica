@@ -1,0 +1,16 @@
+# Local browser data, measurements, and private test artifacts
+.local/
+research/
+
+# Build artifacts
+.build/
+DerivedData/
+dist/
+build/
+*.xcuserstate
+xcuserdata/
+
+# Temporary tooling files
+.DS_Store
+__pycache__/
+*.pyc
