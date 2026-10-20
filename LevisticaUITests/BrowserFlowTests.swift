@@ -75,6 +75,24 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testFullscreenCanEnterAndExit() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/fullscreen", in: app)
+        let enter = app.webViews.buttons["Enter fullscreen"]
+        XCTAssertTrue(enter.waitForExistence(timeout: 10))
+        enter.click()
+        XCTAssertTrue(app.webViews.staticTexts["fullscreen active"].waitForExistence(timeout: 10))
+        app.webViews.buttons["Exit fullscreen"].click()
+        XCTAssertTrue(app.webViews.staticTexts["windowed"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields["addressField"].exists)
+        app.terminate()
+    }
+
+    @MainActor
     private func submit(_ text: String, in app: XCUIApplication,
                         file: StaticString = #filePath, line: UInt = #line) {
         let address = app.textFields["addressField"]

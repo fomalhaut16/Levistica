@@ -15,6 +15,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pages = {
             "/one": '<h1>Levistica fixture one</h1><a href="/two">Second page</a><a href="levistica-test-native:blocked">Blocked native link</a>',
             "/two": '<h1>Levistica fixture two</h1><a href="/one">First page</a><input aria-label="Draft">',
+            "/fullscreen": '''<h1>Fullscreen fixture</h1><p id="state">windowed</p>
+                <button onclick="document.documentElement.requestFullscreen()">Enter fullscreen</button>
+                <button onclick="document.exitFullscreen()">Exit fullscreen</button>
+                <script>document.addEventListener('fullscreenchange', () => {
+                  document.getElementById('state').textContent = document.fullscreenElement ? 'fullscreen active' : 'windowed';
+                });</script>''',
         }
         body = ("<!doctype html><meta charset=utf-8>" + pages.get(self.path, "Not found")).encode()
         self.send_response(200 if self.path in pages else 404)

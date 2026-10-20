@@ -94,7 +94,7 @@ SQLiteはシステムのSQLite3を使い、初期に外部DBフレームワー�
 | interactionState | 保存原文・公開headerではmacOS 12から、履歴・現在ページ・スクロール・フォーム等を対象とする。Any?を無条件にData/Codableと仮定せず、休眠時の実装方式を先に検証する |
 | cameraCaptureState/microphoneCaptureState | 手元headerでmacOS 12からの公開APIと確認。任意の音声・PiP・画面共有・入力をこれだけで完全に検知したとは扱わない |
 | WKProcessPool | 複数poolの作成・利用が無効という非推奨理由を保存原文で確認。メモリを減らす設定として採用しない。サイト分離を弱めない |
-| WKWebExtensionController | 保存したDocCのavailabilityはmacOS 15.4。現SDK14.4には前提を満たさない。Control Panel for Twitterの検証時に採用SDKで確認する。Chrome拡張全互換やSafari版の直接流用は保証しない |
+| WKWebExtensionController | 保存したDocCのavailabilityはmacOS 15.4。初回確認時のSDK14.4では前提を満たさなかった。現在の採用SDKは27.0だが、拡張APIは未実装・未検証。Control Panel for Twitterの検証時に採用SDKで確認する。Chrome拡張全互換やSafari版の直接流用は保証しない |
 | 認証 | サイトログイン、nativeアプリ自身のOAuth、他アプリからのASWebAuthenticationSession要求を分ける。任意RP向けpasskey権限は組織アカウントのAccount Holder申請という制約があり、個人利用でも自動取得できるとは扱わない |
 
 アプリ自身のApp Sandboxとnetwork.clientを基本にする。ネットワークサーバ、Full Disk Access、Accessibility、画面収録はブラウザの基本閲覧には要求しない。ファイルはNSOpenPanel/NSSavePanelと利用者の選択範囲へ限定し、継続が必要なアクセスだけsecurity-scoped bookmarkを検討する。アップロード・保存・再起動後の再アクセスはsandbox下で試す。
@@ -105,7 +105,7 @@ URLバーは信頼UIで実際の遷移先とhostを示し、ホストを省略�
 
 ## メモリ目標を決め、検証する手順
 
-アプリがない現時点では、RAM上限やSafari比を実測値として書けない。目標を決める期限はM1完了後・M2の機能拡大前とし、結果とともにPMへ具体値を提案する。M3まで数値目標を未定のまま放置しない。
+アプリの初期診断値は取得できたが、同条件のブラウザ比較は未実施で、RAM上限やSafari比の合否はまだ決められない。目標を決める期限はM1完了後・M2の機能拡大前とし、結果とともにPMへ具体値を提案する。M3まで数値目標を未定のまま放置しない。
 
 1. M1のReleaseで空画面、1ページ、少数の同じページの基準を取る。Chromeは通常配布版、Safariは参考値とする。使う機種・OS・browser/WebKit版・commit・SDK・署名・電源・他アプリを記録する。
 2. 隔離プロファイルで同一URL・同一操作・同じloaded数、キャッシュcold/warm、ログイン、広告ブロック、拡張有無をそろえる。既存Chromeの個人プロファイルを変更しない。実サイトの広告や通信の揺れと固定fixtureの結果は分ける。
@@ -295,3 +295,22 @@ Swiftは6モード・strict complete・既定のactor isolationはnonisolated・
 最終のローカル統合結果は `.local/artifacts/tests.rbaJO6/Results.xcresult`。途中で試験用の待ち受けないsocketが即時拒否を返さず、約60秒のタイムアウトになることも確認した。最終fixtureは接続後即時に切断する方式とし、キー入力はURL文字列を確認してからReturnを送る。試験で見つかった不正HTTPS URLのエラー分類と禁止ポートの無案内を修正済み。試験中に別アプリChromeのクラッシュ記録が一件あったが、関連は未確認で、アプリ起動・停止の対象にはしていない。
 
 M1全体は継続中。次は代表3サイトの表示・動画・認証の成立性、WebKitプロセスの帰属を含む初期計測、IME・故障時の残項目を確認し、M2前にメモリ・速度の具体目標をPMへ提案する。最初の閲覧経路が動いたことを、日常利用やメモリ削減の合格に読み替えない。
+
+### M1の公開サイト・動画・計測経路の確認
+
+2026-10-20、正式Releaseのguest状態でYouTubeのホームと公開動画、Xの公開トップ、Discordのログインフォームを表示した。YouTubeはBlender公式のBig Buck Bunny（動画ID `aqz-KE-bpKQ`）で、再生時間が2分42秒まで進むことと一時停止を確認。WKPreferencesの `isElementFullscreenEnabled` は公開SDKで既定NOと確認し、YESにした。YouTubeの全画面ボタンが現れ、実際の全画面表示とEscapeによる通常画面への復帰も確認した。タイトルに4Kとあっても、実際の選択解像度・codecを測った意味にはしない。音量UIは確認したが、聴感による音声の確認はまだ必要。
+
+本人のアカウントでのログイン、再起動後のログイン継続、Xの投稿、Discordの会話・添付は未確認。認証・passkey・SSOの成立を、フォームが表示できたことだけで合格にしない。パスワード・認証コードはチャットやログへ出さず、必要な試験は本人がアプリ内で操作する。Google/Xの認証用URLなど、画面から得たセッション由来の値は文書へ保存しない。確認は必要なボタン名・フォーム名と利用者の結果報告に絞る。
+
+計測用に `script/measure-memory.py` を追加した。Root PIDの実行パスをこのcheckoutのReleaseへ限定し、`launchctl print pid/PID` のoriginator/creatorとservices節を読む。実行中のサービスごとに同じPIDドメイン所属とPIDを照合し、WebContent・Networking・GPU・補助XPCを含める。登録済みでもPIDが0なら実行中と数えない。PPIDや名前一致だけでは加算しない。`launchctl print` は診断表示であり固定形式を保証したAPIではないため、解釈できなければ失敗させ、OS更新時に再確認する。rootが必要なprocinfo、SDKにないcoalition定数、非公開のWebView process IDには依存しない。
+
+各プロセスのPID・開始時刻・実行パスとサービス一覧をfootprint取得の前後で照合し、変化した標本は無効にする。footprintのJSONからcategory合計のfootprintではなく、auxiliaryの `phys_footprint` を使い、単位はbyteを確認する。未取得はnullとし、欠けた値やエラーのある標本の合計・中央値を作らない。既定は同じ起動中で3標本・5秒間隔の取得経路確認であり、独立した3試行や60秒安定待ちの比較試験ではない。GitのHEAD、dirty状態、実バイナリのSHA-256、SDK情報、OS、役割と集計の限界をローカル結果へ残す。launchctlの生出力には環境値があり得るため、保存・出力せず必要な帰属情報だけ使う。
+
+| 診断条件 | 有効標本 | 帰属を確認した集合のfootprint合計、中央値・範囲 |
+|---|---|---|
+| 新しいReleaseの空画面、WebView 0 | 3/3 | 約25.4MiB、24.9〜25.5MiB。このとき実行中の帰属XPCはなく、UI本体だけ |
+| 同じReleaseで公開YouTube動画を再生・全画面から復帰後に一時停止、WebView 1 | 3/3 | 約809.0MiB、754.4〜881.5MiB。UI、WebContent 2、Networking 1、GPU 1、補助XPC 3を含む。UIだけでは42.5〜55.1MiB |
+
+これらは比較前の診断値で、個別PIDのphysical footprintの和には共有領域の重複があり得る。システム共用サービスや別PIDドメインの値は含めず、ブラウザの専有RAMとは扱わない。動画の再生・停止・全画面に伴う保持と計測時刻の影響が残る。Chrome/Safari比、広告やcache条件をそろえたエンジン効率、100タブの目標へ外挿しない。結果は `.local/artifacts/memory/empty-window.7z9qt38y/` と `youtube-paused-after-fullscreen.vk51hqaq/`。空画面の軽さだけでは動画時のメモリ最優先という目的を達成したことにならず、WebContent・GPUを含む比較を続ける。
+
+検証はSwift Testing 13件、UI 5経路の統合実行（`.local/artifacts/tests.QKudL1/Results.xcresult`）、計測パーサー8件。パーサー試験は無関係なservice stubsの除外、未起動の除外、別checkout/creatorの拒否、形式変更、単位・指標の取り違え、値の欠落や余分なPIDの拒否を含み、CIにも追加した。M1の残りは本人操作のログイン、IME、OSによるWebContent終了、同条件の比較と目標提案である。
