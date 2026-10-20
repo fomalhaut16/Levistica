@@ -13,10 +13,13 @@ import threading
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         pages = {
-            "/one": '<h1>Levistica fixture one</h1><a href="/two">Second page</a><a href="levistica-test-native:blocked">Blocked native link</a>',
-            "/two": '<h1>Levistica fixture two</h1><a href="/one">First page</a><input aria-label="Draft">',
+            "/tab-state": '<title>State tab</title><h1>State tab</h1><input aria-label="Draft"><p id="loads"></p><script>const n=+(sessionStorage.getItem("loads")||0)+1;sessionStorage.setItem("loads",n);document.getElementById("loads").textContent="Document loads: "+n;</script>',
+            "/post-form": '<h1>Post fixture</h1><form action="/submitted" method="post"><input name="draft" value="synthetic"><button>Submit fixture</button></form>',
+            "/submitted": '<h1>Unexpected GET replay</h1>',
+            "/one": '<title>Fixture one</title><h1>Levistica fixture one</h1><a href="/two">Second page</a><a href="levistica-test-native:blocked">Blocked native link</a>',
+            "/two": '<title>Fixture two</title><h1>Levistica fixture two</h1><a href="/one">First page</a><input aria-label="Draft">',
             "/fullscreen": '''<h1>Fullscreen fixture</h1><p id="state">windowed</p>
-                <button onclick="document.documentElement.requestFullscreen()">Enter fullscreen</button>
+                <button onclick="document.documentElement.requestFullscreen().catch(e => document.getElementById('state').textContent = 'fullscreen failed: ' + e.name)">Enter fullscreen</button>
                 <button onclick="document.exitFullscreen()">Exit fullscreen</button>
                 <script>document.addEventListener('fullscreenchange', () => {
                   document.getElementById('state').textContent = document.fullscreenElement ? 'fullscreen active' : 'windowed';
@@ -24,6 +27,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         }
         body = ("<!doctype html><meta charset=utf-8>" + pages.get(self.path, "Not found")).encode()
         self.send_response(200 if self.path in pages else 404)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        body = b"<!doctype html><title>Submitted</title><h1>Submission received</h1>"
+        self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()

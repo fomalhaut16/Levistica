@@ -174,12 +174,17 @@ def main():
     parser.add_argument("--browser", choices=["levistica", "chrome"], default="levistica")
     parser.add_argument("--chrome-profile", type=pathlib.Path)
     parser.add_argument("--label", required=True, help="Non-private state label, never a URL")
-    parser.add_argument("--loaded-pages", type=int, choices=[0, 1], required=True)
+    parser.add_argument("--loaded-pages", type=int, required=True)
+    parser.add_argument("--total-tabs", type=int, help="Total tab count, including unloaded tabs; omit if unknown")
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--interval", type=float, default=5)
     args = parser.parse_args()
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", args.label):
         parser.error("Use a short lowercase label without URLs or private data")
+    if not 0 <= args.loaded_pages <= 1000:
+        parser.error("loaded-pages must be 0..1000")
+    if args.total_tabs is not None and not max(1, args.loaded_pages) <= args.total_tabs <= 1000:
+        parser.error("total-tabs must be 1..1000 and at least loaded-pages")
     if not 1 <= args.samples <= 10 or not 0 <= args.interval <= 60:
         parser.error("samples must be 1..10; interval must be 0..60 seconds")
     app, binary, profile = APP, BINARY, None
@@ -209,7 +214,7 @@ def main():
     output_parent.mkdir(parents=True, exist_ok=True)
     output = pathlib.Path(tempfile.mkdtemp(prefix=args.label + ".", dir=output_parent))
     record = {
-        "schema": 1, "label": args.label, "fixture": fixture, "loaded_pages": args.loaded_pages,
+        "schema": 1, "label": args.label, "fixture": fixture, "loaded_pages": args.loaded_pages, "total_tabs": args.total_tabs,
         "browser": args.browser, "pid": pid, "source_head_at_sampling": run(["git", "rev-parse", "HEAD"]).strip(),
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "worktree_dirty": bool(run(["git", "status", "--porcelain", "--untracked-files=no"]).strip()),

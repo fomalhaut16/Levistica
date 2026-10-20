@@ -5,12 +5,17 @@ import WebKit
 @Observable
 final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     let webView: WKWebView
+    var onMetadataChange: (() -> Void)?
     private(set) var url: URL?
     private(set) var title = "Levistica"
     private(set) var isLoading = false
     private(set) var canGoBack = false
     private(set) var canGoForward = false
     private(set) var progress = 0.0
+    var findQuery = ""
+    private(set) var findMatchFound: Bool?
+    private(set) var zoom = 1.0
+    @ObservationIgnored private var findGeneration = 0
     private(set) var failure: String?
     private(set) var canRetry = false
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
@@ -44,15 +49,54 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     private func updateSnapshot() {
+        let previousURL = url
+        let previousTitle = title
         if failure == nil, let current = webView.url, current.absoluteString != "about:blank" { url = current }
         title = webView.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Levistica"
         isLoading = webView.isLoading
         canGoBack = webView.canGoBack
         canGoForward = webView.canGoForward
         progress = webView.estimatedProgress
+        if previousURL != url || previousTitle != title { onMetadataChange?() }
+    }
+
+    func invalidateFindResult() {
+        findGeneration += 1
+        findMatchFound = nil
+    }
+
+    func findNext(backwards: Bool = false) {
+        invalidateFindResult()
+        guard !findQuery.isEmpty else { return }
+        let generation = findGeneration
+        let configuration = WKFindConfiguration()
+        configuration.backwards = backwards
+        configuration.caseSensitive = false
+        configuration.wraps = true
+        webView.find(findQuery, configuration: configuration) { [weak self] result in
+            guard let self, self.findGeneration == generation else { return }
+            self.findMatchFound = result.matchFound
+        }
+    }
+
+    func clearFind() {
+        findQuery = ""
+        invalidateFindResult()
+        webView.find("", configuration: WKFindConfiguration()) { _ in }
+    }
+
+    func changeZoom(by factor: Double) {
+        zoom = min(3, max(0.5, (zoom * factor * 100).rounded() / 100))
+        webView.pageZoom = zoom
+    }
+
+    func resetZoom() {
+        zoom = 1
+        webView.pageZoom = 1
     }
 
     func load(_ url: URL) {
+        invalidateFindResult()
         failure = nil
         self.url = url
         lastRequest = URLRequest(url: url)
@@ -101,6 +145,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
             canRetry = action.request.httpMethod == "GET"
             url = action.request.url
             failure = nil
+            onMetadataChange?()
         }
         decisionHandler(.allow)
     }
@@ -122,7 +167,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { updateSnapshot() }
-    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { updateSnapshot() }
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { invalidateFindResult(); updateSnapshot() }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
                  withError error: Error) { navigationFailed(navigation, error: error) }
