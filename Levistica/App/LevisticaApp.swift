@@ -7,11 +7,7 @@ struct LevisticaApp: App {
 
     var body: some Scene {
         Window("Levistica", id: "browser") {
-            BrowserRootView(session: session)
-                .onAppear {
-                    delegate.session = session
-                    session.activateInitialSelection()
-                }
+            BrowserScene(session: session, delegate: delegate)
         }
         .defaultSize(width: 1100, height: 760)
         .commands {
@@ -51,6 +47,20 @@ struct LevisticaApp: App {
                     .keyboardShortcut(".").disabled(session.page?.isLoading != true)
             }
         }
+    }
+}
+
+private struct BrowserScene: View {
+    let session: BrowserSession
+    let delegate: BrowserAppDelegate
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        BrowserRootView(session: session)
+            .onAppear {
+                let action = openWindow
+                delegate.connect(session: session, openWindow: { action(id: "browser") })
+            }
     }
 }
 
