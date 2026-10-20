@@ -5,6 +5,12 @@
 	objectVersion = "56";
 	archiveVersion = "1";
 	objects = {
+		AD7088C74305D62C68AD80D3 = { isa = PBXFileReference; path = "LevisticaTests/Browser/DownloadTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		1DC57427B849C429C39A80C8 = { isa = PBXBuildFile; fileRef = AD7088C74305D62C68AD80D3; };
+		FD852BD7C6E6FDEF84743F16 = { isa = PBXFileReference; path = "Levistica/Views/DownloadShelf.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		04A1139D2C0128F848875553 = { isa = PBXBuildFile; fileRef = FD852BD7C6E6FDEF84743F16; };
+		CE80D8313D9B72F503E3CC2C = { isa = PBXFileReference; path = "Levistica/Browser/DownloadManager.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		0843339345F2AC47B633608B = { isa = PBXBuildFile; fileRef = CE80D8313D9B72F503E3CC2C; };
 		DC70A475EC7D651D1F28F561 = { isa = PBXFileReference; path = "LevisticaTests/Stores/SessionStoreTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
 		6C529011BAF3ADE3A4F12862 = { isa = PBXBuildFile; fileRef = DC70A475EC7D651D1F28F561; };
 
@@ -294,6 +300,8 @@
 			isa = "PBXSourcesBuildPhase";
 			buildActionMask = "2147483647";
 			files = (
+				04A1139D2C0128F848875553,
+				0843339345F2AC47B633608B,
 				9BBD268D36EF1B68166091EE,
 				95DE925BD42F0092B6B491D4,
 				78A7D0CF7B17E90C395C2F22,
@@ -358,6 +366,8 @@
 			isa = "PBXGroup";
 			name = "Levistica";
 			children = (
+				FD852BD7C6E6FDEF84743F16,
+				CE80D8313D9B72F503E3CC2C,
 				CE2B44BB85CA1F32376BB6B6,
 				65E4AC2824657CBA80082789,
 				6D0CE91E9849C30D53327BB9,
@@ -391,6 +401,7 @@
 			isa = "PBXGroup";
 			name = "LevisticaTests";
 			children = (
+				AD7088C74305D62C68AD80D3,
 				DC70A475EC7D651D1F28F561,
 				E7FE958BD69394833A189050,
 				6B783834263E93601337696C,
@@ -599,6 +610,7 @@
 			isa = "PBXSourcesBuildPhase";
 			buildActionMask = "2147483647";
 			files = (
+				1DC57427B849C429C39A80C8,
 				6C529011BAF3ADE3A4F12862,
 				ADA290719B47EA0309618CDA,
 				FC20B29EDAC101588A668101,

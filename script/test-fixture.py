@@ -8,6 +8,7 @@ import socket
 import socketserver
 import sys
 import threading
+import time
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -15,7 +16,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
     counter_lock = threading.Lock()
 
     def do_GET(self):
+        if self.path in ["/download", "/download-slow", "/download-failure"]:
+            chunks = 2048 if self.path == "/download-slow" else 1
+            chunk = b"levistica synthetic download\n" if chunks == 1 else b"x" * 4096
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", 'attachment; filename="fixture-download.txt"')
+            self.send_header("Content-Length", str(len(chunk) * chunks if self.path != "/download-failure" else 1000000))
+            self.end_headers()
+            try:
+                for _ in range(chunks):
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                    if chunks > 1: time.sleep(0.025)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            self.close_connection = True
+            return
         pages = {
+            "/files": '''<title>Files fixture</title><h1>Files fixture</h1>
+                <a href="/download">Download fixture</a>
+                <a href="/download-slow">Slow download</a>
+                <a href="/download-failure">Failed download</a>
+                <input type="file" aria-label="Attachment" id="attachment" onchange="document.getElementById('selected').textContent=this.files[0]?.name || 'No selection'">
+                <p id="selected">No selection</p><p id="upload-result"></p>
+                <button onclick="fetch('/upload-fixture',{method:'POST',body:document.getElementById('attachment').files[0]}).then(r=>r.text()).then(t=>document.getElementById('upload-result').textContent=t)">Upload synthetic fixture</button>''',
             "/related": '''<title>Related page opener</title><h1>Related page opener</h1>
                 <input aria-label="Draft"><p id="result">Waiting for related page</p>
                 <a href="/two">Ordinary link</a>
@@ -59,8 +84,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        self.rfile.read(int(self.headers.get("Content-Length", 0)))
-        body = b"<!doctype html><title>Submitted</title><h1>Submission received</h1>"
+        received = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if self.path == "/upload-fixture":
+            body = b"Synthetic upload received" if received == b"levistica synthetic upload\n" else b"Unexpected fixture bytes"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        body = b"<!doctype html><title>Submitted</title><h1>Submission received</h1><a href='/download'>Download fixture</a>"
         if self.path == "/popup-post":
             with self.counter_lock:
                 Handler.popup_posts += 1

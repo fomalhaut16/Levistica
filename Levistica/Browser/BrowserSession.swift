@@ -16,6 +16,7 @@ final class BrowserSession {
     private(set) var storageFailure: String?
     var discardUnsavedChangesOnQuit = false
     private var closedTabs: [ClosedTab] = []
+    let downloads = DownloadManager()
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
 
     private struct ClosedTab {
@@ -116,6 +117,7 @@ final class BrowserSession {
     }
 
     func prepareToQuit() -> Bool {
+        if downloads.hasActive { return false }
         pendingSave?.cancel()
         pendingSave = nil
         guard let store, !persistenceDisabled, !discardUnsavedChangesOnQuit else { return true }
@@ -189,6 +191,12 @@ final class BrowserSession {
     func closeTab(_ id: UUID) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let tab = tabs[index]
+        if downloads.hasActive(tabID: id) {
+            selectedID = id
+            downloads.notice = "ダウンロード中です。転送を取り消すか、完了してからタブを閉じてください。"
+            return
+        }
+        tab.page?.cancelFileSelection()
         closedTabs.append(ClosedTab(url: tab.page?.url ?? tab.pendingURL, draft: tab.addressDraft,
                                     mayReload: tab.page?.canRetry ?? tab.mayRestoreAutomatically, index: index))
         if closedTabs.count > 20 { closedTabs.removeFirst() }
@@ -232,6 +240,10 @@ final class BrowserSession {
     }
 
     private func connect(_ runtime: PageRuntime, to tab: BrowserTab) {
+        runtime.onDownload = { [weak self, weak tab] download in
+            guard let self, let tab else { download.cancel { _ in }; return }
+            self.downloads.accept(download, tabID: tab.id)
+        }
         runtime.onMetadataChange = { [weak self, weak tab] in
             guard let self, let tab, self.tabs.contains(where: { $0 === tab }) else { return }
             self.schedulePersistence()
