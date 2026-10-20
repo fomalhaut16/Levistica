@@ -5,7 +5,7 @@
   "commit": null,
   "license": "MIT as declared in upstream .codex-plugin/plugin.json; standalone license text not located",
   "method": "Official installer failed DNS resolution; browser tool text/plain source retrieved with all numbered lines present, then written to project skills. Text rendering/newline normalization may differ from upstream bytes. Hashes identify installed copies, not upstream blobs.",
-  "recognition": "Manual SKILL.md loading verified; automatic discovery not verified because .agents is read-only. No global changes.",
+  "recognition": "Project-local relative links verified; build-run-debug, swiftui-patterns, appkit-interop and imozuru appeared in the active session available-skills catalog on 2026-10-20. SKILL.md files readable. No global changes.",
   "files": [
     {
       "path": "skills/build-run-debug/SKILL.md",
