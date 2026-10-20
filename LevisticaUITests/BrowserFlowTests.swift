@@ -68,7 +68,9 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testConnectionFailureKeepsAddressAndOffersRetry() {
+    func testConnectionFailureKeepsAddressAndOffersRetry() throws {
+        let url = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FAILURE_FIXTURE_URL"])
+        XCTAssertTrue(url.hasPrefix("http://127.0.0.1:"))
         let app = XCUIApplication()
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
         app.launch()
@@ -76,9 +78,9 @@ final class BrowserFlowTests: XCTestCase {
         let address = app.textFields["addressField"]
         XCTAssertTrue(address.waitForExistence(timeout: 10))
         address.click()
-        address.typeText("http://127.0.0.1:1/\n")
+        address.typeText(url + "/\n")
         XCTAssertTrue(app.staticTexts["errorMessage"].waitForExistence(timeout: 15))
-        XCTAssertEqual(address.value as? String, "http://127.0.0.1:1/")
+        XCTAssertEqual(address.value as? String, url + "/")
         XCTAssertTrue(app.buttons["再試行"].exists)
         app.terminate()
     }

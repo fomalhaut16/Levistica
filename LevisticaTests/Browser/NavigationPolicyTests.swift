@@ -8,7 +8,7 @@ struct NavigationPolicyTests {
         #expect(NavigationPolicy.allows(URL(string: input), isMainFrame: true))
     }
 
-    @Test(arguments: ["file:///etc/passwd", "javascript:alert(1)", "mailto:a@example.com", "x-apple.systempreferences:privacy", "data:text/html,hello", "https://user:password@example.com"])
+    @Test(arguments: ["file:///etc/passwd", "javascript:alert(1)", "mailto:a@example.com", "x-apple.systempreferences:privacy", "data:text/html,hello", "https://user:password@example.com", "http://127.0.0.1:1/"])
     func refusesUnsafeTopLevelNavigation(input: String) {
         #expect(NavigationPolicy.allows(URL(string: input), isMainFrame: true) == false)
     }

@@ -4,12 +4,14 @@ enum AddressError: Error, Equatable, LocalizedError {
     case empty
     case invalid
     case unsupportedScheme
+    case restrictedPort
 
     var errorDescription: String? {
         switch self {
         case .empty: "URLまたは検索語を入力してください。"
         case .invalid: "URLを確認してください。"
         case .unsupportedScheme: "URL欄ではHTTPとHTTPSのページを開けます。"
+        case .restrictedPort: "この接続先ポートには、ブラウザから接続できません。"
         }
     }
 }
@@ -56,6 +58,7 @@ enum AddressResolver {
               parts.user == nil, parts.password == nil,
               parts.port.map({ (1...65535).contains($0) }) ?? true,
               let url = parts.url else { throw AddressError.invalid }
+        guard !NavigationPolicy.isRestrictedPort(parts.port) else { throw AddressError.restrictedPort }
         return url
     }
 }

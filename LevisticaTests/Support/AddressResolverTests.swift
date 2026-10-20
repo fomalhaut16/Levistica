@@ -35,4 +35,9 @@ struct AddressResolverTests {
     @Test func rejectsEmptyInput() {
         #expect(throws: AddressError.empty) { try AddressResolver.resolve("  ") }
     }
+
+    @Test(arguments: ["http://127.0.0.1:1/", "https://example.com:25/"])
+    func explainsRestrictedPorts(input: String) {
+        #expect(throws: AddressError.restrictedPort) { try AddressResolver.resolve(input) }
+    }
 }

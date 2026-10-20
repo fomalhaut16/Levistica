@@ -4,6 +4,7 @@ import http.server
 import json
 import pathlib
 import ssl
+import socket
 import sys
 import threading
 
@@ -26,6 +27,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+# Bound but never listening: deterministic connection refusal without a port race.
+refused = socket.socket()
+refused.bind(("127.0.0.1", 0))
 tls_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain(sys.argv[2], sys.argv[3])
@@ -34,5 +38,6 @@ threading.Thread(target=tls_server.serve_forever, daemon=True).start()
 pathlib.Path(sys.argv[1]).write_text(json.dumps({
     "url": f"http://127.0.0.1:{server.server_port}",
     "tlsUrl": f"https://127.0.0.1:{tls_server.server_port}",
+    "failureUrl": f"http://127.0.0.1:{refused.getsockname()[1]}",
 }))
 server.serve_forever()
