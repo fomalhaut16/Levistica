@@ -8,6 +8,8 @@ final class BrowserTab: Identifiable {
     var pendingURL: URL?
     var mayRestoreAutomatically = true
     var storedTitle = ""
+    var openerID: UUID?
+    var openerOrigin: String?
 
     init(id: UUID = UUID()) { self.id = id }
     var addressDraft = ""

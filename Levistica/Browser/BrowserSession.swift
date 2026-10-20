@@ -231,6 +231,60 @@ final class BrowserSession {
         findFocusRequest += 1
     }
 
+    private func connect(_ runtime: PageRuntime, to tab: BrowserTab) {
+        runtime.onMetadataChange = { [weak self, weak tab] in
+            guard let self, let tab, self.tabs.contains(where: { $0 === tab }) else { return }
+            self.schedulePersistence()
+        }
+        runtime.onCreatePage = { [weak self, weak tab] configuration, origin, foreground in
+            guard let self, let tab else { return nil }
+            return self.openRelatedPage(configuration: configuration, openerID: tab.id,
+                                        origin: origin, foreground: foreground)?.webView
+        }
+        runtime.onOpenLink = { [weak self, weak tab] request, foreground, origin in
+            guard let self, let tab else { return }
+            self.openLink(request, openerID: tab.id, origin: origin, foreground: foreground)
+        }
+        runtime.onClose = { [weak self, weak tab] in
+            guard let self, let tab, let openerID = tab.openerID,
+                  self.tabs.contains(where: { $0 === tab }) else { return }
+            let wasSelected = self.selectedID == tab.id
+            self.closeTab(tab.id)
+            if wasSelected { self.select(openerID) }
+        }
+    }
+
+    @discardableResult
+    func openRelatedPage(configuration: WKWebViewConfiguration, openerID: UUID,
+                         origin: String, foreground: Bool) -> PageRuntime? {
+        guard let index = tabs.firstIndex(where: { $0.id == openerID }) else { return nil }
+        let tab = BrowserTab()
+        tab.openerID = openerID
+        tab.openerOrigin = origin
+        let runtime = PageRuntime(configuration: configuration, permitsInitialBlankPage: true)
+        connect(runtime, to: tab)
+        tab.page = runtime
+        tabs.insert(tab, at: index + 1)
+        if foreground { selectedID = tab.id }
+        persistSession()
+        return runtime
+    }
+
+    func openLink(_ request: URLRequest, openerID: UUID, origin: String, foreground: Bool) {
+        guard request.httpMethod == "GET", NavigationPolicy.allows(request.url, isMainFrame: true),
+              let opener = tabs.first(where: { $0.id == openerID }), let dataStore = opener.page?.webView.configuration.websiteDataStore,
+              let index = tabs.firstIndex(where: { $0.id == openerID }) else { return }
+        let tab = BrowserTab()
+        tab.openerOrigin = origin
+        let runtime = PageRuntime(dataStore: dataStore)
+        connect(runtime, to: tab)
+        tab.page = runtime
+        runtime.load(request)
+        tabs.insert(tab, at: index + 1)
+        if foreground { selectedID = tab.id }
+        persistSession()
+    }
+
     func navigate(_ input: String) -> Bool {
         do {
             let url = try AddressResolver.resolve(input)
@@ -246,10 +300,7 @@ final class BrowserSession {
                 }
                 if let dataStore {
                     let runtime = PageRuntime(dataStore: dataStore)
-                    runtime.onMetadataChange = { [weak self, weak tab] in
-                        guard let self, let tab, self.tabs.contains(where: { $0 === tab }) else { return }
-                        self.schedulePersistence()
-                    }
+                    connect(runtime, to: tab)
                     tab.page = runtime
                 }
             }

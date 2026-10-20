@@ -3,6 +3,22 @@ import Testing
 @testable import Levistica
 
 struct NavigationPolicyTests {
+    @Test(arguments: ["about:blank", "https://example.com/login", "http://127.0.0.1:8080/callback"])
+    func acceptsRelatedWebContexts(input: String) {
+        #expect(NavigationPolicy.allowsNewContext(URL(string: input)))
+    }
+
+    @Test func anEmptyRelatedContextDoesNotEnableEmptyOrdinaryNavigation() {
+        #expect(NavigationPolicy.allowsNewContext(nil))
+        #expect(NavigationPolicy.allowsNewContext(URL(string: "")))
+        #expect(NavigationPolicy.allows(nil, isMainFrame: true) == false)
+        #expect(NavigationPolicy.allows(URL(string: "about:blank"), isMainFrame: true) == false)
+    }
+
+    @Test(arguments: ["about:config", "data:text/html,hello", "javascript:alert(1)", "file:///etc/passwd", "https://u:p@example.com", "http://127.0.0.1:1"])
+    func relatedContextDoesNotGrantExtraSchemeAccess(input: String) {
+        #expect(NavigationPolicy.allowsNewContext(URL(string: input)) == false)
+    }
     @Test(arguments: ["https://example.com", "http://127.0.0.1:8080/"])
     func acceptsWebPages(input: String) {
         #expect(NavigationPolicy.allows(URL(string: input), isMainFrame: true))

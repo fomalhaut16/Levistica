@@ -15,6 +15,12 @@ struct BrowserRootView: View {
     private func tabContent(_ tab: BrowserTab) -> some View {
         VStack(spacing: 0) {
             BrowserNavigationBar(session: session, tab: tab).id(tab.id)
+            if let origin = tab.openerOrigin {
+                Text("別タブの要求元: \(origin)")
+                    .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    .lineLimit(1).padding(.horizontal, 10).padding(.vertical, 4)
+                    .accessibilityIdentifier("pageOpenerOrigin")
+            }
             if let message = session.storageFailure {
                 HStack {
                     Text(message).accessibilityIdentifier("storageFailure")

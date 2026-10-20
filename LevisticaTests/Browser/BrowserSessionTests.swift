@@ -4,6 +4,56 @@ import WebKit
 
 @MainActor
 struct BrowserSessionTests {
+    @Test func relatedPageCallbacksDoNotRetainAClosedRuntime() throws {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let openerID = session.selectedID
+        weak var runtime: PageRuntime?
+        weak var view: WKWebView?
+        try autoreleasepool {
+            let configuration = WKWebViewConfiguration()
+            configuration.websiteDataStore = .nonPersistent()
+            let child = try #require(session.openRelatedPage(configuration: configuration, openerID: openerID,
+                                                             origin: "https://example.com", foreground: true))
+            runtime = child
+            view = child.webView
+            child.webViewDidClose(child.webView)
+        }
+        #expect(session.tabs.count == 1)
+        #expect(runtime == nil)
+        #expect(view == nil)
+    }
+
+    @Test func relatedPagePreservesDataStoreAndCanCloseBackToItsOpener() throws {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let openerID = session.selectedID
+        let configuration = WKWebViewConfiguration()
+        let dataStore = WKWebsiteDataStore.nonPersistent()
+        configuration.websiteDataStore = dataStore
+        configuration.preferences.minimumFontSize = 17
+        let child = try #require(session.openRelatedPage(configuration: configuration, openerID: openerID,
+                                                        origin: "https://example.com", foreground: true))
+        #expect(child.webView.configuration.websiteDataStore === dataStore)
+        #expect(child.webView.configuration.preferences.minimumFontSize == 17)
+        #expect(child.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically == false)
+        #expect(session.tabs.count == 2)
+        #expect(session.activeTab.openerID == openerID)
+        #expect(session.activeTab.openerOrigin == "https://example.com")
+        child.webViewDidClose(child.webView)
+        #expect(session.selectedID == openerID)
+        #expect(session.tabs.count == 1)
+        #expect(session.openRelatedPage(configuration: configuration, openerID: UUID(),
+                                         origin: "https://example.com", foreground: true) == nil)
+    }
+
+    @Test func ordinaryPageCannotCloseItsTabThroughTheScriptCloseCallback() throws {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        #expect(session.navigate("http://127.0.0.1:54321/fixture"))
+        let id = session.selectedID
+        let page = try #require(session.page)
+        page.webViewDidClose(page.webView)
+        #expect(session.tabs.count == 1)
+        #expect(session.selectedID == id)
+    }
     @Test func securityDelegatesAreExposedToWebKit() {
         let page = PageRuntime(dataStore: .nonPersistent())
         #expect(page.responds(to: NSSelectorFromString("webView:decidePolicyForNavigationAction:decisionHandler:")))
