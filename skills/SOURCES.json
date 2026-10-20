@@ -139,6 +139,144 @@
           "sha256": "5fd5c99a32497274c88987614203a287f20a22e44df788f8750cb72e474a8b75"
         }
       ]
+    },
+    {
+      "name": "swift-concurrency",
+      "source": "https://github.com/AvdLee/Swift-Concurrency-Agent-Skill",
+      "adopted_commit": "d5770817d2622e1585b1f7eaebc791a9cb0959c8",
+      "method": "Official skill-installer --method git with pinned ref; MIT LICENSE obtained via GitHub API at same ref.",
+      "license": "MIT; included LICENSE from pinned commit",
+      "dependencies": "No package, hook, global setting, MCP or external account required. Reference-only skill. swift-testing-pro requires Swift >=6.2; selected Xcode compiler pending license acceptance.",
+      "recognition": "SKILL.md and references readable manually. Relative link configured; auto-discovery not yet verified, check next turn.",
+      "files": [
+        {
+          "path": "skills/swift-concurrency/LICENSE",
+          "sha256": "8f5fd8e5cddb015b5627e45e68b256356586144288a4a0a3db87e38bcb0c9155"
+        },
+        {
+          "path": "skills/swift-concurrency/SKILL.md",
+          "sha256": "8c667b2ff988251c7c291abe046b77d7b8fcfbe3b5ed36961e25e224b1ead491"
+        },
+        {
+          "path": "skills/swift-concurrency/agents/openai.yaml",
+          "sha256": "ee6afe3f6c048fa77f73510f5536abc8f399bc48c8641dc308343ed37ee53cfc"
+        },
+        {
+          "path": "skills/swift-concurrency/assets/logo-small.png",
+          "sha256": "f1f69d278df362306d16809151486fad79fc08d6b3018aeabea4580507392f93"
+        },
+        {
+          "path": "skills/swift-concurrency/assets/logo.png",
+          "sha256": "7eeb6005c4ce9d1ab514418cc645c463fa6b84536527dfac715676ee878cf7b1"
+        },
+        {
+          "path": "skills/swift-concurrency/references/_index.md",
+          "sha256": "7e9e076d885ef05402a67aa8a84b83e63a3c29b3d005816f6acb4c30b6d76531"
+        },
+        {
+          "path": "skills/swift-concurrency/references/actors.md",
+          "sha256": "2de7cebbdd1cbc2b7c9312c7b59a3f44ada0456b6e74579aae7fba3e02b0b5fe"
+        },
+        {
+          "path": "skills/swift-concurrency/references/async-algorithms.md",
+          "sha256": "9e16790e9b81850a37b3de995220074491f3efd5accab1f5daa0a633625fed40"
+        },
+        {
+          "path": "skills/swift-concurrency/references/async-await-basics.md",
+          "sha256": "e550aba692af77cf660ad6f754a65c52b01505cad234d159a6d47a919faaf536"
+        },
+        {
+          "path": "skills/swift-concurrency/references/async-sequences.md",
+          "sha256": "33d853118e37c1ac380c253200571efa44fe7127b9b6512ba95b43e670a5f453"
+        },
+        {
+          "path": "skills/swift-concurrency/references/core-data.md",
+          "sha256": "c89c4846fa64a2389abf807684ed373a6c0e6d16351dfa051e1fd71b85444d00"
+        },
+        {
+          "path": "skills/swift-concurrency/references/glossary.md",
+          "sha256": "20dd1f05717810944af675db215d758efa5d1c7b487ee007faae1ec4e2a7c36f"
+        },
+        {
+          "path": "skills/swift-concurrency/references/linting.md",
+          "sha256": "ead994f6e254208acf298a588ad9a49bbd9779530f31e01c74c4d32d06a7bd4a"
+        },
+        {
+          "path": "skills/swift-concurrency/references/memory-management.md",
+          "sha256": "28dcb8a7ff7411390ca0b7f1b0db16d6b00c3705bd6ed1f9b649c476bf0a7554"
+        },
+        {
+          "path": "skills/swift-concurrency/references/migration.md",
+          "sha256": "9115da8228d3a19426869627c28b7ed444f8d783723039293cceb46a1fc1c570"
+        },
+        {
+          "path": "skills/swift-concurrency/references/observation.md",
+          "sha256": "940c085d43e2e067848d7caf95731fb1335c3f16f83ebe43b06549021a29f1b1"
+        },
+        {
+          "path": "skills/swift-concurrency/references/performance.md",
+          "sha256": "dfd74c1c592ce42c520b54a309ba2b50e228608efa055fd6b597067e9ad71668"
+        },
+        {
+          "path": "skills/swift-concurrency/references/sendable.md",
+          "sha256": "af8e026b3c205d3c3acb58bf9a59e456f063f564845f38020a91cac511a08ca8"
+        },
+        {
+          "path": "skills/swift-concurrency/references/tasks.md",
+          "sha256": "0401a762683454149d5ca532684901f4fb5597a6821acacc8d49d037db9a37e9"
+        },
+        {
+          "path": "skills/swift-concurrency/references/testing.md",
+          "sha256": "3df9e839b3338dd473115d9ac8787a42d91b50a537fe40c55cf66d21034679db"
+        },
+        {
+          "path": "skills/swift-concurrency/references/threading.md",
+          "sha256": "0a4e44bd27fdf852cf5f8f5aa64cfe15ba229fb7c885b3f69ed2afdbfac8752a"
+        }
+      ]
+    },
+    {
+      "name": "swift-testing-pro",
+      "source": "https://github.com/twostraws/Swift-Testing-Agent-Skill",
+      "adopted_commit": "2d6bba14a3c8bf3694f218b92fffe617c41ae43e",
+      "method": "Official installer rejected nested plugin symlink. Retrieved SKILL.md, agents/openai.yaml and all five reference files byte-for-byte via GitHub contents API at pinned ref; nested plugin wrapper and assets omitted; MIT LICENSE included.",
+      "license": "MIT; included LICENSE from pinned commit",
+      "dependencies": "No package, hook, global setting, MCP or external account required. Reference-only skill. swift-testing-pro requires Swift >=6.2; selected Xcode compiler pending license acceptance.",
+      "recognition": "SKILL.md and references readable manually. Relative link configured; auto-discovery not yet verified, check next turn.",
+      "files": [
+        {
+          "path": "skills/swift-testing-pro/LICENSE",
+          "sha256": "b9b479e6df9f27cbc8e7abe91f771b396f3f0fa114d070c7c0b02c820c6b74dc"
+        },
+        {
+          "path": "skills/swift-testing-pro/SKILL.md",
+          "sha256": "ad4f1bff44b5b7fce20b282481e651876efce024d13b16cb969bc433036ac059"
+        },
+        {
+          "path": "skills/swift-testing-pro/agents/openai.yaml",
+          "sha256": "f7a35b0befd4eb136cf87047543379a63efebb4f0f7eb4490489325d09383c4f"
+        },
+        {
+          "path": "skills/swift-testing-pro/references/async-tests.md",
+          "sha256": "bc6e0eabd10377b5796e9e554a4965a78b7d1aaba8f11021c2a63b6e8a9e669a"
+        },
+        {
+          "path": "skills/swift-testing-pro/references/core-rules.md",
+          "sha256": "2271efdca6c2b7b3365501172147884b6e786bcee7bef680fb4f4718929d6180"
+        },
+        {
+          "path": "skills/swift-testing-pro/references/migrating-from-xctest.md",
+          "sha256": "35b64812402ad1d15b496993e1721daaf4e80672bf9cce47078f772fd271f93f"
+        },
+        {
+          "path": "skills/swift-testing-pro/references/new-features.md",
+          "sha256": "988df5cb556893c789f9aecdc4c8773fdbbda787ab1dad766bf1182a7b9a4819"
+        },
+        {
+          "path": "skills/swift-testing-pro/references/writing-better-tests.md",
+          "sha256": "25da3455f6cec4f10d3dff0bf3e8e1372568c75691916541b4d517f451cb8bf1"
+        }
+      ]
     }
   ]
 }

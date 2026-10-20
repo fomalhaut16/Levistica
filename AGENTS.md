@@ -34,6 +34,8 @@
 | SwiftUIの画面と状態 | `skills/swiftui-patterns/SKILL.md` | scene、ウィンドウ、メニュー、設定、状態の所有。AppKitと同じ状態を二重管理しない |
 | AppKitとWebKitの接続 | `skills/appkit-interop/SKILL.md` | representable、delegate、responder、パネル、参照の解放。Coordinatorを別のアプリ基盤にしない |
 | 署名・権限の確認 | `skills/signing-entitlements/SKILL.md` | codesign、App Sandbox、Gatekeeper。ビルド入口や配布工程を重複生成しない |
+| Swift 6の並行処理 | `skills/swift-concurrency/SKILL.md` | 実際のコンパイラ・言語モード・actor境界を確認。UIの所有はswiftui-patternsに従う |
+| 単体・統合テスト | `skills/swift-testing-pro/SKILL.md` | 対応コンパイラを確認してSwift Testingを使用。UI試験はXCTest/XCUITest |
 | 日本語の推敲 | `/Users/User/.codex/skills/yomiyasu/SKILL.md` | 下記のユーザー指定で、手元のリンターを最後に1回使う |
 
 ビルド入口の規則はbuild-run-debugだけを正とし、swiftui-patternsから重複生成しない。スキル中のscaffold作成・アプリ起動の手順は、PLAN.mdの実装順序と環境条件が整った段階で適用する。Git操作は上記の掲載依頼に従う。常時テレメトリ、MCP、hooks、グローバル設定は追加しない。
