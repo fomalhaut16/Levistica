@@ -119,6 +119,26 @@
           "sha256": "fd5c102683069450850929082959dbb201feb61b34eb4a058e4b331bb129c397"
         }
       ]
+    },
+    {
+      "name": "signing-entitlements",
+      "source": "https://github.com/openai/plugins/tree/0722921d5542fc593105c27bd52630babd8b8c2a/plugins/build-macos-apps/skills/signing-entitlements",
+      "adopted_commit": "0722921d5542fc593105c27bd52630babd8b8c2a",
+      "adopted_plugin_version": "0.1.4",
+      "license": "MIT as declared in upstream plugin manifest; repository license API returned 404, standalone license text not located",
+      "method": "Official skill-installer with --method git and pinned --ref; archive download returned HTTP 429. Project-local destination only.",
+      "dependencies": "macOS codesign, spctl, security, plutil; no package dependencies, hooks or external service",
+      "recognition": "SKILL.md and agents/openai.yaml inspected; project-local link prepared. Auto-discovery not yet verified; available to read manually now, expected on next turn.",
+      "files": [
+        {
+          "path": "skills/signing-entitlements/SKILL.md",
+          "sha256": "79326e5096325b53c4350db9e1586c9a2ef56976705f01c24d3643a592dc3030"
+        },
+        {
+          "path": "skills/signing-entitlements/agents/openai.yaml",
+          "sha256": "5fd5c99a32497274c88987614203a287f20a22e44df788f8750cb72e474a8b75"
+        }
+      ]
     }
   ]
 }
