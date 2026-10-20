@@ -1,6 +1,6 @@
 # Levistica 技術設計と完成までの計画
 
-2026-10-20。設計と環境確認まで実施。PMが本計画を基本承認し、実装開始と通常のPRのマージを許可した。アプリ本体・独立試作・ビルド・性能測定は未実施。仕様と受入案は [PRODUCT_SPEC.md](PRODUCT_SPEC.md)、作業規則は [AGENTS.md](AGENTS.md) を参照する。
+2026-10-20。設計と環境準備、M1の最初の閲覧操作を実装・検証済み。PMが本計画を基本承認し、実装開始と通常のPRのマージを許可した。正式アプリのDebug／Releaseをビルドし、基本操作を検証した。M1全体の完了、主要サイトの成立性、性能の比較・受入は未確認。独立試作は作っていない。仕様と受入案は [PRODUCT_SPEC.md](PRODUCT_SPEC.md)、作業規則は [AGENTS.md](AGENTS.md) を参照する。
 
 ## 推奨方式と選定理由
 
@@ -32,7 +32,7 @@ SwiftUIの外枠に、小さなAppKitの接続部分を通してシステムWebK
 | 選択中の開発先 | `/Library/Developer/CommandLineTools` |
 | Swift | 初回は5.10。ユーザーによるCLT更新後はApple Swift 6.4、swiftlang-6.4.0.34.1。clangは21.0.0、clang-2100.3.34.2 |
 | SDK | 初回の既定は14.4。CLT更新後の既定はmacOS SDK 27.0。実行中のOSは26.6で、SDKの版とは別に扱う |
-| Xcode | 初回は未発見。ユーザーの導入承認後、取得済みのXcode_27.1.xipを/Applicationsへ展開し、Xcode 27.1 / build 27A9275を確認。codesign検証とGatekeeper評価は成功。ライセンス同意と初回セットアップはユーザーの操作待ち |
+| Xcode | 初回は未発見。ユーザーの導入承認後、取得済みのXcode_27.1.xipを/Applicationsへ展開し、Xcode 27.1 / build 27A9275を確認。codesign検証とGatekeeper評価は成功。ライセンス同意後、Swift 6.4とmacOS SDK 27.0の実行確認済み。最初の実ビルドで判明したCoreSimulator共通frameworkの不足は、ユーザーのrunFirstLaunch実行で解消。Debug／Releaseのビルドとアプリ起動を確認 |
 | 基本道具 | xcrun、swift、xcodebuildの入口、codesign、plutil、lldb、gitがPATH上に存在。利用可能な署名identityやDeveloperアカウントは未確認 |
 | 比較対象 | Chrome 155.0.8059.85、Safari 26.6 / 21624.4.5.11.5をInfo.plistで確認。いずれも起動・操作・設定変更していない |
 | 空き容量 | 作業先のData volumeで約606 GiB。導入時に再確認する。Xcodeの必要容量は今回測っていない |
@@ -40,9 +40,9 @@ SwiftUIの外枠に、小さなAppKitの接続部分を通してシステムWebK
 
 本体の構成はXcodeのmacOS Appプロジェクト一つを推奨する。entitlement、署名、通常の.app、XCTest/XCUITest、Instrumentsの操作を一つの流れで管理するため。SwiftPMのGUIアプリを.appにまとめる方法もあるが、現在のCLTだけで本製品の検証まで十分とは確認していない。新旧2種類のビルド構成を同時に作らない。
 
-フルXcodeの導入はユーザーが承認済み。今回はユーザーが取得した安定版Xcode 27.1を採用する。公式の[対応表](https://developer.apple.com/xcode/system-requirements)ではmacOS 26.6以上で利用可能。新APIの採用やdeployment targetの引き上げは伴わない。Apple署名を検証して展開済みで、ライセンスの確認・同意と初回セットアップをユーザーへ依頼した。`DEVELOPER_DIR`をビルド入口だけで指定し、全体のxcode-selectは勝手に変更しない。
+フルXcodeの導入はユーザーが承認済み。今回はユーザーが取得した安定版Xcode 27.1を採用する。公式の[対応表](https://developer.apple.com/xcode/system-requirements)ではmacOS 26.6以上で利用可能。新APIの採用やdeployment targetの引き上げは伴わない。Apple署名を検証して展開済みで、ライセンス同意は完了。共通framework不足も解消し、実ビルドで初回セットアップの完了を確認した。`DEVELOPER_DIR`をビルド入口だけで指定し、全体のxcode-selectは勝手に変更しない。
 
-v1の実利用・受入対象はこのMacのmacOS 26.6。deployment targetは26.0を初期案とし、これは個人用の対象を絞る判断で、26専用の新APIを多用する指示ではない。以前のOS対応やIntel対応を先に作らない。Swiftは採用Xcodeのコンパイラで、原則Swift 6モード・UIはMainActorとし、利用するSDKで署名と並行処理の注釈を確認する。現在はCLTのSwift 6.4とSDK 27.0を確認できたが、フルXcodeは展開済みだが、ライセンス未同意のため選択したXcodeのSwift/SDK確認、アプリのコンパイル・起動は未実施。CLTのSwift/SDKと混同しない。
+v1の実利用・受入対象はこのMacのmacOS 26.6。deployment targetは26.0を初期案とし、これは個人用の対象を絞る判断で、26専用の新APIを多用する指示ではない。以前のOS対応やIntel対応を先に作らない。Swiftは採用Xcodeのコンパイラで、原則Swift 6モード・UIはMainActorとし、利用するSDKで署名と並行処理の注釈を確認する。現在はCLTのSwift 6.4とSDK 27.0を確認できたが、フルXcodeは展開済みだが、選択したXcodeのSwift 6.4とSDK 27.0は確認済み。Debug／Releaseの実ビルドと起動、単体・UI試験を確認済み。CLTのSwift/SDKと混同しない。
 
 ## 責務と所有の境界
 
@@ -175,14 +175,14 @@ GitHub認証・API操作を行うghと、ローカルの履歴を作るgitは別
 
 | 工程 | 到達条件 | 残す証拠と状態 |
 |---|---|---|
-| M0 設計・準備 | 3用途・優先順位・挙動・方式・工程を説明できる。未確認API/性能と担当・検証時期が明確 | 設計初版はPM確認済み。GitHub掲載・4スキルの自動認識・CLT更新を確認済み。Xcode利用の相談、サイト成立性・数値目標はM1/M3へ引き継ぐ。実装開始は承認済み。Xcode 27.1は展開・署名検証済み。ライセンス同意・初回セットアップ待ち |
-| M1 正式アプリの一本 | Finder/Dockから起動→URL→ページ→戻る/進む→Cmd-Q→再起動。Releaseで動き、代表サイト成立性と初期メモリを記録 | 実行コマンド・SDK・署名・操作結果・process内訳。工程末でメモリ/速度の具体目標をPMへ提案し、M2前に合意する。未実施 |
+| M0 設計・準備 | 3用途・優先順位・挙動・方式・工程を説明できる。未確認API/性能と担当・検証時期が明確 | 設計初版はPM確認済み。GitHub掲載・4スキルの自動認識・CLT更新を確認済み。Xcode利用の相談、サイト成立性・数値目標はM1/M3へ引き継ぐ。実装開始は承認済み。Xcode 27.1は展開・署名検証・ライセンス同意済み。共通framework不足も解消し、正式アプリの実ビルドと起動を確認済み |
+| M1 正式アプリの一本 | Finder/Dockから起動→URL→ページ→戻る/進む→Cmd-Q→再起動。Releaseで動き、代表サイト成立性と初期メモリを記録 | 実行コマンド・SDK・署名・操作結果・process内訳。最初の閲覧操作は実装・検証済み。代表サイト・初期メモリは継続。工程末でメモリ/速度の具体目標をPMへ提案し、M2前に合意する |
 | M2 普段の操作 | タブ、通常データ、ログイン、復元、PDF、入出力、基本権限とエラーをA2〜A6/A8で確認 | 正常・拒否・中断・再起動・破損の試験。Control Panel for Twitterは独立した任意判断。未実施 |
 | M3 メモリと安定性 | 合意値を同条件で満たし、保護と復帰を含む測定が揃う。休眠設定は結果から決める | W0〜W5、各回・中央値・範囲・帰属・状態欠落。未達は方式/範囲の再判断へ戻す。未実施 |
 | M4 外枠UI | PMの好みに仕上げ、キーボード・IME・フォーカス・アクセシビリティの基本を確認 | PM受入、M2の機能回帰、M3の主要性能回帰。参考画像や好みはこの段階でまとめて聞く。未実施 |
 | M5 常用v1 | 開発ツールなしで利用・終了・翌日再開・更新・旧版復旧ができ、主要用途と品質をPMが受入 | 隔離データでの配布/復旧試験と、PMとの合意期間の常用記録。重大未解決があれば完成にしない。未実施 |
 
-次に行う実装は、正式アプリLevisticaで「起動→URL入力→ページ表示→戻る/進む→終了」を一本つなぐこと。最初にXcodeの利用条件を解消し、既存ファイルを保護してルートのGit状態を整える。Xcodeプロジェクト一つ、App/RootView/Session/PageRuntimeの最小構成、開発用.app、`script/build_and_run.sh`一つを作る。Run設定は入口の完成後、書き込み権限を得た場合だけ追加する。タブ永続化・拡張・テーマ・自動休眠はこの一仕事に入れない。
+最初の実装単位は、正式アプリLevisticaで「起動→URL入力→ページ表示→戻る/進む→終了」を一本つなぐこと。最初にXcodeの利用条件を解消し、既存ファイルを保護してルートのGit状態を整える。Xcodeプロジェクト一つ、App/RootView/Session/PageRuntimeの最小構成、開発用.app、`script/build_and_run.sh`一つを作る。Run設定は入口の完成後、書き込み権限を得た場合だけ追加する。タブ永続化・拡張・テーマ・自動休眠はこの一仕事に入れない。
 
 この一仕事の合格は、2つの固定ページを順に開き、実際の戻る/進むで元へ移動し、メニューやCmd-Qで終了、Finderから再起動できること。URL入力中のIME、空/不正URL、オフライン/TLS失敗、外部ページからの危険scheme、ページprocess終了の扱いも確認する。XCTestはURL判定・状態遷移、UI試験は起動と操作に絞り、process存在だけで合格にしない。M1の続きとして代表サイトと少数ページのメモリを測り、別アプリは作らない。
 
@@ -200,7 +200,7 @@ GitHub認証・API操作を行うghと、ローカルの履歴を作るgitは別
 | メモリと速度 | Chrome/Safariと同条件の基準、実用上の差、目標絶対値と比率 | M1後・M2前に具体案を合意。M3で合否 |
 | passkey/DRM/通話 | API経路・資格・代表サービスと操作 | 必要と分かった時点。未確認を対応済みにしない |
 | スキルの自動認識 | 既存4件は相対リンク・本文読込・セッションの利用可能一覧で確認済み | 追加導入時も同じ確認を行う。別のMacで認識済みとは扱わない |
-| 開発/配布環境 | 適合Xcode、署名identity、アカウント、常用用の署名/更新経路 | Xcode追加は承認・展開済み。初回設定後にコンパイラを確認し、署名/配布はM1/M5で具体化 |
+| 開発/配布環境 | 適合Xcode、署名identity、アカウント、常用用の署名/更新経路 | Xcode追加は承認・展開済み。Swift 6.4を確認済み。ビルドとad hocの開発用署名を確認済み。配布はM5で具体化 |
 
 ## スキル導入と指示の調整
 
@@ -264,8 +264,34 @@ ln -s ../../skills/imozuru .agents/skills/imozuru
 | [Xcode対応表](https://developer.apple.com/xcode/system-requirements) | 現Macで利用できる開発環境の候補。最新への更新義務にはしない |
 | [Control Panel for Twitter](https://github.com/insin/control-panel-for-twitter) | 作者・配布先・MIT宣言・Safari版の存在。Levisticaでの動作は未試験 |
 
-最終見直しでは、100タブを全件生かす保証、Safari並みの性能保証、未送信入力の完全検知、Chrome拡張全互換、個人アカウントでのpasskey権限取得を断定していないことを確認する。独立試作、汎用基盤、二重ビルド入口、常時MCP、不要な管理文書を追加せず、次は正式アプリの一つの操作経路から始める。
+最終見直しでは、100タブを全件生かす保証、Safari並みの性能保証、未送信入力の完全検知、Chrome拡張全互換、個人アカウントでのpasskey権限取得を断定していないことを確認する。独立試作、汎用基盤、二重ビルド入口、常時MCP、不要な管理文書を追加せず、最初の操作経路を確認し、代表サイトと計測を続ける。
 
 2026-10-20の実装準備でsigning-entitlements 0.1.4を追加。公式installerのGit方式でcommit `0722921d5542fc593105c27bd52630babd8b8c2a` に固定し、本文とagents/openai.yamlを取得した。MITは公式plugin manifestの宣言を確認し、独立したLICENSE本文は未発見。依存はmacOS標準のcodesign・spctl・security・plutilで、追加パッケージや常時処理はない。署名調査だけを担当し、build-run-debugのビルド入口と競合させない。本文は手動参照可能、自動認識は次のターンで確認する。ファイルのハッシュはskills/SOURCES.jsonへ記録した。
 
 M1準備でswift-concurrencyとswift-testing-proを追加した。採用commit・MIT本文・全ファイルのハッシュはskills/SOURCES.jsonに記録。後者は公式installerが入れ子のプラグイン用リンクを拒否したため、同じ固定commitから本文・5参照・agents設定を取得し、リンクを含むプラグインwrapperは導入していない。依存パッケージ、MCP、hooks、共通設定は追加しない。SwiftUIは画面と状態所有、Concurrencyはactor境界、Testingは単体・統合テストと担当を分ける。両スキルは手動参照可能、自動認識は次のターンで確認する。
+
+### M1最初の実装単位の結果
+
+正式なXcodeプロジェクト一つ、SwiftUIの単一ウィンドウ、BrowserSession、PageRuntime、小さなNSViewRepresentableを追加した。表示の更新ではloadを呼ばず、空画面ではWebViewを作らない。URL欄はHTTP/HTTPS、ホスト名、検索語を扱い、検索は確定後だけDuckDuckGoへ送る。外部scheme、資格情報入りURL、WHATWG Fetchの禁止ポートを拒否する。WebKitから開始用navigationが返らない場合や、失敗通知のnavigationがnilの場合も扱い、about:blankで入力したURLを上書きしない。TLS失敗を迂回せず、再試行はGETに限る。
+
+開発用bundle IDは `dev.fomalhaut16.Levistica`、対象CPUはarm64、deployment targetは26.0。通常のサイトデータはこの開発用IDのコンテナ内で、UI試験はDEBUG限定の非永続WKWebsiteDataStoreへ分離した。署名identityは0件だったため、ローカル確認用のad hoc署名を使う。通常Releaseの実entitlementはapp-sandboxとnetwork.clientの2件だけで、Releaseへのデバッグ用base entitlementの自動注入を止めた。Debugのテスト時にはXcodeがテスト用権限を付けるため、配布時の権限とは分けて検査する。ad hocではXcodeがHardened Runtimeを無効化する旨を表示する。設定値だけでHardened Runtime・Developer ID署名・公証が成立したとは扱わず、配布はM5の未完了条件に残す。
+
+Swiftは6モード・strict complete・既定のactor isolationはnonisolated・Approachable Concurrencyは無効。UIを所有するSessionとRuntimeを明示的なMainActorへ置き、公開SDKのdelegate completion注釈に合わせた。ATSの例外はWebコンテンツの明示HTTP閲覧に限り、証明書検証を回避しない。
+
+`script/build_and_run.sh` が唯一のビルド・起動入口で、Run設定も同じ入口へ接続した。停止対象はこのcheckoutのDebug/Releaseの実行パスと開発用bundle IDが一致するプロセスだけ。試験入口 `script/test.sh` も同じ入口で既存アプリを停止する。UI試験は127.0.0.1の空きポートでHTTP・自己署名HTTPS・即時切断のサーバーを起動し、終了時に停止する。要求は記録せず、証明書と結果はGit対象外の `.local/artifacts/` に置く。`TEST_ONLY=Target/Suite/Method ./script/test.sh --ui` で失敗箇所を絞れる。
+
+2026-10-20にこのMacのXcode 27.1／Swift 6.4／SDK 27.0で確認した結果は次のとおり。
+
+| 検証 | 結果と限界 |
+|---|---|
+| Debug／Releaseビルドと署名の整合性 | 成功。通常Releaseの権限も確認。配布・公証の合格ではない |
+| Swift Testing | 13テスト、3 suiteが成功。不正URL、検索、危険scheme・禁止ポート、WebViewを作らない空状態、解放、公開delegateの適合、process終了通知後の状態を含む |
+| XCUITest | 4経路が同じ実行で成功。実際の2ページ遷移と戻る/進む、危険リンクの遮断、Cmd-Qと再起動、危険な入力の拒否、TLS拒否、通信切断とURL保持・再試行の提示 |
+| Releaseの実画面 | 2ページ表示、リンク、戻る/進む、Cmd-LでURL全選択、Cmd-Qと再起動を別に確認。日本語文字列の貼り付け表示は確認したが、IMEの変換候補・未確定状態の操作は未検証 |
+| 故障時の限界 | WebContent終了は公開delegate通知を与えた単体試験。OSによる実際の強制終了、DNS失敗やオフライン切替、未送信POSTの全遷移は引き続き検証する |
+| memory取得経路 | Release本体のphysical footprintをfootprintで取得できた。単発の空画面・UIプロセスだけの確認で、WebKit別プロセスの帰属、反復、Chrome/Safari比較、目標判定は未実施 |
+| CI | GitHubのmacos-26／Xcode 26.6でReleaseビルドと単体試験が成功。UI試験やこのMacの性能判定は実機側で行う。公式image一覧を確認し、Actionsはcommit固定、権限はcontents:read、失敗証拠は3日保存 |
+
+最終のローカル統合結果は `.local/artifacts/tests.rbaJO6/Results.xcresult`。途中で試験用の待ち受けないsocketが即時拒否を返さず、約60秒のタイムアウトになることも確認した。最終fixtureは接続後即時に切断する方式とし、キー入力はURL文字列を確認してからReturnを送る。試験で見つかった不正HTTPS URLのエラー分類と禁止ポートの無案内を修正済み。試験中に別アプリChromeのクラッシュ記録が一件あったが、関連は未確認で、アプリ起動・停止の対象にはしていない。
+
+M1全体は継続中。次は代表3サイトの表示・動画・認証の成立性、WebKitプロセスの帰属を含む初期計測、IME・故障時の残項目を確認し、M2前にメモリ・速度の具体目標をPMへ提案する。最初の閲覧経路が動いたことを、日常利用やメモリ削減の合格に読み替えない。
