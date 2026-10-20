@@ -35,6 +35,8 @@ jobs:
         run: CONFIGURATION=Release ./script/build_and_run.sh --build
       - name: Run unit tests
         run: ./script/test.sh --unit
+      - name: Test memory attribution parser
+        run: python3 -m unittest discover -s script/tests -v
       - name: Keep failure evidence
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
