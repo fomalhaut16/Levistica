@@ -2,11 +2,16 @@ import SwiftUI
 
 @main
 struct LevisticaApp: App {
-    @State private var session = BrowserSession()
+    @NSApplicationDelegateAdaptor(BrowserAppDelegate.self) private var delegate
+    @State private var session = BrowserSession.applicationSession()
 
     var body: some Scene {
         Window("Levistica", id: "browser") {
             BrowserRootView(session: session)
+                .onAppear {
+                    delegate.session = session
+                    session.activateInitialSelection()
+                }
         }
         .defaultSize(width: 1100, height: 760)
         .commands {

@@ -128,4 +128,22 @@ struct BrowserSessionTests {
         #expect(page.zoom == 1)
         #expect(page.webView.pageZoom == 1)
     }
+
+    @Test func movingTabsPreservesSelectedIdentityAndRuntime() {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let first = session.activeTab
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        first.page = runtime
+        let second = session.newTab()
+        let third = session.newTab()
+        session.select(first.id)
+        session.moveTabs(from: IndexSet(integer: 0), to: 3)
+        #expect(session.tabs.map(\.id) == [second.id, third.id, first.id])
+        #expect(session.selectedID == first.id)
+        #expect(session.page === runtime)
+        session.moveTab(first.id, by: -1)
+        #expect(session.tabs.map(\.id) == [second.id, first.id, third.id])
+        session.moveTabs(from: IndexSet(integer: 99), to: 0)
+        #expect(session.tabs.count == 3)
+    }
 }

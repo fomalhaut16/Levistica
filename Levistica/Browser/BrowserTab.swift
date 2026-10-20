@@ -4,7 +4,12 @@ import Observation
 @MainActor
 @Observable
 final class BrowserTab: Identifiable {
-    let id = UUID()
+    let id: UUID
+    var pendingURL: URL?
+    var mayRestoreAutomatically = true
+    var storedTitle = ""
+
+    init(id: UUID = UUID()) { self.id = id }
     var addressDraft = ""
     var inputError: String?
     var restorationNotice: String?
@@ -13,6 +18,6 @@ final class BrowserTab: Identifiable {
 
     var displayTitle: String {
         if let title = page?.title, !title.isEmpty, title != "Levistica" { return title }
-        return page?.url?.host ?? "新しいタブ"
+        return storedTitle.isEmpty ? (page?.url?.host ?? "新しいタブ") : storedTitle
     }
 }

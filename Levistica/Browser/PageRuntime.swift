@@ -5,6 +5,7 @@ import WebKit
 @Observable
 final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     let webView: WKWebView
+    var onMetadataChange: (() -> Void)?
     private(set) var url: URL?
     private(set) var title = "Levistica"
     private(set) var isLoading = false
@@ -48,12 +49,15 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     private func updateSnapshot() {
+        let previousURL = url
+        let previousTitle = title
         if failure == nil, let current = webView.url, current.absoluteString != "about:blank" { url = current }
         title = webView.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Levistica"
         isLoading = webView.isLoading
         canGoBack = webView.canGoBack
         canGoForward = webView.canGoForward
         progress = webView.estimatedProgress
+        if previousURL != url || previousTitle != title { onMetadataChange?() }
     }
 
     func invalidateFindResult() {
@@ -141,6 +145,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
             canRetry = action.request.httpMethod == "GET"
             url = action.request.url
             failure = nil
+            onMetadataChange?()
         }
         decisionHandler(.allow)
     }

@@ -16,10 +16,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/tab-state": '<title>State tab</title><h1>State tab</h1><input aria-label="Draft"><p id="loads"></p><script>const n=+(sessionStorage.getItem("loads")||0)+1;sessionStorage.setItem("loads",n);document.getElementById("loads").textContent="Document loads: "+n;</script>',
             "/post-form": '<h1>Post fixture</h1><form action="/submitted" method="post"><input name="draft" value="synthetic"><button>Submit fixture</button></form>',
             "/submitted": '<h1>Unexpected GET replay</h1>',
-            "/one": '<h1>Levistica fixture one</h1><a href="/two">Second page</a><a href="levistica-test-native:blocked">Blocked native link</a>',
-            "/two": '<h1>Levistica fixture two</h1><a href="/one">First page</a><input aria-label="Draft">',
+            "/one": '<title>Fixture one</title><h1>Levistica fixture one</h1><a href="/two">Second page</a><a href="levistica-test-native:blocked">Blocked native link</a>',
+            "/two": '<title>Fixture two</title><h1>Levistica fixture two</h1><a href="/one">First page</a><input aria-label="Draft">',
             "/fullscreen": '''<h1>Fullscreen fixture</h1><p id="state">windowed</p>
-                <button onclick="document.documentElement.requestFullscreen()">Enter fullscreen</button>
+                <button onclick="document.documentElement.requestFullscreen().catch(e => document.getElementById('state').textContent = 'fullscreen failed: ' + e.name)">Enter fullscreen</button>
                 <button onclick="document.exitFullscreen()">Exit fullscreen</button>
                 <script>document.addEventListener('fullscreenchange', () => {
                   document.getElementById('state').textContent = document.fullscreenElement ? 'fullscreen active' : 'windowed';

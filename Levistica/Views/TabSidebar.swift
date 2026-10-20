@@ -8,7 +8,7 @@ struct TabSidebar: View {
         guard !filter.isEmpty else { return session.tabs }
         return session.tabs.filter {
             $0.displayTitle.localizedCaseInsensitiveContains(filter) ||
-            ($0.page?.url?.absoluteString.localizedCaseInsensitiveContains(filter) == true)
+            (($0.page?.url ?? $0.pendingURL)?.absoluteString.localizedCaseInsensitiveContains(filter) == true)
         }
     }
 
@@ -40,11 +40,24 @@ struct TabSidebar: View {
                     .accessibilityIdentifier("tab-\(tab.id)")
                     .contextMenu {
                         Button("タブを閉じる") { session.closeTab(tab.id) }
+                        Divider()
+                        Button("前に移動") { session.moveTab(tab.id, by: -1) }
+                            .disabled(session.tabs.first?.id == tab.id)
+                        Button("後ろに移動") { session.moveTab(tab.id, by: 1) }
+                            .disabled(session.tabs.last?.id == tab.id)
                     }
+                    .moveDisabled(!filter.isEmpty)
+                }
+                .onMove { source, destination in
+                    guard filter.isEmpty else { return }
+                    session.moveTabs(from: source, to: destination)
                 }
             }
             .listStyle(.sidebar)
             .accessibilityIdentifier("tabList")
+            Text("\(session.tabs.count)タブ・読み込み済み\(session.loadedPageCount)")
+                .font(.caption).foregroundStyle(.secondary)
+                .padding(.bottom, 8).accessibilityIdentifier("tabLoadSummary")
         }
         .onChange(of: session.selectedID) {
             if !visibleTabs.contains(where: { $0.id == session.selectedID }) { filter = "" }

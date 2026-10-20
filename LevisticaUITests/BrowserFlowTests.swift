@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
@@ -18,7 +19,10 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
         app.buttons["backButton"].click()
         XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
-        app.buttons["forwardButton"].click()
+        let forward = app.buttons["forwardButton"]
+        let forwardReady = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: forward)
+        wait(for: [forwardReady], timeout: 5)
+        forward.click()
         XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
@@ -84,11 +88,29 @@ final class BrowserFlowTests: XCTestCase {
         submit(base + "/fullscreen", in: app)
         let enter = app.webViews.buttons["Enter fullscreen"]
         XCTAssertTrue(enter.waitForExistence(timeout: 10))
+        let beforeFrame = app.webViews.firstMatch.frame
+        attachWindowImage(app, name: "fullscreen-before")
         enter.click()
         XCTAssertTrue(app.webViews.staticTexts["fullscreen active"].waitForExistence(timeout: 10))
+        let screenSize = try XCTUnwrap(NSScreen.main?.frame.size)
+        let fillsScreen = NSPredicate { _, _ in
+            let frame = app.webViews.firstMatch.frame
+            return frame.width >= screenSize.width - 2 && frame.height >= screenSize.height * 0.9
+        }
+        let fullscreenGeometry = expectation(for: fillsScreen, evaluatedWith: nil)
+        wait(for: [fullscreenGeometry], timeout: 10)
+        let fullImage = XCTAttachment(screenshot: app.screenshot())
+        fullImage.name = "fullscreen-active"
+        fullImage.lifetime = .keepAlways
+        add(fullImage)
+        print("Fullscreen frames: \(app.windows.allElementsBoundByIndex.map(\.frame)); webview: \(app.webViews.firstMatch.frame); before: \(beforeFrame)")
         app.webViews.buttons["Exit fullscreen"].click()
         XCTAssertTrue(app.webViews.staticTexts["windowed"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.textFields["addressField"].exists)
+        let afterFrame = app.webViews.firstMatch.frame
+        XCTAssertEqual(afterFrame.width, beforeFrame.width, accuracy: 2)
+        XCTAssertEqual(afterFrame.height, beforeFrame.height, accuracy: 2)
+        attachWindowImage(app, name: "fullscreen-after")
         app.terminate()
     }
 
@@ -132,10 +154,12 @@ final class BrowserFlowTests: XCTestCase {
         app.typeKey("f", modifierFlags: .command)
         let find = app.textFields["pageFindField"]
         XCTAssertTrue(find.waitForExistence(timeout: 5))
+        waitForInputIndicator(in: app)
         find.click()
         find.typeText("fixture")
         app.buttons["findNextButton"].click()
         XCTAssertTrue(app.staticTexts["見つかりました"].waitForExistence(timeout: 5))
+        waitForInputIndicator(in: app)
         find.click()
         find.typeKey("a", modifierFlags: .command)
         find.typeText("zzzz-no-match-zzzz")
@@ -167,11 +191,74 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testRestartRestoresTabsAndLoadsOnlyTheSelection() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launch()
+        app.activate()
+        submit(base + "/two", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        app.typeKey("t", modifierFlags: .command)
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        app.typeKey("t", modifierFlags: .command)
+        app.typeKey("[", modifierFlags: [.command, .shift])
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 5))
+        let firstRow = app.staticTexts["Fixture two"].firstMatch
+        XCTAssertTrue(firstRow.waitForExistence(timeout: 5))
+        firstRow.rightClick()
+        app.menuItems["後ろに移動"].click()
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["3タブ・読み込み済み1"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["sessionRecoveryNotice"].exists)
+        app.typeKey("]", modifierFlags: [.command, .shift])
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["3タブ・読み込み済み2"].waitForExistence(timeout: 5))
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
+    @MainActor
+    private func attachWindowImage(_ app: XCUIApplication, name: String) {
+        // macOS application screenshots may include other applications. Crop to this
+        // fixture window before retaining any image in the test result.
+        let image = app.screenshot().image
+        let frame = app.windows.firstMatch.frame
+        guard let screen = NSScreen.main, !frame.isEmpty,
+              let original = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        let scaleX = CGFloat(original.width) / screen.frame.width
+        let scaleY = CGFloat(original.height) / screen.frame.height
+        let region = CGRect(x: frame.minX * scaleX, y: frame.minY * scaleY,
+                            width: frame.width * scaleX, height: frame.height * scaleY)
+        guard let cropped = original.cropping(to: region) else { return }
+        let attachment = XCTAttachment(image: NSImage(cgImage: cropped, size: frame.size))
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    private func waitForInputIndicator(in app: XCUIApplication) {
+        // macOS briefly exposes the input-source badge as a dialog on field focus.
+        // Let it disappear rather than letting XCTest try to dismiss a stale button.
+        let indicator = app.dialogs.containing(.button, identifier: "InputSource").firstMatch
+        XCTAssertTrue(indicator.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor
     private func submit(_ text: String, in app: XCUIApplication,
                         file: StaticString = #filePath, line: UInt = #line) {
         let address = app.textFields["addressField"]
         XCTAssertTrue(address.waitForExistence(timeout: 10), file: file, line: line)
+        waitForInputIndicator(in: app)
         address.click()
+        waitForInputIndicator(in: app)
         address.typeKey("a", modifierFlags: .command)
         address.typeText(text)
         // Verify the injected text before Return, so a lost key cannot be mistaken for a navigation failure.

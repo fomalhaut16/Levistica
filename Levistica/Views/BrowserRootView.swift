@@ -15,6 +15,25 @@ struct BrowserRootView: View {
     private func tabContent(_ tab: BrowserTab) -> some View {
         VStack(spacing: 0) {
             BrowserNavigationBar(session: session, tab: tab).id(tab.id)
+            if let message = session.storageFailure {
+                HStack {
+                    Text(message).accessibilityIdentifier("storageFailure")
+                    Spacer()
+                    Button("保存を再試行") { session.persistSession() }
+                    Button("保存せず終了") {
+                        session.discardUnsavedChangesOnQuit = true
+                        NSApplication.shared.terminate(nil)
+                    }
+                }.padding(8)
+            }
+            if session.recoveryRequired {
+                HStack {
+                    Text("前回は正常に終了しませんでした。タブ一覧だけを復元しました。")
+                        .accessibilityIdentifier("sessionRecoveryNotice")
+                    Spacer()
+                    Button("選択中のページを開く") { session.resumeSelectedTab() }
+                }.padding(8)
+            }
             if let message = tab.inputError ?? tab.page?.failure {
                 HStack {
                     Text(message).textSelection(.enabled).accessibilityIdentifier("errorMessage")
