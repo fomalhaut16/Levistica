@@ -12,7 +12,7 @@
 
 ## 作業と検証の規則
 
-作業先は `/Users/User/Non-iCloud-Documents/Levistica`。参照資料 `/Users/User/Non-iCloud-Documents/DomainResearch/research/macos-personal-browser/` と他プロジェクトは変更しない。開始時に既存ファイルとGit状態を調べ、既存変更を保護する。2026-10-20の初回確認ではGit未初期化。その後、ユーザーからGitHub掲載の依頼を受けたため、設計段階でもルートのGit初期化・設計の初回コミット・非公開リポジトリへのpushは依頼範囲に含む。初回掲載はユーザーがコマンドを実行し、GitHub上で結果を確認済み。
+作業先は `/Users/User/Non-iCloud-Documents/Levistica`。参照資料 `/Users/User/Non-iCloud-Documents/DomainResearch/research/macos-personal-browser/` と他プロジェクトは変更しない。ローカルの `research-reference` は同資料への絶対シンボリックリンクで、読み取り専用として扱う。Git対象外でありリンク先を編集しない。開始時に既存ファイルとGit状態を調べ、既存変更を保護する。2026-10-20の初回確認ではGit未初期化。その後、ユーザーからGitHub掲載の依頼を受けたため、設計段階でもルートのGit初期化・設計の初回コミット・非公開リポジトリへのpushは依頼範囲に含む。初回掲載はユーザーがコマンドを実行し、GitHub上で結果を確認済み。
 
 初回の設計基準版以降は、一つの使い方や問題ごとのブランチと小さなPRで進める。変更の目的、受入条件、実施した検証と未確認点を残す。必要な検証を終えた通常のPRはCodexがmainへ統合してよい。他の変更を混ぜず、技術検証の合格をPMによる製品受入と同一視しない。認証・権限・環境の制約に遭遇したら、結果を伝えてユーザーを挟む。ブラウザ操作や別の連携へ黙って切り替えず、GitHub操作はghを基本にする。
 

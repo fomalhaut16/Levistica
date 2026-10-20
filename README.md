@@ -2,7 +2,7 @@
 
 動画・資料調査・SNSに使う、個人用macOSブラウザです。メモリ使用量を最優先に、速さ、安全性、Macアプリとしての扱いやすさと、好みに変えられる外枠UIを目指します。
 
-初期設計は承認され、実装開始の準備を進めています。アプリ本体・試作アプリ・ビルド手順はまだありません。推奨方式はSwiftUI＋AppKit＋システムWebKitのWKWebViewで、Chromeより省メモリになるかは今後実測します。Xcode本体の利用条件を整え、正式アプリの最初の操作経路から実装します。
+初期設計は承認され、正式アプリの最初の操作経路を実装中です。初版のソースとビルド手順はありますが、Xcodeの共通部品が不足しており、ビルド・起動・操作試験は未完了です。推奨方式はSwiftUI＋AppKit＋システムWebKitのWKWebViewで、Chromeより省メモリになるかは今後実測します。まず「起動→URL入力→ページ表示→戻る／進む→終了」を確認します。
 
 ## 文書の読み方
 
@@ -27,3 +27,18 @@
 imozuru原版は他プロジェクトへの絶対パスリンクを外し、このリポジトリ内へコピーしました。元の設置先は変更していません。新しい環境での自動認識には、PLAN.mdに記載した `.agents/skills` の相対リンクを設定し、Codexの一覧で確認します。
 
 ブラウザのプロファイル、Cookie、認証情報、閲覧履歴、私的な試験資料・計測ログはGitへ入れません。`.local/`、`research/`、ビルド成果物は除外します。第三者スキルの条件は各出典・ライセンスに従い、本体の公開やライセンスの選択は別途判断します。
+
+## 開発中の起動と試験
+
+Xcodeは `/Applications/Xcode.app` を入口スクリプト内の `DEVELOPER_DIR` で選びます。全体のxcode-select設定は変更しません。ライセンス同意と `xcodebuild -runFirstLaunch` の成功が前提です。
+
+```sh
+./script/build_and_run.sh           # Debugをビルドして起動
+CONFIGURATION=Release ./script/build_and_run.sh --verify
+./script/test.sh --unit             # Swift Testing
+./script/test.sh --ui               # 隔離データとloopbackページでXCUITest
+```
+
+Runボタンは同じ `script/build_and_run.sh` を呼びます。アプリと検証ログはGit対象外の `.local/` に置きます。テストは通常のログインデータを使いません。URL欄はHTTP/HTTPS、ホスト名、検索語を扱い、検索は入力確定後にDuckDuckGoへ送信します。M1初版にはタブ保存、認証ポップアップ、ダウンロード、権限許可、入力保護がまだ揃っていないため、日常利用の受入前です。
+
+このMacではルート直下の `research-reference` から調査資料を参照できます。元資料は変更しません。このリンクは他プロジェクトへの絶対パスを指すためGit対象外で、別のMacへは引き継がれません。

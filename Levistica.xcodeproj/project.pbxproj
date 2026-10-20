@@ -1,0 +1,573 @@
+// !$*UTF8*$!
+{
+	classes = {
+	};
+	objectVersion = "56";
+	archiveVersion = "1";
+	objects = {
+		B6ACB5FEE85DA8F4E041698B = {
+			path = "Levistica.app";
+			isa = "PBXFileReference";
+			includeInIndex = "0";
+			explicitFileType = "wrapper.application";
+			sourceTree = "BUILT_PRODUCTS_DIR";
+		};
+		CAC31A5292D3745FE0424C02 = {
+			isa = "XCBuildConfiguration";
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = "YES";
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = "YES";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Levistica.app/Contents/MacOS/Levistica";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.fomalhaut16.LevisticaTests";
+				CODE_SIGN_STYLE = "Manual";
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = "Release";
+		};
+		89E1FD6268CC0F221A2BE178 = {
+			isa = "XCBuildConfiguration";
+			buildSettings = {
+				DEBUG_INFORMATION_FORMAT = "dwarf";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				CLANG_ENABLE_MODULES = "YES";
+				MACOSX_DEPLOYMENT_TARGET = "26.0";
+				GCC_WARN_64_TO_32_BIT_CONVERSION = "YES";
+				SWIFT_COMPILATION_MODE = "singlefile";
+				ENABLE_TESTABILITY = "YES";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = "nonisolated";
+				SWIFT_STRICT_CONCURRENCY = "complete";
+				SDKROOT = "macosx";
+				SWIFT_VERSION = "6.0";
+				SWIFT_APPROACHABLE_CONCURRENCY = "NO";
+				CLANG_ENABLE_OBJC_ARC = "YES";
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = "YES";
+			};
+			name = "Debug";
+		};
+		B83F72F36E3D98E9D6DA2A34 = {
+			isa = "PBXTargetDependency";
+			target = 299C091D8FDC794D542396F2;
+			targetProxy = 24EFCB569FB041B6FD3771C8;
+		};
+		1C4C7408E9219CCF28D3E750 = {
+			isa = "PBXResourcesBuildPhase";
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		E6DE6C99132752C914FEF632 = {
+			isa = "XCBuildConfiguration";
+			buildSettings = {
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited)";
+				CLANG_ENABLE_MODULES = "YES";
+				MACOSX_DEPLOYMENT_TARGET = "26.0";
+				GCC_WARN_64_TO_32_BIT_CONVERSION = "YES";
+				SWIFT_COMPILATION_MODE = "wholemodule";
+				ENABLE_TESTABILITY = "NO";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = "nonisolated";
+				SWIFT_STRICT_CONCURRENCY = "complete";
+				SDKROOT = "macosx";
+				SWIFT_VERSION = "6.0";
+				SWIFT_APPROACHABLE_CONCURRENCY = "NO";
+				CLANG_ENABLE_OBJC_ARC = "YES";
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = "YES";
+			};
+			name = "Release";
+		};
+		4615E415F689A822E941827F = {
+			isa = "XCConfigurationList";
+			defaultConfigurationIsVisible = "0";
+			defaultConfigurationName = "Release";
+			buildConfigurations = (
+				B778EFCA6EA687E36AB9821A,
+				05CDFF87FF8AD5F881638ECF,
+			);
+		};
+		C19C986FD8A407F599F8841B = {
+			path = "Levistica/Browser/BrowserSession.swift";
+			isa = "PBXFileReference";
+			lastKnownFileType = "sourcecode.swift";
+			sourceTree = "<group>";
+		};
+		A67FEAD17CAD93AAA311B378 = {
+			isa = "PBXFrameworksBuildPhase";
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		C4CFFFB74C9F0E999E769F33 = {
+			isa = "PBXBuildFile";
+			fileRef = 57ED027A15BC4CE85F62336B;
+		};
+		7CADAB8074822FE72D116417 = {
+			path = "LevisticaUITests.xctest";
+			isa = "PBXFileReference";
+			includeInIndex = "0";
+			explicitFileType = "wrapper.cfbundle";
+			sourceTree = "BUILT_PRODUCTS_DIR";
+		};
+		E7FE958BD69394833A189050 = {
+			path = "LevisticaTests/Browser/BrowserSessionTests.swift";
+			isa = "PBXFileReference";
+			lastKnownFileType = "sourcecode.swift";
+			sourceTree = "<group>";
+		};
+		DE1B9DC842AC8C17127E0A31 = {
+			path = "LevisticaUITests/BrowserFlowTests.swift";
+			isa = "PBXFileReference";
+			lastKnownFileType = "sourcecode.swift";
+			sourceTree = "<group>";
+		};
+		FC20B29EDAC101588A668101 = {
+			isa = "PBXBuildFile";
+			fileRef = 6B783834263E93601337696C;
+		};
+		51D258F1AF38742F6DAE5EBC = {
+			path = "Levistica/Browser/PageRuntime.swift";
+			isa = "PBXFileReference";
+			lastKnownFileType = "sourcecode.swift";
+			sourceTree = "<group>";
+		};
+		E85EEDCFF88FE696E6D2BB8B = {
+			isa = "PBXBuildFile";
+			fileRef = 0A9E5745B540B1CF63B276FB;
+		};
+		60C43FC1DB8348BC5178F387 = {
+			isa = "XCConfigurationList";
+			defaultConfigurationIsVisible = "0";
+			defaultConfigurationName = "Release";
+			buildConfigurations = (
+				7595D30703E7D19AC86F7BA8,
+				CAC31A5292D3745FE0424C02,
+			);
+		};
+		3A015DBBEF4715D9286EAB21 = {
+			buildConfigurationList = 60C43FC1DB8348BC5178F387;
+			productReference = DAA78A2ACA963A8890A3FE9D;
+			productType = "com.apple.product-type.bundle.unit-test";
+			productName = "LevisticaTests";
+			isa = "PBXNativeTarget";
+			buildPhases = (
+				076BEED332BD5C1CB8742F04,
+				A67FEAD17CAD93AAA311B378,
+				ACC540956426ABBAEB5EBF7E,
+			);
+			dependencies = (
+				B83F72F36E3D98E9D6DA2A34,
+			);
+			name = "LevisticaTests";
+			buildRules = (
+			);
+		};
+		14B0EABA98C3249E344A5DA8 = {
+			isa = "PBXBuildFile";
+			fileRef = 95E31F79A967BFD83967C278;
+		};
+		DEE376DCE35FAB49D7194445 = {
+			isa = "PBXTargetDependency";
+			target = 299C091D8FDC794D542396F2;
+			targetProxy = B06A66EF81CB31D081E38244;
+		};
+		24EFCB569FB041B6FD3771C8 = {
+			isa = "PBXContainerItemProxy";
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			remoteGlobalIDString = 299C091D8FDC794D542396F2;
+			remoteInfo = "Levistica";
+			proxyType = "1";
+		};
+		ACC540956426ABBAEB5EBF7E = {
+			isa = "PBXResourcesBuildPhase";
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		8F4ECCE5361DED8B3717E5ED = {
+			isa = "PBXBuildFile";
+			fileRef = C19C986FD8A407F599F8841B;
+		};
+		52F654CBC2DCBF35AC1192FF = {
+			isa = "PBXBuildFile";
+			fileRef = 4A487D8BB8AF9CDC4C4542E5;
+		};
+		1836A008FFEDF9232CEB4603 = {
+			isa = "PBXFrameworksBuildPhase";
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		FBDC4F23F93125BBEEAE800C = {
+			isa = "PBXGroup";
+			name = "Products";
+			children = (
+				B6ACB5FEE85DA8F4E041698B,
+				DAA78A2ACA963A8890A3FE9D,
+				7CADAB8074822FE72D116417,
+			);
+			sourceTree = "<group>";
+		};
+		05CDFF87FF8AD5F881638ECF = {
+			isa = "XCBuildConfiguration";
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = "YES";
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = "YES";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.fomalhaut16.LevisticaUITests";
+				CODE_SIGN_STYLE = "Manual";
+				ENABLE_APP_SANDBOX = "NO";
+				TEST_TARGET_NAME = "Levistica";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = "Release";
+		};
+		531523C49D1CED91823661FC = {
+			isa = "PBXBuildFile";
+			fileRef = 51D258F1AF38742F6DAE5EBC;
+		};
+		98DCE319361CE72DCA7EC945 = {
+			isa = "XCBuildConfiguration";
+			buildSettings = {
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				CURRENT_PROJECT_VERSION = "1";
+				MARKETING_VERSION = "0.1.0";
+				INFOPLIST_FILE = "Levistica/Info.plist";
+				CODE_SIGN_IDENTITY = "-";
+				ENABLE_APP_SANDBOX = "YES";
+				GENERATE_INFOPLIST_FILE = "NO";
+				INFOPLIST_KEY_NSPrincipalClass = "NSApplication";
+				CODE_SIGN_ENTITLEMENTS = "Levistica/Levistica.entitlements";
+				CODE_SIGN_STYLE = "Manual";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				ENABLE_HARDENED_RUNTIME = "YES";
+				COMBINE_HIDPI_IMAGES = "YES";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.fomalhaut16.Levistica";
+			};
+			name = "Debug";
+		};
+		545B181A5A90ECB199CCA34D = {
+			isa = "PBXSourcesBuildPhase";
+			buildActionMask = "2147483647";
+			files = (
+				F43D16DC67425203EFE20A61,
+				8F4ECCE5361DED8B3717E5ED,
+				E85EEDCFF88FE696E6D2BB8B,
+				531523C49D1CED91823661FC,
+				14B0EABA98C3249E344A5DA8,
+				52F654CBC2DCBF35AC1192FF,
+				F5FDA3C4C248416D6A564F3B,
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		4BA304E783CFBB9FA6E56552 = {
+			isa = "XCConfigurationList";
+			defaultConfigurationIsVisible = "0";
+			defaultConfigurationName = "Release";
+			buildConfigurations = (
+				89E1FD6268CC0F221A2BE178,
+				E6DE6C99132752C914FEF632,
+			);
+		};
+		DAA78A2ACA963A8890A3FE9D = {
+			path = "LevisticaTests.xctest";
+			isa = "PBXFileReference";
+			includeInIndex = "0";
+			explicitFileType = "wrapper.cfbundle";
+			sourceTree = "BUILT_PRODUCTS_DIR";
+		};
+		EA942AB1E5DC4688F3C270BF = {
+			isa = "PBXGroup";
+			name = "LevisticaUITests";
+			children = (
+				DE1B9DC842AC8C17127E0A31,
+			);
+			sourceTree = "<group>";
+		};
+		A46E0F953314BD03E17C5C07 = {
+			path = "Levistica/Views/WebPageView.swift";
+			isa = "PBXFileReference";
+			lastKnownFileType = "sourcecode.swift";
+			sourceTree = "<group>";
+		};
+		0CB0CBC9EEEFB6A369F74041 = {
+			path = "Levistica/App/LevisticaApp.swift";
+			isa = "PBXFileReference";
+			lastKnownFileType = "sourcecode.swift";
+			sourceTree = "<group>";
+		};
+		ADA290719B47EA0309618CDA = {
+			isa = "PBXBuildFile";
+			fileRef = E7FE958BD69394833A189050;
+		};
+		FABFEC902A9A1B8134E35706 = {
+			isa = "PBXBuildFile";
+			fileRef = DE1B9DC842AC8C17127E0A31;
+		};
+		3638C05EBA08B1284049B72A = {
+			isa = "PBXGroup";
+			name = "Levistica";
+			children = (
+				0CB0CBC9EEEFB6A369F74041,
+				C19C986FD8A407F599F8841B,
+				0A9E5745B540B1CF63B276FB,
+				51D258F1AF38742F6DAE5EBC,
+				95E31F79A967BFD83967C278,
+				4A487D8BB8AF9CDC4C4542E5,
+				A46E0F953314BD03E17C5C07,
+			);
+			sourceTree = "<group>";
+		};
+		57ED027A15BC4CE85F62336B = {
+			path = "LevisticaTests/Support/AddressResolverTests.swift";
+			isa = "PBXFileReference";
+			lastKnownFileType = "sourcecode.swift";
+			sourceTree = "<group>";
+		};
+		69DB5C14EE5427FFF0C246EA = {
+			isa = "PBXFrameworksBuildPhase";
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		0D6E8EABDFCB14CDCFD60374 = {
+			isa = "PBXGroup";
+			name = "LevisticaTests";
+			children = (
+				E7FE958BD69394833A189050,
+				6B783834263E93601337696C,
+				57ED027A15BC4CE85F62336B,
+			);
+			sourceTree = "<group>";
+		};
+		BBB7B64DF4A47AE74C74A486 = {
+			isa = "PBXResourcesBuildPhase";
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		F5FDA3C4C248416D6A564F3B = {
+			isa = "PBXBuildFile";
+			fileRef = A46E0F953314BD03E17C5C07;
+		};
+		9300C83470080E577CCC8B30 = {
+			isa = "XCConfigurationList";
+			defaultConfigurationIsVisible = "0";
+			defaultConfigurationName = "Release";
+			buildConfigurations = (
+				98DCE319361CE72DCA7EC945,
+				122722A601E4EAF94472F35D,
+			);
+		};
+		6B783834263E93601337696C = {
+			path = "LevisticaTests/Browser/NavigationPolicyTests.swift";
+			isa = "PBXFileReference";
+			lastKnownFileType = "sourcecode.swift";
+			sourceTree = "<group>";
+		};
+		B778EFCA6EA687E36AB9821A = {
+			isa = "XCBuildConfiguration";
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = "YES";
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = "YES";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.fomalhaut16.LevisticaUITests";
+				CODE_SIGN_STYLE = "Manual";
+				ENABLE_APP_SANDBOX = "NO";
+				TEST_TARGET_NAME = "Levistica";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = "Debug";
+		};
+		DC76E9F0C0006E8F919E0C51 = {
+			isa = "PBXGroup";
+			sourceTree = "<group>";
+			children = (
+				3638C05EBA08B1284049B72A,
+				0D6E8EABDFCB14CDCFD60374,
+				EA942AB1E5DC4688F3C270BF,
+				FBDC4F23F93125BBEEAE800C,
+			);
+		};
+		0A9E5745B540B1CF63B276FB = {
+			path = "Levistica/Browser/NavigationPolicy.swift";
+			isa = "PBXFileReference";
+			lastKnownFileType = "sourcecode.swift";
+			sourceTree = "<group>";
+		};
+		98F54143AB4E86B28C3AFEE0 = {
+			buildConfigurationList = 4BA304E783CFBB9FA6E56552;
+			targets = (
+				299C091D8FDC794D542396F2,
+				3A015DBBEF4715D9286EAB21,
+				88CD0A959EE11552A0C308FE,
+			);
+			developmentRegion = "ja";
+			knownRegions = (
+				"ja",
+				"en",
+				"Base",
+			);
+			isa = "PBXProject";
+			compatibilityVersion = "Xcode 14.0";
+			productRefGroup = FBDC4F23F93125BBEEAE800C;
+			projectDirPath = "";
+			attributes = {
+				LastUpgradeCheck = "2710";
+				BuildIndependentTargetsInParallel = "YES";
+			};
+			hasScannedForEncodings = "0";
+			projectRoot = "";
+			mainGroup = DC76E9F0C0006E8F919E0C51;
+		};
+		B06A66EF81CB31D081E38244 = {
+			isa = "PBXContainerItemProxy";
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			remoteGlobalIDString = 299C091D8FDC794D542396F2;
+			remoteInfo = "Levistica";
+			proxyType = "1";
+		};
+		F43D16DC67425203EFE20A61 = {
+			isa = "PBXBuildFile";
+			fileRef = 0CB0CBC9EEEFB6A369F74041;
+		};
+		299C091D8FDC794D542396F2 = {
+			buildConfigurationList = 9300C83470080E577CCC8B30;
+			productReference = B6ACB5FEE85DA8F4E041698B;
+			productType = "com.apple.product-type.application";
+			productName = "Levistica";
+			isa = "PBXNativeTarget";
+			buildPhases = (
+				545B181A5A90ECB199CCA34D,
+				1836A008FFEDF9232CEB4603,
+				BBB7B64DF4A47AE74C74A486,
+			);
+			dependencies = (
+			);
+			name = "Levistica";
+			buildRules = (
+			);
+		};
+		122722A601E4EAF94472F35D = {
+			isa = "XCBuildConfiguration";
+			buildSettings = {
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				CURRENT_PROJECT_VERSION = "1";
+				MARKETING_VERSION = "0.1.0";
+				INFOPLIST_FILE = "Levistica/Info.plist";
+				CODE_SIGN_IDENTITY = "-";
+				ENABLE_APP_SANDBOX = "YES";
+				GENERATE_INFOPLIST_FILE = "NO";
+				INFOPLIST_KEY_NSPrincipalClass = "NSApplication";
+				CODE_SIGN_ENTITLEMENTS = "Levistica/Levistica.entitlements";
+				CODE_SIGN_STYLE = "Manual";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				ENABLE_HARDENED_RUNTIME = "YES";
+				COMBINE_HIDPI_IMAGES = "YES";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.fomalhaut16.Levistica";
+			};
+			name = "Release";
+		};
+		CBB4DB0D3FF7296A358E4AEB = {
+			isa = "PBXSourcesBuildPhase";
+			buildActionMask = "2147483647";
+			files = (
+				FABFEC902A9A1B8134E35706,
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		95E31F79A967BFD83967C278 = {
+			path = "Levistica/Support/AddressResolver.swift";
+			isa = "PBXFileReference";
+			lastKnownFileType = "sourcecode.swift";
+			sourceTree = "<group>";
+		};
+		88CD0A959EE11552A0C308FE = {
+			buildConfigurationList = 4615E415F689A822E941827F;
+			productReference = 7CADAB8074822FE72D116417;
+			productType = "com.apple.product-type.bundle.ui-testing";
+			productName = "LevisticaUITests";
+			isa = "PBXNativeTarget";
+			buildPhases = (
+				CBB4DB0D3FF7296A358E4AEB,
+				69DB5C14EE5427FFF0C246EA,
+				1C4C7408E9219CCF28D3E750,
+			);
+			dependencies = (
+				DEE376DCE35FAB49D7194445,
+			);
+			name = "LevisticaUITests";
+			buildRules = (
+			);
+		};
+		7595D30703E7D19AC86F7BA8 = {
+			isa = "XCBuildConfiguration";
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = "YES";
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = "YES";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Levistica.app/Contents/MacOS/Levistica";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.fomalhaut16.LevisticaTests";
+				CODE_SIGN_STYLE = "Manual";
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = "Debug";
+		};
+		4A487D8BB8AF9CDC4C4542E5 = {
+			path = "Levistica/Views/BrowserRootView.swift";
+			isa = "PBXFileReference";
+			lastKnownFileType = "sourcecode.swift";
+			sourceTree = "<group>";
+		};
+		076BEED332BD5C1CB8742F04 = {
+			isa = "PBXSourcesBuildPhase";
+			buildActionMask = "2147483647";
+			files = (
+				ADA290719B47EA0309618CDA,
+				FC20B29EDAC101588A668101,
+				C4CFFFB74C9F0E999E769F33,
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+	};
+	rootObject = 98F54143AB4E86B28C3AFEE0;
+}

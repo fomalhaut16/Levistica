@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+MODE="${1:---unit}"
+case "$MODE" in --unit|--ui|--all) ;; *) echo "usage: $0 [--unit|--ui|--all]" >&2; exit 2;; esac
+mkdir -p "$ROOT_DIR/.local/artifacts"
+RUN_DIR="$(mktemp -d "$ROOT_DIR/.local/artifacts/tests.XXXXXX")"
+FIXTURE_PID=""
+cleanup() { if [[ -n "$FIXTURE_PID" ]]; then kill "$FIXTURE_PID" 2>/dev/null || true; wait "$FIXTURE_PID" 2>/dev/null || true; fi; }
+trap cleanup EXIT
+BUILD_ARGS=(-project "$ROOT_DIR/Levistica.xcodeproj" -scheme Levistica
+    -configuration Debug -destination 'platform=macOS'
+    -derivedDataPath "$ROOT_DIR/.local/DerivedData" -resultBundlePath "$RUN_DIR/Results.xcresult")
+if [[ "$MODE" == --unit ]]; then
+    BUILD_ARGS+=(-only-testing:LevisticaTests)
+else
+    python3 "$ROOT_DIR/script/test-fixture.py" "$RUN_DIR/fixture.json" >"$RUN_DIR/fixture.log" 2>&1 &
+    FIXTURE_PID=$!
+    for ((attempt=0; attempt<100; attempt++)); do
+        [[ -f "$RUN_DIR/fixture.json" ]] && break
+        kill -0 "$FIXTURE_PID" 2>/dev/null || { cat "$RUN_DIR/fixture.log" >&2; exit 1; }
+        sleep 0.1
+    done
+    LEVISTICA_FIXTURE_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["url"])' "$RUN_DIR/fixture.json")"
+    export LEVISTICA_FIXTURE_URL
+    if [[ "$MODE" == --ui ]]; then BUILD_ARGS+=(-only-testing:LevisticaUITests); fi
+fi
+if [[ -n "${LEVISTICA_FIXTURE_URL:-}" ]]; then BUILD_ARGS+=("LEVISTICA_FIXTURE_URL=$LEVISTICA_FIXTURE_URL"); fi
+echo "Test artifacts: $RUN_DIR"
+if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" test >"$RUN_DIR/xcodebuild.log" 2>&1; then
+    tail -n 90 "$RUN_DIR/xcodebuild.log" >&2
+    exit 1
+fi
+tail -n 25 "$RUN_DIR/xcodebuild.log"

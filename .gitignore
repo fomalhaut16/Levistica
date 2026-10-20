@@ -14,3 +14,6 @@ xcuserdata/
 .DS_Store
 __pycache__/
 *.pyc
+
+# Local read-only research reference (absolute symlink)
+/research-reference

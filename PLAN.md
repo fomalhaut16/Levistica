@@ -32,7 +32,7 @@ SwiftUIの外枠に、小さなAppKitの接続部分を通してシステムWebK
 | 選択中の開発先 | `/Library/Developer/CommandLineTools` |
 | Swift | 初回は5.10。ユーザーによるCLT更新後はApple Swift 6.4、swiftlang-6.4.0.34.1。clangは21.0.0、clang-2100.3.34.2 |
 | SDK | 初回の既定は14.4。CLT更新後の既定はmacOS SDK 27.0。実行中のOSは26.6で、SDKの版とは別に扱う |
-| Xcode | 初回は未発見。ユーザーの導入承認後、取得済みのXcode_27.1.xipを/Applicationsへ展開し、Xcode 27.1 / build 27A9275を確認。codesign検証とGatekeeper評価は成功。ライセンス同意と初回セットアップはユーザーの操作待ち |
+| Xcode | 初回は未発見。ユーザーの導入承認後、取得済みのXcode_27.1.xipを/Applicationsへ展開し、Xcode 27.1 / build 27A9275を確認。codesign検証とGatekeeper評価は成功。ライセンス同意後、Swift 6.4とmacOS SDK 27.0の実行確認済み。ただし最初の実ビルドでCoreSimulator共通frameworkの不足が判明し、runFirstLaunchの再実行を依頼中 |
 | 基本道具 | xcrun、swift、xcodebuildの入口、codesign、plutil、lldb、gitがPATH上に存在。利用可能な署名identityやDeveloperアカウントは未確認 |
 | 比較対象 | Chrome 155.0.8059.85、Safari 26.6 / 21624.4.5.11.5をInfo.plistで確認。いずれも起動・操作・設定変更していない |
 | 空き容量 | 作業先のData volumeで約606 GiB。導入時に再確認する。Xcodeの必要容量は今回測っていない |
@@ -40,9 +40,9 @@ SwiftUIの外枠に、小さなAppKitの接続部分を通してシステムWebK
 
 本体の構成はXcodeのmacOS Appプロジェクト一つを推奨する。entitlement、署名、通常の.app、XCTest/XCUITest、Instrumentsの操作を一つの流れで管理するため。SwiftPMのGUIアプリを.appにまとめる方法もあるが、現在のCLTだけで本製品の検証まで十分とは確認していない。新旧2種類のビルド構成を同時に作らない。
 
-フルXcodeの導入はユーザーが承認済み。今回はユーザーが取得した安定版Xcode 27.1を採用する。公式の[対応表](https://developer.apple.com/xcode/system-requirements)ではmacOS 26.6以上で利用可能。新APIの採用やdeployment targetの引き上げは伴わない。Apple署名を検証して展開済みで、ライセンスの確認・同意と初回セットアップをユーザーへ依頼した。`DEVELOPER_DIR`をビルド入口だけで指定し、全体のxcode-selectは勝手に変更しない。
+フルXcodeの導入はユーザーが承認済み。今回はユーザーが取得した安定版Xcode 27.1を採用する。公式の[対応表](https://developer.apple.com/xcode/system-requirements)ではmacOS 26.6以上で利用可能。新APIの採用やdeployment targetの引き上げは伴わない。Apple署名を検証して展開済みで、ライセンス同意は完了。最初の実ビルドで共通framework不足が判明したため、初回セットアップの完了はビルドで再確認する。`DEVELOPER_DIR`をビルド入口だけで指定し、全体のxcode-selectは勝手に変更しない。
 
-v1の実利用・受入対象はこのMacのmacOS 26.6。deployment targetは26.0を初期案とし、これは個人用の対象を絞る判断で、26専用の新APIを多用する指示ではない。以前のOS対応やIntel対応を先に作らない。Swiftは採用Xcodeのコンパイラで、原則Swift 6モード・UIはMainActorとし、利用するSDKで署名と並行処理の注釈を確認する。現在はCLTのSwift 6.4とSDK 27.0を確認できたが、フルXcodeは展開済みだが、ライセンス未同意のため選択したXcodeのSwift/SDK確認、アプリのコンパイル・起動は未実施。CLTのSwift/SDKと混同しない。
+v1の実利用・受入対象はこのMacのmacOS 26.6。deployment targetは26.0を初期案とし、これは個人用の対象を絞る判断で、26専用の新APIを多用する指示ではない。以前のOS対応やIntel対応を先に作らない。Swiftは採用Xcodeのコンパイラで、原則Swift 6モード・UIはMainActorとし、利用するSDKで署名と並行処理の注釈を確認する。現在はCLTのSwift 6.4とSDK 27.0を確認できたが、フルXcodeは展開済みだが、選択したXcodeのSwift 6.4とSDK 27.0は確認済み。アプリソースはSwift 6の型検査を警告なしで通過したが、実ビルドはXcode共通部品の不足で停止し、アプリの起動は未実施。CLTのSwift/SDKと混同しない。
 
 ## 責務と所有の境界
 
@@ -175,7 +175,7 @@ GitHub認証・API操作を行うghと、ローカルの履歴を作るgitは別
 
 | 工程 | 到達条件 | 残す証拠と状態 |
 |---|---|---|
-| M0 設計・準備 | 3用途・優先順位・挙動・方式・工程を説明できる。未確認API/性能と担当・検証時期が明確 | 設計初版はPM確認済み。GitHub掲載・4スキルの自動認識・CLT更新を確認済み。Xcode利用の相談、サイト成立性・数値目標はM1/M3へ引き継ぐ。実装開始は承認済み。Xcode 27.1は展開・署名検証済み。ライセンス同意・初回セットアップ待ち |
+| M0 設計・準備 | 3用途・優先順位・挙動・方式・工程を説明できる。未確認API/性能と担当・検証時期が明確 | 設計初版はPM確認済み。GitHub掲載・4スキルの自動認識・CLT更新を確認済み。Xcode利用の相談、サイト成立性・数値目標はM1/M3へ引き継ぐ。実装開始は承認済み。Xcode 27.1は展開・署名検証・ライセンス同意済み。実ビルドで共通framework不足が判明し、初回セットアップの再実行待ち |
 | M1 正式アプリの一本 | Finder/Dockから起動→URL→ページ→戻る/進む→Cmd-Q→再起動。Releaseで動き、代表サイト成立性と初期メモリを記録 | 実行コマンド・SDK・署名・操作結果・process内訳。工程末でメモリ/速度の具体目標をPMへ提案し、M2前に合意する。未実施 |
 | M2 普段の操作 | タブ、通常データ、ログイン、復元、PDF、入出力、基本権限とエラーをA2〜A6/A8で確認 | 正常・拒否・中断・再起動・破損の試験。Control Panel for Twitterは独立した任意判断。未実施 |
 | M3 メモリと安定性 | 合意値を同条件で満たし、保護と復帰を含む測定が揃う。休眠設定は結果から決める | W0〜W5、各回・中央値・範囲・帰属・状態欠落。未達は方式/範囲の再判断へ戻す。未実施 |
@@ -200,7 +200,7 @@ GitHub認証・API操作を行うghと、ローカルの履歴を作るgitは別
 | メモリと速度 | Chrome/Safariと同条件の基準、実用上の差、目標絶対値と比率 | M1後・M2前に具体案を合意。M3で合否 |
 | passkey/DRM/通話 | API経路・資格・代表サービスと操作 | 必要と分かった時点。未確認を対応済みにしない |
 | スキルの自動認識 | 既存4件は相対リンク・本文読込・セッションの利用可能一覧で確認済み | 追加導入時も同じ確認を行う。別のMacで認識済みとは扱わない |
-| 開発/配布環境 | 適合Xcode、署名identity、アカウント、常用用の署名/更新経路 | Xcode追加は承認・展開済み。初回設定後にコンパイラを確認し、署名/配布はM1/M5で具体化 |
+| 開発/配布環境 | 適合Xcode、署名identity、アカウント、常用用の署名/更新経路 | Xcode追加は承認・展開済み。Swift 6.4を確認済み。共通framework不足を解消後にビルドと開発用署名を確認し、配布はM5で具体化 |
 
 ## スキル導入と指示の調整
 
@@ -269,3 +269,15 @@ ln -s ../../skills/imozuru .agents/skills/imozuru
 2026-10-20の実装準備でsigning-entitlements 0.1.4を追加。公式installerのGit方式でcommit `0722921d5542fc593105c27bd52630babd8b8c2a` に固定し、本文とagents/openai.yamlを取得した。MITは公式plugin manifestの宣言を確認し、独立したLICENSE本文は未発見。依存はmacOS標準のcodesign・spctl・security・plutilで、追加パッケージや常時処理はない。署名調査だけを担当し、build-run-debugのビルド入口と競合させない。本文は手動参照可能、自動認識は次のターンで確認する。ファイルのハッシュはskills/SOURCES.jsonへ記録した。
 
 M1準備でswift-concurrencyとswift-testing-proを追加した。採用commit・MIT本文・全ファイルのハッシュはskills/SOURCES.jsonに記録。後者は公式installerが入れ子のプラグイン用リンクを拒否したため、同じ固定commitから本文・5参照・agents設定を取得し、リンクを含むプラグインwrapperは導入していない。依存パッケージ、MCP、hooks、共通設定は追加しない。SwiftUIは画面と状態所有、Concurrencyはactor境界、Testingは単体・統合テストと担当を分ける。両スキルは手動参照可能、自動認識は次のターンで確認する。
+
+### M1初版の実装状況
+
+正式なXcodeプロジェクト、SwiftUIの単一ウィンドウ、BrowserSession、PageRuntime、最小のNSViewRepresentable、URL解釈・遷移制限、単体試験・loopbackのUI試験を追加中。画面の更新ではloadを呼ばず、空画面ではWKWebViewを作らない。開発用bundle IDは `dev.fomalhaut16.Levistica` とし、App Sandboxとnetwork.clientだけを宣言する。署名identityは実機で0件だったため、ローカル検証用のad hoc署名を使い、配布可能という意味にはしない。通常データはこの開発用IDのコンテナ内、UI試験はDEBUGビルドの非永続WKWebsiteDataStoreへ分離する。
+
+Swiftは6モード・strict complete・既定のactor isolationはnonisolated・Approachable Concurrencyは無効。UIを所有するSessionとRuntimeを明示的なMainActorへ置く。公開SDKが要求するdelegate completionのMainActor注釈に合わせた。ATSの例外はWebコンテンツの明示HTTP閲覧に限り、証明書検証を回避しない。
+
+実施済みはSwift 6の型検査（警告をエラー扱い）、project/Info/entitlementsのplist、scheme XML、Run設定のTOML、shell/Pythonの構文検査とgit diff --check。XcodeのrunFirstLaunch状況とSDK一覧だけでは準備完了を判断できず、最初の実ビルドで `/Library/Developer/PrivateFrameworks/CoreSimulator.framework` 不足が判明した。必要なのは、xcodebuild自身が使う共通依存部品のセットアップである。sudoの非対話実行はパスワード要求で止まったため、ユーザーへ標準のrunFirstLaunch実行を依頼した。ビルド・署名結果・操作・性能は未検証で、M1完了とはしない。
+
+`script/build_and_run.sh` を唯一のビルド・起動入口とし、Run設定も同じ入口へ接続する。停止対象はこのcheckoutのDebug/Releaseの実行パスと開発用bundle IDが一致するプロセスだけ。`script/test.sh` は試験用入口で、UI試験用の一時HTTPサーバーを127.0.0.1の空きポートで起動して終了時に停止する。判定用HTMLだけを返し、要求は記録しない。結果は `.local/artifacts/` に残す。アプリのCIはローカルのビルドと単体試験を通してから追加する。
+
+試験コードの補助的な直接型検査も試みたが、xcodebuildが渡すTesting macro pluginとXCTest overlayの設定を省いた呼出しでは解決できなかった。試験のコンパイル合格とは数えず、共通部品のセットアップ後に正式なtest.shで検証する。
