@@ -9,6 +9,9 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     let localPDF: LocalPDF?
     let webView: WKWebView
     var onMetadataChange: (() -> Void)?
+    var onVisit: ((URL, String, Date) -> Void)?
+    var onVisitTitle: ((URL, String, Date) -> Void)?
+    @ObservationIgnored private var lastHistoryVisit: (url: URL, time: Date)?
     var onCreatePage: ((WKWebViewConfiguration, String, Bool) -> WKWebView?)?
     var onOpenLink: ((URLRequest, Bool, String) -> Void)?
     var onClose: (() -> Void)?
@@ -82,6 +85,9 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         canGoForward = webView.canGoForward
         progress = webView.estimatedProgress
         if previousURL != url || previousTitle != title { onMetadataChange?() }
+        if previousTitle != title, let visit = lastHistoryVisit, visit.url == url {
+            onVisitTitle?(visit.url, title, visit.time)
+        }
     }
 
     func invalidateFindResult() {
@@ -356,12 +362,21 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         activeNavigation = navigation
+        lastHistoryVisit = nil
         pendingPDFTitle = nil
         failure = nil
         updateSnapshot()
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { updateSnapshot() }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        updateSnapshot()
+        if let navigation, let activeNavigation, navigation !== activeNavigation { return }
+        guard localPDF == nil, failure == nil, canRetry, let url = webView.url,
+              SessionStore.persistableURL(url) == url else { return }
+        let visited = Date()
+        lastHistoryVisit = (url, visited)
+        onVisit?(url, title, visited)
+    }
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         dialogs.beginDocument()
         isPDF = localPDF != nil || pendingPDFTitle != nil

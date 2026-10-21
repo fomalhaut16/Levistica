@@ -13,13 +13,16 @@ struct BrowserRootView: View {
                 }
                 DownloadShelf(manager: session.downloads)
             }
-            if session.isBookmarkListVisible {
+            if session.history.isVisible {
+                Divider()
+                HistoryPanel(session: session, library: session.history).frame(width: 320)
+            } else if session.isBookmarkListVisible {
                 Divider()
                 BookmarkPanel(session: session, library: session.bookmarks)
                     .frame(width: 320)
             }
         }
-        .frame(minWidth: session.isBookmarkListVisible ? 1120 : 800, minHeight: 420)
+        .frame(minWidth: (session.isBookmarkListVisible || session.history.isVisible) ? 1120 : 800, minHeight: 420)
     }
 
     private func tabContent(_ tab: BrowserTab) -> some View {
@@ -55,6 +58,13 @@ struct BrowserRootView: View {
                     Text(notice).accessibilityIdentifier("siteDialogNotice")
                     Spacer()
                     Button("閉じる") { dialogs.notice = nil }
+                }.padding(8)
+            }
+            if let notice = session.history.notice, !session.history.isVisible {
+                HStack {
+                    Text(notice).font(.caption).accessibilityIdentifier("historyStorageNotice")
+                    Spacer()
+                    Button("履歴を確認") { session.showHistory() }
                 }.padding(8)
             }
             if let message = session.storageFailure {

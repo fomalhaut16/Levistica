@@ -30,6 +30,9 @@ struct LevisticaApp: App {
                 Button("ブックマークを表示") { session.showBookmarks() }
                     .keyboardShortcut("b", modifiers: [.command, .option])
             }
+            CommandMenu("履歴") {
+                Button("閲覧履歴を表示") { session.showHistory() }.keyboardShortcut("y")
+            }
             CommandMenu("ページ") {
                 Button("ページ内を検索") { session.showFind() }.keyboardShortcut("f")
                     .disabled(session.page == nil)
