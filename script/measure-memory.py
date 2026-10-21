@@ -188,6 +188,27 @@ def attribution_change(before, after):
     return stable, change
 
 
+def check_fixture(current, original=None, now=None):
+    """Refuse stale/paused video while retaining the fixed-document contract."""
+    if current.get('kind') != 'video':
+        if not current.get('ready_monotonic') or current.get('viewport', {}).get('sections') != 240 or current.get('viewport', {}).get('visibility') != 'visible':
+            raise ValueError('Fixture must report a complete, visible document')
+        if original is not None and current != original:
+            raise ValueError('Fixture changed after readiness')
+        return
+    now = time.monotonic() if now is None else now
+    fixed = ['kind', 'media_sha256', 'media_bytes', 'document_sha256', 'loads', 'url', 'ready_monotonic']
+    if not current.get('ready_monotonic') or (original is not None and any(current.get(k) != original.get(k) for k in fixed)):
+        raise ValueError('Video fixture changed or has not started')
+    p = current.get('playback', {})
+    if any(not 0 <= now - current.get(k, 0) <= 3 for k in ['last_report_monotonic', 'last_progress_monotonic']):
+        raise ValueError('Video playback report is stale or has stopped progressing')
+    if p.get('paused') is not False or p.get('ended') is not False or p.get('readyState', 0) < 2 or p.get('visibility') != 'visible' or p.get('muted') is not True or p.get('playbackRate') != 1 or (p.get('videoWidth'), p.get('videoHeight')) != (1280, 720):
+        raise ValueError('Video is not visibly playing at the required dimensions and rate')
+    if original is not None and any(p.get(k) != original['playback'].get(k) for k in ['width', 'height', 'dpr']):
+        raise ValueError('Video viewport changed')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ready-file", type=pathlib.Path, help="Optional synthetic fixture readiness state")
@@ -225,9 +246,10 @@ def main():
     if args.ready_file:
         fixture = json.loads(args.ready_file.read_text())
         ready = fixture.get("ready_monotonic")
-        viewport = fixture.get("viewport", {})
-        if not ready or viewport.get("sections") != 240 or viewport.get("visibility") != "visible":
-            parser.error("Fixture must report a complete, visible document")
+        try:
+            check_fixture(fixture)
+        except ValueError as error:
+            parser.error(str(error))
         remaining = ready + args.ready_delay - time.monotonic()
         if remaining > 0:
             print(f"Waiting {remaining:.1f}s after fixture readiness", flush=True)
@@ -270,8 +292,9 @@ def main():
         if fixture:
             sample["seconds_after_ready"] = time.monotonic() - fixture["ready_monotonic"]
         try:
-            if args.ready_file and json.loads(args.ready_file.read_text()) != fixture:
-                raise ValueError("Fixture changed after readiness")
+            if args.ready_file:
+                sample['fixture_before'] = json.loads(args.ready_file.read_text())
+                check_fixture(sample['fixture_before'], fixture)
             before = snapshot(pid, app, binary, profile)
             sample["attribution_before"] = before
             pids = sorted(before["identities"])
@@ -282,8 +305,9 @@ def main():
             values, missing = metrics(document, pids)
             after = snapshot(pid, app, binary, profile)
             sample["attribution_after"] = after
-            if args.ready_file and json.loads(args.ready_file.read_text()) != fixture:
-                raise ValueError("Fixture changed during measurement")
+            if args.ready_file:
+                sample['fixture_after'] = json.loads(args.ready_file.read_text())
+                check_fixture(sample['fixture_after'], fixture)
             sample["exited_descendant_pids"] = before["exited_descendant_pids"]
             sample["identity_stable"], sample["attribution_change"] = attribution_change(before, after)
             sample["missing_pids"] = missing

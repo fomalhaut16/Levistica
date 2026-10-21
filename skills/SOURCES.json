@@ -277,6 +277,46 @@
           "sha256": "25da3455f6cec4f10d3dff0bf3e8e1372568c75691916541b4d517f451cb8bf1"
         }
       ]
+    },
+    {
+      "name": "performance-profiling",
+      "upstream": "https://github.com/rshankras/claude-code-apple-skills/tree/9ffb83138209057875698dd11c1720c657c47a92/skills/performance/profiling",
+      "commit": "9ffb83138209057875698dd11c1720c657c47a92",
+      "acquired_on": "2026-10-21",
+      "license": "MIT; upstream root LICENSE copied verbatim",
+      "method": "Official skill-installer, --method git, fixed commit, project-local --dest",
+      "recognition": "Relative .agents/skills link and manual reads verified; automatic catalog recognition pending next turn",
+      "scope": "Release, representative data, ownership and growth analysis only. No iOS thresholds, global app closing, background tab destruction, MetricKit telemetry, or RSS-as-footprint example. Existing multi-process physical-footprint method remains authoritative.",
+      "files": [
+        {
+          "path": "skills/performance-profiling/LICENSE",
+          "sha256": "7c90586a6b5c334e403c5fd11397926d85b1f063d68f6d1199b005cd61b148b3"
+        },
+        {
+          "path": "skills/performance-profiling/SKILL.md",
+          "sha256": "55dbb26e0f78ec08ee602a803347f6bae68e46880aa7b6f7225591741e155be9"
+        },
+        {
+          "path": "skills/performance-profiling/energy-diagnostics.md",
+          "sha256": "f114e6418099209974b07481322d63a8d832cc98c358d5a95c4fe2da3c743be2"
+        },
+        {
+          "path": "skills/performance-profiling/hitches.md",
+          "sha256": "664573b501bc3fce087c685e076dafe6785d8acaca740fea22615ee8ab3f644d"
+        },
+        {
+          "path": "skills/performance-profiling/launch-optimization.md",
+          "sha256": "200f22926bbf891c34447f57fbfaebe97f5d936dd9b1432ba75a2044071929ec"
+        },
+        {
+          "path": "skills/performance-profiling/memory-profiling.md",
+          "sha256": "6744b9f1416cfcd702ac224140f708ae7ac20557cdf6fba905ffbc85480fec33"
+        },
+        {
+          "path": "skills/performance-profiling/time-profiler.md",
+          "sha256": "7b67ba32879069d4ec21ebd6cc57b4ae9aed6f9a50e07d42d55d38b5eff44c70"
+        }
+      ]
     }
   ]
 }

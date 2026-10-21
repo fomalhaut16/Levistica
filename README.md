@@ -98,3 +98,15 @@ Commandクリックは背面の別タブ、Command＋Shiftクリックは選択�
 Web上のPDFはタブ内で表示します。Cmd-Fで検索、Cmd-+/−/0で拡大・縮小できます。GETで表示したPDFはCmd-Sで保存先を選び、URLから再取得して保存します。送信結果のPDFを勝手に再送しないよう、POST後のPDFではこの保存を無効にしています。入力・注釈を反映した保存には対応しません。
 
 ローカルPDFはCmd-Oから選択します。選んだファイルだけを読み、終了後の自動再読込は行いません。再起動後や閉じたタブを戻したときは、ファイルを選び直してください。ファイル選択を取り消しても、開いているページは残ります。
+
+### 合成動画の比較
+
+既に利用できるffmpegで比較用映像を生成します。ffmpegがない環境では、この手順だけを省略して必要性を相談し、ビルドのために自動導入しないでください。
+
+```bash
+mkdir -p .local/artifacts/video
+ffmpeg -nostdin -hide_banner -loglevel error -f lavfi -i testsrc2=size=1280x720:rate=30:duration=30 -an -c:v libx264 -threads 2 -preset fast -crf 23 -pix_fmt yuv420p -movflags +faststart .local/artifacts/video/synthetic-720p.mp4
+python3 script/media-fixture.py --state .local/artifacts/video-comparison/state.json
+```
+
+正式入口から隔離起動したReleaseで表示URLを開き、再生ボタンを押します。比較用Chromeも新規専用プロファイルで同じURLを開き、fixtureが記録する表示領域とDPRをそろえます。再生中は `python3 script/measure-memory.py --label fixed-video --loaded-pages 1 --total-tabs 1 --samples 1 --ready-file .local/artifacts/video-comparison/state.json --ready-delay 120` で計測できます。Chromeの計測時は既存のbrowser・chrome-profile指定も加えてください。一度に起動する比較対象は片方だけとし、試行ごとに新しく起動します。計測前後に停止・非表示・再生進行の停止・表示領域の変更を検知した標本は無効です。映像ファイルと結果はGit対象外で、YouTube・音声・DRMの対応をこの比較だけで判断しません。
