@@ -1,6 +1,7 @@
 import importlib.util
 import pathlib
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("measure_memory", pathlib.Path(__file__).parents[1] / "measure-memory.py")
 measure = importlib.util.module_from_spec(spec)
@@ -50,6 +51,31 @@ class AttributionTests(unittest.TestCase):
     def test_profile_argument_does_not_match_a_similar_directory(self):
         self.assertTrue(measure.has_path_argument("chrome --user-data-dir=/tmp/test --x", "--user-data-dir=", "/tmp/test"))
         self.assertFalse(measure.has_path_argument("chrome --user-data-dir=/tmp/test-other", "--user-data-dir=", "/tmp/test"))
+
+    def test_exited_pid_reaping_does_not_invalidate_unchanged_live_attribution(self):
+        before = {"identities": {10: {"started": "same", "executable": "/tmp/app"}},
+                  "services": [], "exited_descendant_pids": [11]}
+        after = {**before, "exited_descendant_pids": []}
+        stable, change = measure.attribution_change(before, after)
+        self.assertTrue(stable)
+        self.assertEqual(change["exited_removed"], [11])
+
+    def test_live_exit_addition_pid_reuse_and_service_change_are_invalid(self):
+        before = {"identities": {10: {"started": "old", "executable": "/tmp/app"}},
+                  "services": [], "exited_descendant_pids": []}
+        for after in [
+            {**before, "identities": {}},
+            {**before, "identities": {**before["identities"], 11: {"started": "new"}}},
+            {**before, "identities": {10: {"started": "new", "executable": "/tmp/app"}}},
+            {**before, "services": [{"pid": 10, "service": "new-service"}]},
+        ]:
+            with self.subTest(after=after):
+                self.assertFalse(measure.attribution_change(before, after)[0])
+
+    def test_identity_race_reports_missing_pid_without_subprocess_output(self):
+        with patch.object(measure, "run", return_value="10 Wed Oct 21 16:00:00 2026 /tmp/app\n"):
+            with self.assertRaisesRegex(ValueError, "missing PIDs: 11$"):
+                measure.identities([10, 11])
 
     def test_chrome_creator_must_match_the_explicit_browser(self):
         text = self.domain().replace("Levistica[100]", "Google Chrome[100]")

@@ -19,19 +19,20 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('action', choices=['start', 'stop'])
 parser.add_argument('--url')
 parser.add_argument('--profile', type=pathlib.Path)
+parser.add_argument('--width', type=int, default=1100)
 parser.add_argument('--height', type=int, default=770)
 args = parser.parse_args()
 if args.action == 'start':
     import re
     if not args.url or not re.fullmatch(r'http://127\.0\.0\.1:\d+/document', args.url):
         parser.error('Only the loopback memory fixture URL is allowed')
-    if not 420 <= args.height <= 1500:
-        parser.error('Height outside supported diagnostic range')
+    if not 420 <= args.height <= 1500 or not 420 <= args.width <= 3000:
+        parser.error('Window dimensions outside supported diagnostic range')
     base.mkdir(parents=True, exist_ok=True)
     profile = pathlib.Path(tempfile.mkdtemp(prefix='chrome-trial.', dir=base))
     subprocess.run(['open', '-n', str(app), '--args', '--user-data-dir=' + str(profile),
                     '--no-first-run', '--no-default-browser-check',
-                    '--window-size=1100,' + str(args.height), args.url], check=True)
+                    f'--window-size={args.width},{args.height}', args.url], check=True)
     for attempt in range(50):
         try:
             pid = m.find_app(binary, profile)
