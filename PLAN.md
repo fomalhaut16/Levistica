@@ -177,7 +177,7 @@ GitHub認証・API操作を行うghと、ローカルの履歴を作るgitは別
 |---|---|---|
 | M0 設計・準備 | 3用途・優先順位・挙動・方式・工程を説明できる。未確認API/性能と担当・検証時期が明確 | 設計初版はPM確認済み。GitHub掲載・4スキルの自動認識・CLT更新を確認済み。Xcode利用の相談、サイト成立性・数値目標はM1/M3へ引き継ぐ。実装開始は承認済み。Xcode 27.1は展開・署名検証・ライセンス同意済み。共通framework不足も解消し、正式アプリの実ビルドと起動を確認済み |
 | M1 正式アプリの一本 | Finder/Dockから起動→URL→ページ→戻る/進む→Cmd-Q→再起動。Releaseで動き、代表サイト成立性と初期メモリを記録 | 実行コマンド・SDK・署名・操作結果・process内訳。最初の閲覧操作は実装・検証済み。代表サイト・初期メモリは継続。工程末でメモリ/速度の具体目標をPMへ提案し、M2前に合意する |
-| M2 普段の操作 | タブ、通常データ、ログイン、復元、PDF、入出力、基本権限とエラーをA2〜A6/A8で確認 | 正常・拒否・中断・再起動・破損の試験。Control Panel for Twitterは独立した任意判断。未実施 |
+| M2 普段の操作 | タブ、通常データ、ログイン、復元、PDF、入出力、基本権限とエラーをA2〜A6/A8で確認 | タブ・保存復元・ダウンロード・添付選択・サイトの確認画面を実装し検証中。PDF・権限・復旧などは未完了。Control Panel for Twitterは独立した任意判断 |
 | M3 メモリと安定性 | 合意値を同条件で満たし、保護と復帰を含む測定が揃う。休眠設定は結果から決める | W0〜W5、各回・中央値・範囲・帰属・状態欠落。未達は方式/範囲の再判断へ戻す。未実施 |
 | M4 外枠UI | PMの好みに仕上げ、キーボード・IME・フォーカス・アクセシビリティの基本を確認 | PM受入、M2の機能回帰、M3の主要性能回帰。参考画像や好みはこの段階でまとめて聞く。未実施 |
 | M5 常用v1 | 開発ツールなしで利用・終了・翌日再開・更新・旧版復旧ができ、主要用途と品質をPMが受入 | 隔離データでの配布/復旧試験と、PMとの合意期間の常用記録。重大未解決があれば完成にしない。未実施 |
@@ -463,3 +463,23 @@ WKUIDelegateのalert・confirm・promptを、PageRuntime所有のPageDialogContr
 
 長文の修正後は `.local/artifacts/tests.DUeyPT/Results.xcresult` の追加UI試験が成功した。確認ボタンの操作、本文の往復スクロール、応答後のページ継続を確認し、`.local/artifacts/site-long-dialog-review/` の切り出し画像で先頭0行目から165行目以降へ移動してもボタンが画面内に残ることを確認した。検証は統合実行の単体46件・UI24経路と、長文の追加UI1経路に分かれる。長文の表示分岐だけを追加修正しており、25経路が一つの実行ですべて通ったとは記録しない。
 Final unit run after the long-message fix: 46 tests passed in `.local/artifacts/tests.8qYB4K/Results.xcresult`. The final Release build, strict signature verification, and isolated launch also passed. Memory attribution parser tests: 12 passed.
+
+### 入力操作を検知したタブの閉鎖・終了確認
+
+PageRuntimeごとにPageInputGuardを所有し、名前付きWKContentWorldのdocument-startスクリプトで標準入力を観測する。全frameで信頼済みのinput/changeイベントだけを受け、値・本文・添付内容を読まず、検知したというBooleanだけをアプリへ送る。メッセージはWebView、content world、handler名、HTTP/HTTPSのframe originを照合する。通常のページ世界からこのhandlerを呼ぶ経路は公開しない。これは入力検知専用で、任意のネイティブ操作をサイトに渡すbridgeではない。
+
+関連ページはWebKitから渡されたconfigurationのdata storeと関連性を維持する。user content controllerだけを個別に所有し、既存user scriptをコピーして入力スクリプトの重複を除く。他用途のhandlerやcontent rule listを今後導入する際は、それらを引き継ぐ方式も設計する。現在そのような追加設定はない。WebKitがcontrollerを保持してもPageRuntimeの寿命を延ばさないよう、handlerは所有者へのweak relayとする。解放の単体試験でobserverが残る問題を検出し、この方式へ修正した。
+
+BrowserSessionは閉じる対象を確認前に選択し、取消ではそのタブへ戻る。NSAlertのモーダル待機中にも別のURL要求などが届くため、確定後は対象を参照で探し直し、転送中かも再確認してから取り除く。終了確認は再入を防ぎ、DB保存失敗などで終了を取り消したときに入力検知の印を消さない。関連ページのwindow.closeは既に閉じた後の通知なので取消を約束せず、認証完了時の自動閉鎖を維持する。
+
+保護の対象はアプリによるタブ閉鎖と終了である。遷移・再読み込みの確認、独自エディターの網羅、保存・送信完了の判定、通知到着前の競合、送信中の添付の判定は未完了。文書が確定したときに検知をリセットし、BFCache復帰時は入力操作のあった文書から再通知する。自動休眠は導入しない。スクリプトとframeごとの費用はM3の同条件計測に含め、RAM改善の実測結果とは扱わない。
+
+最初の操作試験 `.local/artifacts/tests.0eydIt/Results.xcresult` は画面ロックのためアプリの前面化で止まり、入力保護の機能検証まで到達しなかった。利用者がロックを解除した後、入力は検知できたが、SwiftUIのタブ行が子の識別子へも継承され、試験が印を見つけられなかった。入力のアクセシビリティラベルを照合するよう試験を直した。weak relayへの修正後の単体48件は `.local/artifacts/tests.R2YRYX/Results.xcresult` で成功した。最終の操作・回帰試験は以下に記録する。
+
+閉鎖確認の追加試験では、取消ボタンを独自の日本語名にするとEscapeが反応しないことも検出した（`.local/artifacts/tests.dNUck1/Results.xcresult`）。ボタンのkeyEquivalent指定だけでも解消しなかったため、確認画面の存続中だけローカルのNSEvent monitorで、そのwindow宛てのEscapeを取消へ渡す。終了時にmonitorを外し、他windowや他アプリの入力を監視しない。Returnは標準の最初のボタンで入力を残す。修正後の閉鎖・取消・破棄の単独試験は `.local/artifacts/tests.fBnY54/Results.xcresult` で成功した。
+
+最終差分の統合実行は、単体48件・UI29経路がすべて成功した（`.local/artifacts/tests.J0QqAs/Results.xcresult`）。入力後の閉鎖確認とEscape取消、2タブ・別originのframeを含む終了確認とReturn取消、明示的な破棄終了、合成イベントの拒否とページ世界からのhandler不在、関連タブの入力保持とサイト側の完了閉鎖を確認した。既存の転送・添付・保存復元・POST再送防止・サイトの確認画面も同じ実行で通った。
+
+全画面は状態に加えて寸法と復帰を検査し、`.local/artifacts/input-final-fullscreen/` の開始前・全画面中・解除後の画像を確認した。全画面中に本文が画面へ広がり、解除後は通常のページ領域へ戻る。`.local/artifacts/input-final-confirmation/` では入力操作のあった2タブの印、終了確認の件数、安全側の既定ボタン、破棄ボタンに欠けがないことを確認した。書き出しは該当する合成ページの指定画像だけに限定した。
+
+最終Releaseのビルド・strict署名検証・隔離起動が成功した。これは起動継続の確認であり、操作の検証は上記Debugの隔離UI試験と区別する。計測パーサー12件、シェルとfixtureの構文確認も成功した。メモリの比較合格と、実サイトの独自エディターや入力保護の受入は未完了。

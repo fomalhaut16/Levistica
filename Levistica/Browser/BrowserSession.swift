@@ -17,6 +17,7 @@ final class BrowserSession {
     var externalOpenNotice: String?
     var discardUnsavedChangesOnQuit = false
     private var closedTabs: [ClosedTab] = []
+    @ObservationIgnored private var inputConfirmationInProgress = false
     let downloads = DownloadManager()
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
 
@@ -225,9 +226,37 @@ final class BrowserSession {
         persistSession()
     }
 
-    func closeTab(_ id: UUID) {
-        guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-        let tab = tabs[index]
+    var editedTabCount: Int { tabs.filter { $0.page?.inputGuard.hasEditedInput == true }.count }
+
+    func confirmEditedInputForQuit() -> Bool {
+        let count = editedTabCount
+        return count == 0 || confirmInputDiscard(tabCount: count, quitting: true)
+    }
+
+    private func confirmInputDiscard(tabCount: Int, quitting: Bool, context: String? = nil) -> Bool {
+        guard !inputConfirmationInProgress else { return false }
+        inputConfirmationInProgress = true
+        defer { inputConfirmationInProgress = false }
+        return PageInputGuard.confirmDiscard(tabCount: tabCount, quitting: quitting, context: context)
+    }
+
+    func closeTab(_ id: UUID, selectingAfterClose preferredID: UUID? = nil, confirmEditedInput: Bool = true) {
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        if downloads.hasActive(tabID: id) {
+            selectedID = id
+            downloads.notice = "ダウンロード中です。転送を取り消すか、完了してからタブを閉じてください。"
+            return
+        }
+        if confirmEditedInput, tab.page?.inputGuard.hasEditedInput == true {
+            selectedID = id
+            guard confirmInputDiscard(tabCount: 1, quitting: false, context: tab.displayTitle) else {
+                if tabs.contains(where: { $0 === tab }) { selectedID = id; persistSession() }
+                return
+            }
+        }
+        // NSAlert runs a nested event loop. External URLs or script callbacks may
+        // have changed the list while the confirmation was open.
+        guard let index = tabs.firstIndex(where: { $0 === tab }) else { return }
         if downloads.hasActive(tabID: id) {
             selectedID = id
             downloads.notice = "ダウンロード中です。転送を取り消すか、完了してからタブを閉じてください。"
@@ -247,7 +276,8 @@ final class BrowserSession {
             selectedID = blank.id
             addressFocusRequest += 1
         } else if selectedID == id {
-            selectedID = tabs[min(index, tabs.count - 1)].id
+            if let preferredID, tabs.contains(where: { $0.id == preferredID }) { selectedID = preferredID }
+            else { selectedID = tabs[min(index, tabs.count - 1)].id }
         }
         if !recoveryRequired { activatePendingTab() }
         persistSession()
@@ -298,9 +328,9 @@ final class BrowserSession {
         runtime.onClose = { [weak self, weak tab] in
             guard let self, let tab, let openerID = tab.openerID,
                   self.tabs.contains(where: { $0 === tab }) else { return }
-            let wasSelected = self.selectedID == tab.id
-            self.closeTab(tab.id)
-            if wasSelected { self.select(openerID) }
+            // WebKit sends this after DOM window.close() has completed. The
+            // native view cannot undo that close or promise to preserve editing.
+            self.closeTab(tab.id, selectingAfterClose: openerID, confirmEditedInput: false)
         }
     }
 
