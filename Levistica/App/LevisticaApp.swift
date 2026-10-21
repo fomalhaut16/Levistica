@@ -10,30 +10,81 @@ struct LevisticaApp: App {
             BrowserScene(session: session, delegate: delegate)
         }
         .defaultSize(width: 1100, height: 760)
-        .commands {
-            CommandGroup(replacing: .newItem) {
-                OpenBrowserWindowButton()
+        .commands { BrowserCommands() }
+        Settings { PrivacySettingsView(history: session.history, siteData: session.siteDataLibrary(), section: $session.settingsSection) }
+    }
+}
+
+private struct BrowserScene: View {
+    let session: BrowserSession
+    let delegate: BrowserAppDelegate
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        BrowserRootView(session: session)
+            .focusedSceneValue(\.browserSession, session)
+            .onAppear {
+                let action = openWindow
+                delegate.connect(session: session, openWindow: { action(id: "browser") })
+            }
+    }
+}
+
+private struct OpenBrowserWindowButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("ウィンドウを開く") { openWindow(id: "browser") }.keyboardShortcut("n")
+    }
+}
+
+private struct BrowserSessionFocusKey: FocusedValueKey {
+    typealias Value = BrowserSession
+}
+
+private extension FocusedValues {
+    var browserSession: BrowserSession? {
+        get { self[BrowserSessionFocusKey.self] }
+        set { self[BrowserSessionFocusKey.self] = newValue }
+    }
+}
+
+private struct BrowserCommands: Commands {
+    @FocusedValue(\.browserSession) private var session
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            OpenBrowserWindowButton()
+            if let session {
                 Button("PDFを開く…") { session.chooseLocalPDF() }.keyboardShortcut("o")
                 Button("新しいタブ") { _ = session.newTab() }.keyboardShortcut("t")
                 Button("閉じたタブを開く") { session.reopenClosedTab() }
                     .keyboardShortcut("t", modifiers: [.command, .shift])
                     .disabled(!session.canReopenClosedTab)
             }
-            CommandGroup(replacing: .saveItem) {
+        }
+        CommandGroup(replacing: .saveItem) {
+            if let session {
                 Button("PDFを保存…") { session.page?.savePDF() }.keyboardShortcut("s")
                     .disabled(session.page?.canSavePDF != true)
                 Button("タブを閉じる") { session.closeTab(session.selectedID) }.keyboardShortcut("w")
+            } else {
+                Button("ウィンドウを閉じる") { NSApplication.shared.keyWindow?.performClose(nil) }.keyboardShortcut("w")
             }
-            CommandMenu("ブックマーク") {
+        }
+        CommandMenu("ブックマーク") {
+            if let session {
                 Button("現在のページを追加") { session.addCurrentBookmark() }.keyboardShortcut("d")
                     .disabled(!session.canAddBookmark)
                 Button("ブックマークを表示") { session.showBookmarks() }
                     .keyboardShortcut("b", modifiers: [.command, .option])
             }
-            CommandMenu("履歴") {
+        }
+        CommandMenu("履歴") {
+            if let session {
                 Button("閲覧履歴を表示") { session.showHistory() }.keyboardShortcut("y")
             }
-            CommandMenu("ページ") {
+        }
+        CommandMenu("ページ") {
+            if let session {
                 Button("ページ内を検索") { session.showFind() }.keyboardShortcut("f")
                     .disabled(session.page == nil)
                 Button("拡大") { session.page?.changeZoom(by: 1.1) }.keyboardShortcut("+")
@@ -59,26 +110,5 @@ struct LevisticaApp: App {
                     .keyboardShortcut(".").disabled(session.page?.isLoading != true)
             }
         }
-    }
-}
-
-private struct BrowserScene: View {
-    let session: BrowserSession
-    let delegate: BrowserAppDelegate
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        BrowserRootView(session: session)
-            .onAppear {
-                let action = openWindow
-                delegate.connect(session: session, openWindow: { action(id: "browser") })
-            }
-    }
-}
-
-private struct OpenBrowserWindowButton: View {
-    @Environment(\.openWindow) private var openWindow
-    var body: some View {
-        Button("ウィンドウを開く") { openWindow(id: "browser") }.keyboardShortcut("n")
     }
 }

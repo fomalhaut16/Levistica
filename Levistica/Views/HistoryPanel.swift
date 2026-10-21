@@ -4,6 +4,7 @@ struct HistoryPanel: View {
     @Bindable var session: BrowserSession
     @Bindable var library: HistoryLibrary
     @State private var confirmingClear = false
+    @Environment(\.openSettings) private var openSettings
     private var selected: HistoryEntry? { library.items.first { $0.id == library.selectedID } }
 
     var body: some View {
@@ -49,7 +50,13 @@ struct HistoryPanel: View {
                     .disabled(library.isBusy).accessibilityIdentifier("clearHistoryButton")
             }
             Text("\(library.items.count)件表示").font(.caption).accessibilityIdentifier("historyResultCount")
-            Text("保存は90日以内・最大10000件。同じURLは最新の訪問だけを残します。")
+            Button("履歴の設定…") {
+                session.settingsSection = .history
+                openSettings()
+            }.accessibilityIdentifier("historySettingsLink")
+            Text(library.preferences.recordingEnabled ? "履歴を記録中" : "履歴の記録は停止中")
+                .font(.caption).accessibilityIdentifier("historyRecordingStatus")
+            Text("保存は\(library.preferences.retentionDays)日以内・最大10000件。同じURLは最新の訪問だけを残します。")
                 .font(.caption).foregroundStyle(.secondary)
             if !library.isPersistent { Text("この起動だけ保存します。終了すると消えます。").font(.caption) }
         }

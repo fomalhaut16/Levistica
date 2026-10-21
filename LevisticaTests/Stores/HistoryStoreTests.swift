@@ -10,6 +10,107 @@ import Testing
         return folder.appendingPathComponent("history.sqlite3")
     }
 
+    @Test func pausedRecordingSurvivesReopenAndKeepsExistingHistory() async throws {
+        let file = try file()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let store = HistoryStore(fileURL: file)
+        let url = try #require(URL(string: "https://example.com/kept"))
+        let visited = Date()
+        try await store.record(url: url, title: "Keep this title", now: visited)
+        try await store.setPreferences(HistoryPreferences(recordingEnabled: false, retentionDays: 90))
+        let reopened = HistoryStore(fileURL: file)
+        #expect(try await reopened.preferences().recordingEnabled == false)
+        try await reopened.record(url: #require(URL(string: "https://example.com/skipped")), title: "Not recorded")
+        try await reopened.updateTitle(url: url, title: "Not changed", visited: visited)
+        #expect(try await reopened.search().map(\.title) == ["Keep this title"])
+        try await reopened.setPreferences(HistoryPreferences(recordingEnabled: true, retentionDays: 90))
+        try await reopened.record(url: #require(URL(string: "https://example.com/later")), title: "Later")
+        #expect(try await reopened.search().count == 2)
+    }
+
+    @Test func shorterRetentionPrunesAtomicallyAndRejectsInvalidPeriods() async throws {
+        let store = HistoryStore(fileURL: nil)
+        let now = Date()
+        try await store.record(url: #require(URL(string: "https://example.com/old")), title: "Old", now: now.addingTimeInterval(-30 * 86400))
+        try await store.record(url: #require(URL(string: "https://example.com/fresh")), title: "Fresh", now: now)
+        try await store.setPreferences(HistoryPreferences(recordingEnabled: true, retentionDays: 7), now: now)
+        #expect(try await store.search(now: now).map(\.title) == ["Fresh"])
+        await #expect(throws: (any Error).self) {
+            try await store.setPreferences(HistoryPreferences(recordingEnabled: true, retentionDays: -1))
+        }
+        #expect(try await store.preferences().retentionDays == 7)
+        try await store.setPreferences(HistoryPreferences(recordingEnabled: true, retentionDays: 365))
+        #expect(try await store.search().map(\.title) == ["Fresh"])
+    }
+
+    @Test func versionOneMigratesWithoutLosingHistoryAndInvalidRowsPreventMigration() async throws {
+        let file = try file()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        func makeLegacy(title: String) throws {
+            var db: OpaquePointer?
+            #expect(sqlite3_open(file.path, &db) == SQLITE_OK)
+            defer { sqlite3_close(db) }
+            let sql = "CREATE TABLE history(url TEXT PRIMARY KEY,title TEXT,visited REAL); CREATE INDEX history_visited ON history(visited DESC); INSERT INTO history VALUES('https://example.com/','\(title)',\(Date().timeIntervalSince1970)); PRAGMA user_version=1"
+            #expect(sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK)
+        }
+        try makeLegacy(title: "Legacy visit")
+        let migrated = HistoryStore(fileURL: file)
+        #expect(try await migrated.preferences() == HistoryPreferences())
+        #expect(try await migrated.search().map(\.title) == ["Legacy visit"])
+        try FileManager.default.removeItem(at: file)
+        try makeLegacy(title: "")
+        let original = try Data(contentsOf: file)
+        let invalid = HistoryStore(fileURL: file)
+        await #expect(throws: (any Error).self) { try await invalid.preferences() }
+        #expect(try Data(contentsOf: file) == original)
+    }
+
+    @Test func malformedPreferenceRowsAreRejectedWithoutChangingTheFile() async throws {
+        let file = try file()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let store = HistoryStore(fileURL: file)
+        try await store.record(url: #require(URL(string: "https://example.com/")), title: "Keep")
+        for values in ["2,1,90", "1,4294967297,90", "1,1,4294967386"] {
+            var db: OpaquePointer?
+            #expect(sqlite3_open(file.path, &db) == SQLITE_OK)
+            #expect(sqlite3_exec(db, "PRAGMA ignore_check_constraints=ON; DELETE FROM history_preferences; INSERT INTO history_preferences VALUES(\(values))", nil, nil, nil) == SQLITE_OK)
+            sqlite3_close(db)
+            let original = try Data(contentsOf: file)
+            let invalid = HistoryStore(fileURL: file)
+            await #expect(throws: (any Error).self) { try await invalid.preferences() }
+            #expect(try Data(contentsOf: file) == original)
+        }
+    }
+
+    @Test func failedPreferenceWritePreservesTheOldChoiceAndHistory() async throws {
+        let file = try file()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let store = HistoryStore(fileURL: file)
+        try await store.record(url: #require(URL(string: "https://example.com/old")), title: "Keep", now: Date().addingTimeInterval(-10 * 86400))
+        var db: OpaquePointer?
+        #expect(sqlite3_open(file.path, &db) == SQLITE_OK)
+        defer { sqlite3_close(db) }
+        #expect(sqlite3_exec(db, "BEGIN EXCLUSIVE", nil, nil, nil) == SQLITE_OK)
+        await #expect(throws: (any Error).self) {
+            try await store.setPreferences(HistoryPreferences(recordingEnabled: false, retentionDays: 1))
+        }
+        #expect(sqlite3_exec(db, "ROLLBACK", nil, nil, nil) == SQLITE_OK)
+        #expect(try await store.preferences() == HistoryPreferences())
+        #expect(try await store.search().map(\.title) == ["Keep"])
+    }
+
+    @Test func preferenceChangesFollowQueuedVisits() async throws {
+        let session = BrowserSession()
+        session.history.record(url: try #require(URL(string: "https://example.com/before")), title: "Before")
+        session.history.setPreferences(HistoryPreferences(recordingEnabled: false, retentionDays: 90))
+        session.history.record(url: try #require(URL(string: "https://example.com/after")), title: "After")
+        session.showHistory()
+        await session.history.flush()
+        #expect(session.history.preferencesLoaded && session.history.preferences.recordingEnabled == false)
+        #expect(session.history.items.map(\.title) == ["Before"])
+        #expect(session.loadedPageCount == 0)
+    }
+
     @Test func revisitUpdatesOneURLAndSearchSurvivesReopen() async throws {
         let file = try file()
         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }

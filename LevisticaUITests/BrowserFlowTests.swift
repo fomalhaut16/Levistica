@@ -3,6 +3,139 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testSiteDataSettingsConfirmDomainAndClearWithoutReloadingTheDraft() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let other = base.replacingOccurrences(of: "127.0.0.1", with: "localhost")
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/site-data-set", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Storage present"].waitForExistence(timeout: 10))
+        app.typeKey("t", modifierFlags: .command)
+        submit(other + "/site-data-set", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Cookie present"].waitForExistence(timeout: 10))
+        let draft = app.webViews.textFields["Storage draft"]
+        draft.click()
+        waitForInputIndicator(in: app)
+        draft.typeText("keep this settings draft")
+        waitForInputIndicator(in: app)
+        app.typeKey(",", modifierFlags: .command)
+        let dataTab = app.buttons["サイトデータ"]
+        XCTAssertTrue(dataTab.waitForExistence(timeout: 10))
+        dataTab.click()
+        app.buttons["loadSiteDataButton"].click()
+        let list = app.descendants(matching: .any).matching(identifier: "siteDataList").firstMatch
+        let first = list.staticTexts["127.0.0.1"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        XCTAssertTrue(list.staticTexts["localhost"].firstMatch.exists)
+        first.click()
+        app.buttons["deleteSelectedSiteDataButton"].click()
+        XCTAssertTrue((app.staticTexts["siteDataConfirmation"].value as? String ?? app.staticTexts["siteDataConfirmation"].label).contains("127.0.0.1"))
+        attachWindowImage(app, name: "site-data-confirmation", knownFrame: app.windows.containing(.button, identifier: "loadSiteDataButton").firstMatch.frame)
+        app.buttons["cancelSiteDataRemovalButton"].click()
+        XCTAssertTrue(first.exists)
+        app.buttons["deleteSelectedSiteDataButton"].click()
+        app.buttons["confirmSiteDataRemovalButton"].click()
+        XCTAssertTrue(first.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(list.staticTexts["localhost"].firstMatch.exists)
+        let settings = app.windows.containing(.button, identifier: "loadSiteDataButton").firstMatch
+        attachWindowImage(app, name: "site-data-settings", knownFrame: settings.frame)
+        app.buttons["deleteAllSiteDataButton"].click()
+        app.buttons["confirmSiteDataRemovalButton"].click()
+        XCTAssertTrue(app.staticTexts["0件・表示は先頭1000件まで"].waitForExistence(timeout: 10))
+        settings.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertEqual(draft.value as? String, "keep this settings draft")
+        app.webViews.buttons["Check saved data"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Cookie absent"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.webViews.staticTexts["Storage absent"].waitForExistence(timeout: 10))
+        app.typeKey("[", modifierFlags: [.command, .shift])
+        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/site-data-set")
+        XCTAssertTrue(app.webViews.staticTexts["Site data fixture"].waitForExistence(timeout: 10))
+        app.webViews.buttons["Check saved data"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Cookie absent"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.webViews.staticTexts["Storage absent"].waitForExistence(timeout: 10))
+        app.terminate()
+    }
+
+    @MainActor
+    func testHistorySettingsPausePersistConfirmRetentionAndResume() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launch()
+        app.activate()
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        waitForInputIndicator(in: app)
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(app.buttons["履歴"].waitForExistence(timeout: 10))
+        app.buttons["履歴"].click()
+        let toggle = app.checkBoxes["recordHistoryToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        let ready = NSPredicate { _, _ in toggle.isEnabled }
+        expectation(for: ready, evaluatedWith: nil)
+        waitForExpectations(timeout: 10)
+        toggle.click()
+        let paused = NSPredicate { _, _ in ((toggle.value as? NSNumber)?.intValue == 0 || (toggle.value as? String) == "0") && toggle.isEnabled }
+        expectation(for: paused, evaluatedWith: nil)
+        waitForExpectations(timeout: 10)
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        app.buttons["サイトデータ"].click()
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(settings.waitForNonExistence(timeout: 5), "Cmd-W in Settings must close Settings, not a browser tab")
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].waitForExistence(timeout: 5))
+        submit(base + "/two", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        app.buttons["showHistoryButton"].click()
+        XCTAssertTrue(app.staticTexts["履歴の記録は停止中"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["1件表示"].waitForExistence(timeout: 10))
+        app.buttons["historySettingsLink"].click()
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        let period = app.popUpButtons["historyRetentionPicker"]
+        period.click()
+        app.menuItems["7日"].click()
+        XCTAssertTrue(app.buttons["confirmHistoryRetentionButton"].waitForExistence(timeout: 5))
+        attachWindowImage(app, name: "history-settings-confirmation", knownFrame: settings.frame)
+        app.buttons["cancelHistoryRetentionButton"].click()
+        XCTAssertTrue((period.value as? String)?.contains("90") == true)
+        period.click()
+        app.menuItems["7日"].click()
+        app.buttons["confirmHistoryRetentionButton"].click()
+        let changed = NSPredicate { _, _ in (period.value as? String)?.contains("7") == true && period.isEnabled }
+        expectation(for: changed, evaluatedWith: nil)
+        waitForExpectations(timeout: 10)
+        attachWindowImage(app, name: "history-settings", knownFrame: settings.frame)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch()
+        app.activate()
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(app.buttons["履歴"].waitForExistence(timeout: 10))
+        app.buttons["履歴"].click()
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        expectation(for: paused, evaluatedWith: nil)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue((period.value as? String)?.contains("7") == true)
+        toggle.click()
+        let resumed = NSPredicate { _, _ in ((toggle.value as? NSNumber)?.intValue == 1 || (toggle.value as? String) == "1") && toggle.isEnabled }
+        expectation(for: resumed, evaluatedWith: nil)
+        waitForExpectations(timeout: 10)
+        settings.buttons[XCUIIdentifierCloseWindow].click()
+        submit(base + "/two", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        app.buttons["showHistoryButton"].click()
+        XCTAssertTrue(app.staticTexts["2件表示"].waitForExistence(timeout: 10))
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
+    @MainActor
     func testHistorySearchDeleteAndClearKeepBookmarksAndTheCurrentPage() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180

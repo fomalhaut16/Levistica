@@ -5,6 +5,8 @@ import Observation
 final class HistoryLibrary {
     private(set) var items: [HistoryEntry] = []
     private(set) var isBusy = false
+    private(set) var preferences = HistoryPreferences()
+    private(set) var preferencesLoaded = false
     var isVisible = false
     var selectedID: String?
     var query = ""
@@ -27,6 +29,9 @@ final class HistoryLibrary {
         enqueue { try await $0.updateTitle(url: url, title: title, visited: visited) }
     }
     func load() { enqueue { _ in } }
+    func setPreferences(_ value: HistoryPreferences) {
+        enqueue { try await $0.setPreferences(value) }
+    }
     func removeSelected() {
         guard let item = items.first(where: { $0.id == selectedID }) else { return }
         enqueue { try await $0.remove(item.url) }
@@ -44,6 +49,8 @@ final class HistoryLibrary {
             guard let self else { return }
             do {
                 try await action(store)
+                preferences = try await store.preferences()
+                preferencesLoaded = true
                 if isVisible { items = try await store.search(query) }
                 notice = nil
             } catch { notice = error.localizedDescription }

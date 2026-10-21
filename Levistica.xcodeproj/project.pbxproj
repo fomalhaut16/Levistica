@@ -5,6 +5,14 @@
 	objectVersion = "56";
 	archiveVersion = "1";
 	objects = {
+		C395928155409B06FDBA497B = { isa = PBXFileReference; path = "LevisticaTests/Stores/SiteDataLibraryTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		CDE2BCBB67BD28518E83C310 = { isa = PBXBuildFile; fileRef = C395928155409B06FDBA497B; };
+		B0AF7C88E588A4F428D8D23C = { isa = PBXFileReference; path = "Levistica/Views/SiteDataSettingsView.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		B158E4FE8308A41849C71B8E = { isa = PBXBuildFile; fileRef = B0AF7C88E588A4F428D8D23C; };
+		FFD6D42F415E6C208D6EB598 = { isa = PBXFileReference; path = "Levistica/Browser/SiteDataLibrary.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		99943EC08478003C1DA25B9E = { isa = PBXBuildFile; fileRef = FFD6D42F415E6C208D6EB598; };
+		5CB9776CE500E9092E72E3BB = { isa = PBXFileReference; path = "Levistica/Views/PrivacySettingsView.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		368D97C8C26EFD15A7820FDB = { isa = PBXBuildFile; fileRef = 5CB9776CE500E9092E72E3BB; };
 		6C9E86FF4366F2FFFC38E734 = { isa = PBXFileReference; path = "LevisticaTests/Stores/HistoryStoreTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
 		BD97B09ED728240F5DB82859 = { isa = PBXBuildFile; fileRef = 6C9E86FF4366F2FFFC38E734; };
 		A6AFF7C08404BABF2D8A743A = { isa = PBXFileReference; path = "Levistica/Views/HistoryPanel.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
@@ -335,6 +343,9 @@
 				A4F6DD656B3293B89CEF0CA6,
 				7E314DF99292E16A04F52C9A,
 				7FFC4A37E203AA1EC2029BF6,
+				368D97C8C26EFD15A7820FDB,
+				B158E4FE8308A41849C71B8E,
+				99943EC08478003C1DA25B9E,
 				673314FBA1DD2E916271D5ED,
 				1F96CC7797A2A6ABB1F0709A,
 				AB4347BB8A5734D2EC78D65F,
@@ -410,6 +421,9 @@
 				F0E7DAB7AD885FF1D1CB538E,
 				53D5E4B74C5DE8CB682B66E5,
 				A6AFF7C08404BABF2D8A743A,
+				5CB9776CE500E9092E72E3BB,
+				B0AF7C88E588A4F428D8D23C,
+				FFD6D42F415E6C208D6EB598,
 				D28BA2F3CB78ECB49312177A,
 				517DA477D243E39FCD709FBD,
 				35AF5E47751BBBCDC5C06E1E,
@@ -454,6 +468,7 @@
 				DC70A475EC7D651D1F28F561,
 				D9BC3CA421BD082666AE2A23,
 				6C9E86FF4366F2FFFC38E734,
+				C395928155409B06FDBA497B,
 				E7FE958BD69394833A189050,
 				6B783834263E93601337696C,
 				57ED027A15BC4CE85F62336B,
@@ -668,6 +683,7 @@
 				6C529011BAF3ADE3A4F12862,
 				6EE23AD12B30EB279A134B86,
 				BD97B09ED728240F5DB82859,
+				CDE2BCBB67BD28518E83C310,
 				ADA290719B47EA0309618CDA,
 				FC20B29EDAC101588A668101,
 				C4CFFFB74C9F0E999E769F33,
