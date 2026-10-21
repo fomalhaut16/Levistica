@@ -3,6 +3,198 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testWebPDFDisplaysAndFindsText() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let (app, folder) = try fileTestApplication()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        app.launch()
+        app.activate()
+        let frame = app.windows["browser"].frame
+        submit(base + "/pdf-cookie", in: app)
+        let link = app.webViews.links["Protected PDF"]
+        XCTAssertTrue(link.waitForExistence(timeout: 10))
+        waitForInputIndicator(in: app)
+        link.click()
+        XCTAssertTrue(app.staticTexts["webPDFNotice"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["synthetic.pdf"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["reloadButton"].waitForExistence(timeout: 10))
+        app.typeKey("f", modifierFlags: .command)
+        let find = app.textFields["pageFindField"]
+        XCTAssertTrue(find.waitForExistence(timeout: 5))
+        waitForInputIndicator(in: app)
+        find.typeText("nebula")
+        waitForInputIndicator(in: app)
+        find.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.staticTexts["見つかりました"].waitForExistence(timeout: 10))
+        app.buttons["closeFindButton"].click()
+        attachWindowImage(app, name: "web-pdf-displayed", knownFrame: frame)
+        app.typeKey("+", modifierFlags: .command)
+        app.typeKey("+", modifierFlags: .command)
+        attachWindowImage(app, name: "web-pdf-zoomed", knownFrame: frame)
+        app.windows["browser"].coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.65)).click()
+        app.typeKey(.pageDown, modifierFlags: [])
+        app.typeKey(.pageDown, modifierFlags: [])
+        attachWindowImage(app, name: "web-pdf-scrolled", knownFrame: frame)
+        app.typeKey("f", modifierFlags: .command)
+        XCTAssertTrue(find.waitForExistence(timeout: 5))
+        waitForInputIndicator(in: app)
+        find.typeKey("a", modifierFlags: .command)
+        find.typeText("Second PDF page")
+        waitForInputIndicator(in: app)
+        find.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.staticTexts["見つかりました"].waitForExistence(timeout: 10))
+        app.buttons["closeFindButton"].click()
+        attachWindowImage(app, name: "web-pdf-second-page", knownFrame: frame)
+        app.typeKey("s", modifierFlags: .command)
+        let save = app.windows.buttons["保存"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
+        save.click()
+        XCTAssertTrue(app.staticTexts["保存しました"].waitForExistence(timeout: 15))
+        let saved = try XCTUnwrap(CGPDFDocument(folder.appendingPathComponent("synthetic.pdf") as CFURL))
+        XCTAssertEqual(saved.numberOfPages, 2)
+        XCTAssertTrue(app.staticTexts["webPDFNotice"].exists)
+        app.terminate()
+    }
+
+    @MainActor
+    func testSelectedLocalPDFOpensWithoutReplacingTheCurrentPage() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let (app, folder) = try fileTestApplication()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        let document = folder.appendingPathComponent("local-synthetic.pdf")
+        try writeSyntheticPDF(to: document)
+        let malformed = folder.appendingPathComponent("malformed.pdf")
+        try Data("Not a PDF".utf8).write(to: malformed)
+        app.launch()
+        app.activate()
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        app.typeKey("o", modifierFlags: .command)
+        let open = app.sheets.buttons["開く"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(open.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].exists)
+        app.typeKey("o", modifierFlags: .command)
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(malformed.path)
+        app.typeKey(.return, modifierFlags: [])
+        open.click()
+        XCTAssertTrue(app.staticTexts["このファイルをPDFとして開けませんでした。元のファイルを確認してください。"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].exists)
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].exists)
+        app.buttons["閉じる"].click()
+        app.typeKey("o", modifierFlags: .command)
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(document.path)
+        app.typeKey(.return, modifierFlags: [])
+        let frame = app.windows["browser"].frame
+        open.click()
+        XCTAssertTrue(app.buttons["reloadButton"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["localPDFNotice"].exists)
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み2"].exists)
+        app.typeKey("f", modifierFlags: .command)
+        let find = app.textFields["pageFindField"]
+        XCTAssertTrue(find.waitForExistence(timeout: 5))
+        waitForInputIndicator(in: app)
+        find.typeText("nebula")
+        waitForInputIndicator(in: app)
+        find.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.staticTexts["見つかりました"].waitForExistence(timeout: 10))
+        app.buttons["closeFindButton"].click()
+        attachWindowImage(app, name: "local-pdf-displayed", knownFrame: frame)
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        app.typeKey("t", modifierFlags: [.command, .shift])
+        XCTAssertTrue(app.buttons["PDFを選び直す"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.webViews.count, 0)
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み1"].exists)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.buttons["PDFを選び直す"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み0"].exists)
+        XCTAssertEqual(app.textFields["addressField"].value as? String, "")
+        app.buttons["PDFを選び直す"].click()
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(document.path)
+        app.typeKey(.return, modifierFlags: [])
+        open.click()
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み1"].waitForExistence(timeout: 10))
+        app.terminate()
+    }
+
+    @MainActor
+    func testPDFResponseMarkedAsAttachmentIsSavedInsteadOfDisplayed() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let (app, folder) = try fileTestApplication()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        app.launch()
+        app.activate()
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        submit(base + "/attachment.pdf", in: app)
+        let save = app.windows.buttons["保存"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
+        save.click()
+        XCTAssertTrue(app.staticTexts["保存しました"].waitForExistence(timeout: 15))
+        let saved = folder.appendingPathComponent("synthetic.pdf")
+        let pdf = try XCTUnwrap(CGPDFDocument(saved as CFURL))
+        XCTAssertEqual(pdf.numberOfPages, 2)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].exists)
+        app.terminate()
+    }
+
+    @MainActor
+    func testPostPDFCannotBeSavedByReplayingTheSubmission() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/pdf-post-form", in: app)
+        let submit = app.webViews.buttons["Submit PDF fixture"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 10))
+        submit.click()
+        XCTAssertTrue(app.staticTexts["webPDFNotice"].waitForExistence(timeout: 10))
+        app.menuBars.menuBarItems["File"].click()
+        let save = app.menuItems["PDFを保存…"]
+        XCTAssertTrue(save.exists)
+        XCTAssertFalse(save.isEnabled)
+        app.typeKey(.escape, modifierFlags: [])
+        app.terminate()
+    }
+
+    @MainActor
+    private func writeSyntheticPDF(to url: URL) throws {
+        var box = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let context = try XCTUnwrap(CGContext(url as CFURL, mediaBox: &box, nil))
+        for heading in ["Local synthetic PDF", "Local second PDF page"] {
+            context.beginPDFPage(nil)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+            (heading as NSString).draw(at: CGPoint(x: 72, y: 700), withAttributes: [.font: NSFont.systemFont(ofSize: 24)])
+            ("Local searchable nebula marker" as NSString).draw(at: CGPoint(x: 72, y: 650), withAttributes: [.font: NSFont.systemFont(ofSize: 16)])
+            NSGraphicsContext.restoreGraphicsState()
+            context.endPDFPage()
+        }
+        context.closePDF()
+    }
+
+    @MainActor
     func testEditedTabRequiresDiscardAndCancelPreservesItsDraft() throws {
         continueAfterFailure = false
         executionTimeAllowance = 120

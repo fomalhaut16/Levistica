@@ -11,11 +11,47 @@ import threading
 import time
 
 
+def synthetic_pdf(port):
+    first = b"BT /F1 24 Tf 72 720 Td (Levistica synthetic PDF) Tj 0 -40 Td /F1 16 Tf (Searchable nebula marker) Tj 0 -40 Td (Open second web page) Tj ET"
+    second = b"BT /F1 24 Tf 72 720 Td (Second PDF page) Tj ET"
+    objects = [b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Count 2 /Kids [4 0 R 6 0 R] >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R /Annots [8 0 R] >>",
+        b"<< /Length %d >>\nstream\n" % len(first) + first + b"\nendstream",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>",
+        b"<< /Length %d >>\nstream\n" % len(second) + second + b"\nendstream",
+        ("<< /Type /Annot /Subtype /Link /Rect [72 630 350 660] /Border [0 0 1] /A << /S /URI /URI (http://127.0.0.1:%d/two) >> >>" % port).encode()]
+    result = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(result))
+        result.extend(("%d 0 obj\n" % number).encode() + body + b"\nendobj\n")
+    xref = len(result)
+    result.extend(("xref\n0 %d\n0000000000 65535 f \n" % len(offsets)).encode())
+    for offset in offsets[1:]: result.extend(("%010d 00000 n \n" % offset).encode())
+    result.extend(("trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(offsets), xref)).encode())
+    return bytes(result)
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     popup_posts = 0
     counter_lock = threading.Lock()
 
     def do_GET(self):
+        if self.path == "/protected.pdf" and "levistica_pdf=synthetic" not in self.headers.get("Cookie", ""):
+            self.send_error(403, "Synthetic PDF cookie required")
+            return
+        if self.path in ["/fixture.pdf", "/attachment.pdf", "/protected.pdf"]:
+            data = synthetic_pdf(self.server.server_address[1])
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Length", str(len(data)))
+            disposition = "attachment" if self.path == "/attachment.pdf" else "inline"
+            self.send_header("Content-Disposition", disposition + '; filename="synthetic.pdf"')
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if self.path in ["/download", "/download-slow", "/download-failure"]:
             chunks = 2048 if self.path == "/download-slow" else 1
             chunk = b"levistica synthetic download\n" if chunks == 1 else b"x" * 4096
@@ -34,6 +70,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             return
         pages = {
+            "/pdf-cookie": '<title>PDF cookie fixture</title><a href="/protected.pdf">Protected PDF</a>',
+            "/pdf-post-form": '<title>PDF POST form</title><form action="/pdf-post" method="post"><button>Submit PDF fixture</button></form>',
             "/input-guard": '''<title>Input guard fixture</title><h1>Input guard fixture</h1>
                 <input aria-label="Guard draft" id="guard-draft">
                 <button onclick="const field=document.getElementById('guard-draft');field.value='synthetic programmatic value';field.dispatchEvent(new Event('input',{bubbles:true,composed:true}));document.getElementById('bridge-status').textContent=typeof window.webkit?.messageHandlers?.levisticaInputActivity==='undefined'?'Page native handler absent':'Page native handler exposed'">Programmatic input</button>
@@ -94,6 +132,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         }
         body = ("<!doctype html><meta charset=utf-8>" + pages.get(self.path, "Not found")).encode()
         self.send_response(200 if self.path in pages else 404)
+        if self.path == "/pdf-cookie": self.send_header("Set-Cookie", "levistica_pdf=synthetic; HttpOnly; SameSite=Lax; Path=/")
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -101,6 +140,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         received = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if self.path == "/pdf-post":
+            body = synthetic_pdf(self.server.server_address[1])
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == "/upload-fixture":
             body = b"Synthetic upload received" if received == b"levistica synthetic upload\n" else b"Unexpected fixture bytes"
             self.send_response(200)

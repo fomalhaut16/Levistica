@@ -3,6 +3,13 @@ import Testing
 @testable import Levistica
 
 struct DownloadTests {
+    @MainActor @Test func opaqueDownloadOriginsDoNotBecomeInvalidURLSchemes() {
+        #expect(DownloadManager.displayOrigin(scheme: "", host: "", port: 0) == "不明な要求元")
+        #expect(DownloadManager.displayOrigin(scheme: "not a scheme", host: "fixture.invalid", port: 0) == "不明な要求元")
+        #expect(DownloadManager.displayOrigin(scheme: "file", host: "", port: 0) == "不明な要求元")
+        #expect(DownloadManager.displayOrigin(scheme: "https", host: "fixture.invalid", port: 443) == "https://fixture.invalid:443")
+    }
+
     @Test func externallyChangedOriginalIsNotReplaced() throws {
         let folder = try directory()
         defer { try? FileManager.default.removeItem(at: folder) }

@@ -177,7 +177,7 @@ GitHub認証・API操作を行うghと、ローカルの履歴を作るgitは別
 |---|---|---|
 | M0 設計・準備 | 3用途・優先順位・挙動・方式・工程を説明できる。未確認API/性能と担当・検証時期が明確 | 設計初版はPM確認済み。GitHub掲載・4スキルの自動認識・CLT更新を確認済み。Xcode利用の相談、サイト成立性・数値目標はM1/M3へ引き継ぐ。実装開始は承認済み。Xcode 27.1は展開・署名検証・ライセンス同意済み。共通framework不足も解消し、正式アプリの実ビルドと起動を確認済み |
 | M1 正式アプリの一本 | Finder/Dockから起動→URL→ページ→戻る/進む→Cmd-Q→再起動。Releaseで動き、代表サイト成立性と初期メモリを記録 | 実行コマンド・SDK・署名・操作結果・process内訳。最初の閲覧操作は実装・検証済み。代表サイト・初期メモリは継続。工程末でメモリ/速度の具体目標をPMへ提案し、M2前に合意する |
-| M2 普段の操作 | タブ、通常データ、ログイン、復元、PDF、入出力、基本権限とエラーをA2〜A6/A8で確認 | タブ・保存復元・ダウンロード・添付選択・サイトの確認画面を実装し検証中。PDF・権限・復旧などは未完了。Control Panel for Twitterは独立した任意判断 |
+| M2 普段の操作 | タブ、通常データ、ログイン、復元、PDF、入出力、基本権限とエラーをA2〜A6/A8で確認 | タブ・保存復元・ダウンロード・添付選択・サイトの確認画面・PDFの基本閲覧を実装し検証中。実資料のPDF互換性・権限・復旧などは未完了。Control Panel for Twitterは独立した任意判断 |
 | M3 メモリと安定性 | 合意値を同条件で満たし、保護と復帰を含む測定が揃う。休眠設定は結果から決める | W0〜W5、各回・中央値・範囲・帰属・状態欠落。未達は方式/範囲の再判断へ戻す。未実施 |
 | M4 外枠UI | PMの好みに仕上げ、キーボード・IME・フォーカス・アクセシビリティの基本を確認 | PM受入、M2の機能回帰、M3の主要性能回帰。参考画像や好みはこの段階でまとめて聞く。未実施 |
 | M5 常用v1 | 開発ツールなしで利用・終了・翌日再開・更新・旧版復旧ができ、主要用途と品質をPMが受入 | 隔離データでの配布/復旧試験と、PMとの合意期間の常用記録。重大未解決があれば完成にしない。未実施 |
@@ -483,3 +483,31 @@ BrowserSessionは閉じる対象を確認前に選択し、取消ではそのタ
 全画面は状態に加えて寸法と復帰を検査し、`.local/artifacts/input-final-fullscreen/` の開始前・全画面中・解除後の画像を確認した。全画面中に本文が画面へ広がり、解除後は通常のページ領域へ戻る。`.local/artifacts/input-final-confirmation/` では入力操作のあった2タブの印、終了確認の件数、安全側の既定ボタン、破棄ボタンに欠けがないことを確認した。書き出しは該当する合成ページの指定画像だけに限定した。
 
 最終Releaseのビルド・strict署名検証・隔離起動が成功した。これは起動継続の確認であり、操作の検証は上記Debugの隔離UI試験と区別する。計測パーサー12件、シェルとfixtureの構文確認も成功した。メモリの比較合格と、実サイトの独自エディターや入力保護の受入は未完了。
+
+### WebとローカルのPDF閲覧
+
+システムWebKitのPDF表示を同じタブ内で利用し、別の描画エンジンや常駐プロセスを追加しない。HTTP/HTTPSのPDFは主フレームのMIMEを応答時に確認し、文書の確定時にPDF表示の状態へ切り替える。表示・検索・ズームと、添付応答による保存を合成PDFで検証する。GETで確定したPDFの明示的な保存だけ、公開API [startDownload(using:completionHandler:)](https://developer.apple.com/documentation/webkit/wkwebview/startdownload(using:completionhandler:)) から既存DownloadManagerへ渡す。これはURLからの再取得で、表示内容の固定コピーや入力・注釈の書き出しではない。POST結果は保存操作を無効にし、フォームの再送へつなげない。
+
+ローカルPDFはNSOpenPanelで選んだURLからLocalPDFを作り、通常ファイル・読み取り可否とCoreGraphicsによるPDFの成立を確認してからタブを作る。暗号化や空・破損は明示的な失敗とする。CoreGraphicsの確認用documentを保持し続けず、表示は既存PageRuntimeのWKWebViewが担当する。取得できたsecurity scopeはLocalPDFの寿命で対応するstopを呼ぶ。OSがファイル選択時に与える暗黙のアクセス権を、アプリから即時失効させる保証とは区別する。bookmarkやファイルの複製は作らない。NSOpenPanelによるユーザー選択とsecurity scopeの扱いは [AppleのApp Sandbox資料](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox)に従う。
+
+ローカルPDFのWebViewだけ、[loadFileURL(_:allowingReadAccessTo:)](https://developer.apple.com/documentation/webkit/wkwebview/loadfileurl(_:allowingreadaccessto:))の読取範囲へ選択ファイル自身を指定する。手元SDKのWKWebView.hでも、1ファイルを指定したときはそのファイルだけをロードできるという契約を確認した。親ディレクトリの許可や非公開WebKit設定は使わない。通常のNavigationPolicyのfile拒否は維持し、選択専用runtimeで同じファイルと文書内fragmentだけを許可する。ページ内JavaScriptを無効にし、HTTP/HTTPSのリンクはlocal referrerを渡さない新しいGET要求として通常タブへ送る。URL入力でWebへ移る場合も、PDF用runtimeを解放して通常のruntimeを作る。
+
+セッション形式を2へ進め、タブのkindで通常ページとローカルPDFを区別する。形式1の既存行へwebの既定値を付ける移行はトランザクションで行い、ID・順序・URL・正常終了の印を維持する。PDFは汎用タイトルとkindだけを保存し、パス・原本・bookmarkを残さない。閉じたタブの履歴もパスを残さず、復元時は再選択用のタブにする。形式2を読めない旧版は既存の新形式拒否へ進むため、旧バイナリから同じDBを更新できるとは扱わない。版を戻すためのデータ復旧はM5で別途検証する。
+
+最初のWeb PDF試験 `.local/artifacts/tests.YDehIR/Results.xcresult` は本文の全アクセシビリティ要素を列挙する処理で長時間待機し、中止した。CUAの対象ウィンドウ画像では合成PDFの本文表示を確認できたが、本文が通常のHTMLのようにはアクセシビリティツリーへ現れなかった。以後はアプリ側の検索結果と対象ウィンドウの切り出し画像で操作・表示を分けて確認する。VoiceOverの本文アクセスを対応済みとはせず、M4の検証事項に残す。入力ソースの一時表示を待たなかった試験も失敗したため、既存の待機条件を適用した。Web PDF検索の単独試験は `.local/artifacts/tests.8vktzF/Results.xcresult`、ローカルPDFの選択・検索・閉鎖・再起動後の再選択は `.local/artifacts/tests.wr0AjU/Results.xcresult` で成功した。最終差分の統合結果は以下に記録する。
+
+大容量・外付け・iCloud未取得のPDF、印刷、暗号化されたWeb PDF、入力・注釈・画像だけのPDFに対する検索、本文のアクセシビリティと実資料の互換性は未完了。ローカルPDFの事前検査は同期処理で、大容量時の応答性は別途測る。PDFを閉じたときの所有の解放は確認するが、使用RAMの減少やSafariと同等の性能を実証した意味にはしない。追加の権限・外部ライブラリ・スキルは不要で、appkit-interop、SwiftUI、Testing、build-run-debugの既存の担当範囲で進める。
+
+統合試験 `.local/artifacts/tests.PBcNRT/Results.xcresult` では単体54件が成功したが、添付扱いのPDF応答でアプリがクラッシュした。クラッシュ報告のアプリ側stackはDownloadManagerのURLComponents.scheme代入を示しており、要求元のprotocolが空の場合を検証せず設定していた。HTTP/HTTPSの有効な要求元だけを組み立て、それ以外は「不明な要求元」と表示するよう修正し、空・不正なschemeの回帰単体試験を追加した。修正後のPDF添付保存は `.local/artifacts/tests.idT8ww/Results.xcresult` で成功した。前回の統合実行では、その後の入力検知試験も「通知」ダイアログで操作できず失敗し、全体を途中で中止した。これを統合成功として記録しない。
+
+保存試験終了とCUAのgetApp呼出しが行き違い、ツールが通常プロファイルでアプリを起動した。通常DBは読み取り専用で版と件数だけを調べ、形式2・タブ8件を確認した。この起動に伴う形式移行と稼働中の印の更新は発生しており、通常プロファイルを一切変更していないとは扱わない。既存タブの手動削除や推測によるDBの巻き戻しは行っていない。以後はXCTest終了を待ち、明示的な隔離起動を維持した状態で既存のCUA bindingを使う。試験が終了する可能性のあるタイミングに、終了していれば通常起動するgetAppを重ねない。
+
+要求元表示の修正後、既存の入力検知は `.local/artifacts/tests.zJ7CHJ/Results.xcresult` で成功した。続いて、Cookieを必要とする合成PDFで表示・検索・ズーム・次ページ・Cmd-Sによる保存を確認した。サーバーは合成Cookieがない要求を403で拒否するため、表示時と保存時の両方でCookieを利用できたことを確認する試験になる。大学SSOや実アカウント全般の互換性を保証するものではない。
+
+XCTestの終了後に正式入口から隔離起動した手動確認では、`.local/artifacts/pdf-manual/linked-local.pdf` をファイル選択で開いた。PDF内のリンクを押すと通常のHTTPタブでfixtureの本文が表示され、元のPDFも残った。元のタブへ戻り、スクロールで「Second PDF page」の表示を確認した。このタブ切替後には、PDFの本文とリンクがCUAのアクセシビリティツリーにも現れた。初期表示直後のツリー不足と、VoiceOverの受入は引き続き別に扱う。手動確認のアプリを終了して専用loopbackサーバーだけを止め、全回帰試験を再開した。
+
+最終確認で、Swiftの初期化完了後にthrowするとdeinitも呼ばれることを、局所的な言語動作の確認で確かめた。LocalPDFの検査失敗時にsecurity scopeのstopが二重にならないよう、検査中はローカル変数で所有し、成功後にだけインスタンスへ渡す順序に直した。この修正後は、単体試験とローカルPDFの操作経路を追加で再確認する。操作試験にも、壊れたPDFを選んだ後に元ページを保ち、正常なPDFを開ける経路を加えた。
+
+PDFのタブがホスト名だけにならないよう、主フレームのPDF応答のsuggestedFilenameを文書確定時にタイトルへ反映する。表示前のpending名と確定済みの名を分け、制御文字を除き、UTF-16で512単位までに制限する。現在のWebViewのタイトルが空でも資料を区別できるようにし、最終のWeb PDF経路で表示名も確認する。
+
+最終の全回帰実行は単体56件・UI33経路が成功した（`.local/artifacts/tests.CYqLYt/Results.xcresult`）。その後のscope所有順序とPDF名の修正については、単体56件（`tests.5qsZ83`）、破損PDFを含むローカル選択・復元（`tests.HGiydR`）、Cookie付きWeb PDFの表示名・検索・保存（`tests.arNBRh`）を追加確認し、すべて成功した。最後の修正を含む33経路の再実行結果とは区別する。切り出したPDF表示・2ページ目・検索と、全画面の移行前・移行中・復帰後の画像を確認した。Releaseのビルド・strict署名検証・隔離起動も成功し、権限は従来の3項目のままである。Releaseの起動確認はprocess継続、実操作はDebugの隔離fixtureで確認している。メモリ帰属parserの12件も成功した。次はメモリ比較の欠測条件を確認し、同じloaded数・同じ待機時間で再測定する。

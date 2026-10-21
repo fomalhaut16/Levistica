@@ -25,6 +25,18 @@ struct BrowserRootView: View {
                     Button("閉じる") { session.externalOpenNotice = nil }
                 }.padding(8)
             }
+            if tab.isLocalPDF {
+                HStack {
+                    Text(tab.page == nil ? "PDFを選び直してください。" : "ローカルPDFの閲覧中です。入力・注釈は保存しません。")
+                        .accessibilityIdentifier("localPDFNotice")
+                    Spacer()
+                    if tab.page == nil { Button("PDFを選び直す") { session.chooseLocalPDF(replacing: tab.id) } }
+                }.font(.caption).padding(8)
+            }
+            if tab.page?.isPDF == true && !tab.isLocalPDF {
+                Text("PDFの閲覧中です。入力・注釈の保存には対応していません。")
+                    .font(.caption).padding(8).accessibilityIdentifier("webPDFNotice")
+            }
             if let origin = tab.openerOrigin {
                 Text("別タブの要求元: \(origin)")
                     .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)

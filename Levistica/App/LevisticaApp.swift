@@ -13,12 +13,15 @@ struct LevisticaApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 OpenBrowserWindowButton()
+                Button("PDFを開く…") { session.chooseLocalPDF() }.keyboardShortcut("o")
                 Button("新しいタブ") { _ = session.newTab() }.keyboardShortcut("t")
                 Button("閉じたタブを開く") { session.reopenClosedTab() }
                     .keyboardShortcut("t", modifiers: [.command, .shift])
                     .disabled(!session.canReopenClosedTab)
             }
             CommandGroup(replacing: .saveItem) {
+                Button("PDFを保存…") { session.page?.savePDF() }.keyboardShortcut("s")
+                    .disabled(session.page?.canSavePDF != true)
                 Button("タブを閉じる") { session.closeTab(session.selectedID) }.keyboardShortcut("w")
             }
             CommandMenu("ページ") {
