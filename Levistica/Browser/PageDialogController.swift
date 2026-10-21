@@ -6,8 +6,44 @@ final class PageDialogController {
     var notice: String?
     @ObservationIgnored private var activeAlert: NSAlert?
     @ObservationIgnored private var pendingCompletion: ((Bool, String?) -> Void)?
+    @ObservationIgnored private var departureEscapeMonitor: Any?
     private var presentedCount = 0
     private var suppressed = false
+
+    func confirmDeparture(window: NSWindow?, completion: @escaping @MainActor (Bool) -> Void) {
+        // Browser-owned protection is independent of a site's dialog allowance.
+        guard activeAlert == nil, let window, window.isKeyWindow, window.attachedSheet == nil else {
+            notice = "入力操作のあったページからの移動を止めました。このタブを選び、ほかの確認画面を閉じてから操作してください。"
+            completion(false)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "ページを離れる前に入力内容を確認してください"
+        alert.informativeText = "入力操作がありました。再読み込みやページの移動で、入力内容や添付の選択を失う場合があります。保存・送信が済んでいるか確認してください。"
+        let keep = alert.addButton(withTitle: "ページに戻る")
+        let leave = alert.addButton(withTitle: "入力を破棄して移動")
+        leave.hasDestructiveAction = true
+        alert.window.defaultButtonCell = keep.cell as? NSButtonCell
+        alert.window.preventsApplicationTerminationWhenModal = false
+        activeAlert = alert
+        pendingCompletion = { allowed, _ in completion(allowed) }
+        departureEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak alert, weak keep] event in
+            if let alert, event.window === alert.window, event.keyCode == 53,
+               event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+                keep?.performClick(nil)
+                return nil
+            }
+            return event
+        }
+        alert.beginSheetModal(for: window) { [weak self, weak alert] response in
+            guard let self, let alert, self.activeAlert === alert else { return }
+            let handler = self.pendingCompletion
+            self.pendingCompletion = nil
+            self.activeAlert = nil
+            self.removeDepartureMonitor()
+            handler?(response == .alertSecondButtonReturn, nil)
+        }
+    }
 
     func present(message: String, origin: String, window: NSWindow?, allowsCancel: Bool,
                  promptDefault: String? = nil, isPrompt: Bool = false,
@@ -105,12 +141,18 @@ final class PageDialogController {
 
     func cancel() {
         guard let alert = activeAlert else { return }
+        removeDepartureMonitor()
         let handler = pendingCompletion
         pendingCompletion = nil
         activeAlert = nil
         if let parent = alert.window.sheetParent { parent.endSheet(alert.window, returnCode: .cancel) }
         alert.window.orderOut(nil)
         handler?(false, nil)
+    }
+
+    private func removeDepartureMonitor() {
+        if let departureEscapeMonitor { NSEvent.removeMonitor(departureEscapeMonitor) }
+        departureEscapeMonitor = nil
     }
 
     func beginDocument() {

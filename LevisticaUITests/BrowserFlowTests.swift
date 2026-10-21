@@ -468,6 +468,94 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testDepartureConfirmationPreservesInputOnCancelAndAllowsExplicitReload() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.links["Second page"].waitForExistence(timeout: 10))
+        submit(base + "/departure", in: app)
+        let draft = app.webViews.textFields["Departure draft"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        submit(base + "/two", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        app.buttons["backButton"].click()
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        draft.click()
+        waitForInputIndicator(in: app)
+        draft.typeText("synthetic protected draft")
+        waitForInputIndicator(in: app)
+        XCTAssertTrue(app.images.matching(identifier: "入力操作あり").firstMatch.waitForExistence(timeout: 5))
+        app.buttons["forwardButton"].click()
+        XCTAssertTrue(app.sheets.buttons["ページに戻る"].waitForExistence(timeout: 5))
+        app.sheets.buttons["ページに戻る"].click()
+        XCTAssertEqual(draft.value as? String, "synthetic protected draft")
+        app.webViews.links["Same document"].click()
+        XCTAssertEqual(draft.value as? String, "synthetic protected draft")
+        XCTAssertFalse(app.sheets.buttons["ページに戻る"].exists)
+        app.buttons["backButton"].click()
+        XCTAssertTrue(app.sheets.buttons["ページに戻る"].waitForExistence(timeout: 5))
+        app.sheets.buttons["ページに戻る"].click()
+        XCTAssertEqual(draft.value as? String, "synthetic protected draft")
+        app.buttons["reloadButton"].click()
+        let keep = app.sheets.buttons["ページに戻る"]
+        XCTAssertTrue(keep.waitForExistence(timeout: 5))
+        attachWindowImage(app, name: "departure-confirmation")
+        app.sheets.firstMatch.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(keep.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(draft.value as? String, "synthetic protected draft")
+        app.webViews.links["Leave draft"].click()
+        XCTAssertTrue(keep.waitForExistence(timeout: 5))
+        keep.click()
+        XCTAssertEqual(draft.value as? String, "synthetic protected draft")
+        submit(base + "/two", in: app)
+        XCTAssertTrue(keep.waitForExistence(timeout: 5))
+        keep.click()
+        XCTAssertEqual(draft.value as? String, "synthetic protected draft")
+        XCTAssertTrue((app.textFields["addressField"].value as? String)?.contains("/departure") == true)
+        submit(base + "/departure#another", in: app)
+        XCTAssertTrue(keep.waitForExistence(timeout: 5))
+        keep.click()
+        XCTAssertEqual(draft.value as? String, "synthetic protected draft")
+        app.buttons["backButton"].click()
+        XCTAssertTrue(keep.waitForExistence(timeout: 5))
+        keep.click()
+        XCTAssertEqual(draft.value as? String, "synthetic protected draft")
+        app.buttons["reloadButton"].click()
+        let leave = app.sheets.buttons["入力を破棄して移動"]
+        XCTAssertTrue(leave.waitForExistence(timeout: 5))
+        leave.click()
+        let cleared = expectation(for: NSPredicate(format: "value == %@", ""), evaluatedWith: draft)
+        wait(for: [cleared], timeout: 10)
+        app.terminate()
+    }
+
+    @MainActor
+    func testFormSubmissionAfterEditingIsNotTreatedAsAbandoningInput() throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/departure", in: app)
+        let draft = app.webViews.textFields["Submission draft"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        draft.click()
+        waitForInputIndicator(in: app)
+        draft.typeText("synthetic send")
+        waitForInputIndicator(in: app)
+        app.webViews.buttons["Send draft"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Submission received"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.sheets.buttons["ページに戻る"].exists)
+        app.terminate()
+    }
+
+    @MainActor
     func testEditedTabRequiresDiscardAndCancelPreservesItsDraft() throws {
         continueAfterFailure = false
         executionTimeAllowance = 120

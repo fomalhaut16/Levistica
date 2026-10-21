@@ -38,6 +38,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     @ObservationIgnored private var lastRequest: URLRequest?
     @ObservationIgnored private var committedRequest: URLRequest?
     @ObservationIgnored private var activeNavigation: WKNavigation?
+    @ObservationIgnored private var documentGeneration = 0
 
     convenience init(dataStore: WKWebsiteDataStore = .default()) {
         let configuration = WKWebViewConfiguration()
@@ -155,9 +156,14 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     func load(_ request: URLRequest) {
         invalidateFindResult()
         failure = nil
-        url = request.url
-        lastRequest = request
-        canRetry = request.httpMethod == "GET"
+        // Keep the committed page as the session/URL source while an edited
+        // document's navigation is awaiting permission. Initial loads still
+        // expose their destination before WebKit has allocated a document.
+        if committedRequest == nil || !inputGuard.hasEditedInput {
+            url = request.url
+            lastRequest = request
+            canRetry = request.httpMethod == "GET"
+        }
         activeNavigation = webView.load(request)
         if activeNavigation == nil {
             failure = "このURLの読み込みを開始できませんでした。URLと接続先を確認してください。"
@@ -175,7 +181,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         failure = nil
         activeNavigation = webView.reload()
     }
-    func stop() { webView.stopLoading() }
+    func stop() { dialogs.cancel(); webView.stopLoading() }
     func dismissFailure() { failure = nil }
 
     func retry() {
@@ -239,15 +245,53 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
             decisionHandler(.cancel)
             return
         }
-        if main {
-            if !initialBlank { permitsInitialBlankPage = false }
-            lastRequest = action.request
-            canRetry = action.request.httpMethod == "GET"
-            url = action.request.url
-            failure = nil
-            onMetadataChange?()
+        if main, inputGuard.hasEditedInput,
+           Self.requiresDepartureConfirmation(type: action.navigationType, current: webView.url, destination: action.request.url) {
+            let generation = documentGeneration
+            dialogs.confirmDeparture(window: webView.window) { [weak self] allowed in
+                guard let self else { decisionHandler(.cancel); return }
+                guard allowed, self.documentGeneration == generation else {
+                    if self.documentGeneration == generation { self.restoreCommittedLocation() }
+                    decisionHandler(.cancel)
+                    return
+                }
+                self.acceptMainNavigation(action.request, initialBlank: initialBlank)
+                decisionHandler(.allow)
+            }
+            return
         }
+        if main { acceptMainNavigation(action.request, initialBlank: initialBlank) }
         decisionHandler(.allow)
+    }
+
+    static func requiresDepartureConfirmation(type: WKNavigationType, current: URL?, destination: URL?) -> Bool {
+        // Submitting a form is the explicit send action, not an abandoned draft.
+        if type == .formSubmitted || type == .formResubmitted { return false }
+        if type == .linkActivated,
+           let current, let destination, current != destination,
+           var from = URLComponents(url: current, resolvingAgainstBaseURL: false),
+           var to = URLComponents(url: destination, resolvingAgainstBaseURL: false) {
+            from.fragment = nil
+            to.fragment = nil
+            if from == to { return false }
+        }
+        return true
+    }
+
+    private func restoreCommittedLocation() {
+        url = webView.url ?? committedRequest?.url
+        lastRequest = committedRequest
+        canRetry = committedRequest?.httpMethod == "GET"
+        onMetadataChange?()
+    }
+
+    private func acceptMainNavigation(_ request: URLRequest, initialBlank: Bool) {
+        if !initialBlank { permitsInitialBlankPage = false }
+        lastRequest = request
+        canRetry = request.httpMethod == "GET"
+        url = request.url
+        failure = nil
+        onMetadataChange?()
     }
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
@@ -378,6 +422,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         onVisit?(url, title, visited)
     }
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        documentGeneration += 1
         dialogs.beginDocument()
         isPDF = localPDF != nil || pendingPDFTitle != nil
         pdfTitle = pendingPDFTitle

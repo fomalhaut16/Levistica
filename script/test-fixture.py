@@ -82,6 +82,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(page.encode())
             return
         pages = {
+            "/departure": '''<title>Departure fixture</title><h1>Departure fixture</h1>
+                <input aria-label="Departure draft"><a href="/two">Leave draft</a>
+                <a href="#section">Same document</a><p id="section">Same document section</p>
+                <form action="/submitted" method="post"><input aria-label="Submission draft" name="draft"><button>Send draft</button></form>''',
             "/pdf-cookie": '<title>PDF cookie fixture</title><a href="/protected.pdf">Protected PDF</a>',
             "/pdf-post-form": '<title>PDF POST form</title><form action="/pdf-post" method="post"><button>Submit PDF fixture</button></form>',
             "/input-guard": '''<title>Input guard fixture</title><h1>Input guard fixture</h1>
