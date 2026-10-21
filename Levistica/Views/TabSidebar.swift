@@ -31,6 +31,11 @@ struct TabSidebar: View {
                     HStack {
                         Image(systemName: tab.page == nil ? "doc" : "globe")
                         Text(tab.displayTitle).lineLimit(1)
+                        if tab.page?.inputGuard.hasEditedInput == true {
+                            Image(systemName: "pencil").accessibilityLabel("入力操作あり")
+                                .help("入力操作を検知したタブです。閉じるときに確認します。")
+                                .accessibilityIdentifier("editedInput-\(tab.id)")
+                        }
                         Spacer(minLength: 0)
                         Button("タブを閉じる", systemImage: "xmark") { session.closeTab(tab.id) }
                             .labelStyle(.iconOnly).buttonStyle(.borderless)

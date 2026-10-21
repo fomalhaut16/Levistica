@@ -6,6 +6,7 @@ final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
     private var openBrowserWindow: (() -> Void)?
     private var pendingURLs: [URL] = []
     private var droppedPendingURLs = false
+    private var checkingTermination = false
 
     private var deliveryTask: Task<Void, Never>?
 
@@ -58,6 +59,9 @@ final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !checkingTermination else { return .terminateCancel }
+        checkingTermination = true
+        defer { checkingTermination = false }
         if let session, session.downloads.hasActive {
             let alert = NSAlert()
             alert.messageText = "ダウンロード中です"
@@ -67,6 +71,7 @@ final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
             if alert.runModal() == .alertSecondButtonReturn { session.downloads.cancelAllAndQuit() }
             return .terminateCancel
         }
+        if session?.confirmEditedInputForQuit() == false { return .terminateCancel }
         return session?.prepareToQuit() == false ? .terminateCancel : .terminateNow
     }
 }

@@ -4,6 +4,7 @@ import WebKit
 @MainActor
 @Observable
 final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
+    let inputGuard: PageInputGuard
     let dialogs = PageDialogController()
     let webView: WKWebView
     var onMetadataChange: (() -> Void)?
@@ -41,8 +42,10 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         self.permitsInitialBlankPage = permitsInitialBlankPage
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.preferences.isElementFullscreenEnabled = true
+        inputGuard = PageInputGuard(configuration: configuration)
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
+        inputGuard.bind(to: webView)
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
@@ -298,6 +301,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { updateSnapshot() }
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         dialogs.beginDocument()
+        inputGuard.beginDocument()
         committedRequest = lastRequest
         invalidateFindResult()
         updateSnapshot()

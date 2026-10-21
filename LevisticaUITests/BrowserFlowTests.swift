@@ -3,6 +3,129 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testEditedTabRequiresDiscardAndCancelPreservesItsDraft() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/tab-state", in: app)
+        let draft = app.webViews.textFields["Draft"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        draft.click()
+        waitForInputIndicator(in: app)
+        draft.typeText("synthetic draft to protect")
+        waitForInputIndicator(in: app)
+        XCTAssertTrue(app.images.matching(identifier: "入力操作あり").firstMatch.waitForExistence(timeout: 5))
+        app.typeKey("w", modifierFlags: .command)
+        let keep = try nativeDialogButton("タブに戻る", in: app)
+        app.dialogs.firstMatch.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(keep.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(draft.value as? String, "synthetic draft to protect")
+        XCTAssertTrue(app.webViews.staticTexts["Document loads: 1"].exists)
+        app.typeKey("w", modifierFlags: .command)
+        try nativeDialogButton("入力を破棄して閉じる", in: app).click()
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
+    @MainActor
+    func testProgrammaticInputCannotMarkATabOrAccessTheNativeHandler() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/input-guard", in: app)
+        let programmatic = app.webViews.buttons["Programmatic input"]
+        XCTAssertTrue(programmatic.waitForExistence(timeout: 10))
+        programmatic.click()
+        XCTAssertTrue(app.webViews.staticTexts["Page native handler absent"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.images.matching(identifier: "入力操作あり").firstMatch.exists)
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
+    @MainActor
+    func testQuitConfirmationIncludesEditedFramesAndKeepsDraftsOnReturn() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/tab-state", in: app)
+        let first = app.webViews.textFields["Draft"]
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        first.click()
+        waitForInputIndicator(in: app)
+        first.typeText("synthetic first draft")
+        waitForInputIndicator(in: app)
+        app.typeKey("t", modifierFlags: .command)
+        submit(base + "/input-guard", in: app)
+        let frame = app.webViews.textFields["Frame draft"]
+        XCTAssertTrue(frame.waitForExistence(timeout: 10))
+        frame.click()
+        waitForInputIndicator(in: app)
+        frame.typeText("synthetic frame draft")
+        waitForInputIndicator(in: app)
+        let markers = app.images.matching(identifier: "入力操作あり")
+        XCTAssertTrue(markers.element(boundBy: 1).waitForExistence(timeout: 5))
+        let fixtureFrame = app.windows["browser"].frame
+        app.typeKey("q", modifierFlags: .command)
+        let keep = try nativeDialogButton("アプリに戻る", in: app)
+        XCTAssertTrue(app.dialogs.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "2件", "2件")).firstMatch.exists)
+        attachWindowImage(app, name: "edited-input-quit-confirmation", knownFrame: fixtureFrame)
+        app.dialogs.firstMatch.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(keep.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(frame.value as? String, "synthetic frame draft")
+        app.typeKey("[", modifierFlags: [.command, .shift])
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        XCTAssertEqual(first.value as? String, "synthetic first draft")
+        XCTAssertTrue(app.webViews.staticTexts["Document loads: 1"].exists)
+        app.typeKey("q", modifierFlags: .command)
+        try nativeDialogButton("入力を破棄して終了", in: app).click()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
+    @MainActor
+    func testRelatedPageKeepsIndependentInputAndItsScriptCloseStillCompletes() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/related", in: app)
+        XCTAssertTrue(app.webViews.buttons["Open related page"].waitForExistence(timeout: 10))
+        app.webViews.buttons["Open related page"].click()
+        let child = app.webViews.textFields["Child draft"]
+        XCTAssertTrue(child.waitForExistence(timeout: 10))
+        child.click()
+        waitForInputIndicator(in: app)
+        child.typeText("synthetic related draft")
+        waitForInputIndicator(in: app)
+        XCTAssertTrue(app.images.matching(identifier: "入力操作あり").firstMatch.waitForExistence(timeout: 5))
+        app.typeKey("w", modifierFlags: .command)
+        try nativeDialogButton("タブに戻る", in: app).click()
+        XCTAssertEqual(child.value as? String, "synthetic related draft")
+        app.webViews.buttons["Send result and close"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Related page completed"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].exists)
+        XCTAssertFalse(app.images.matching(identifier: "入力操作あり").firstMatch.exists)
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
+    @MainActor
     func testSiteDialogsReturnAlertConfirmAndPromptResults() throws {
         continueAfterFailure = false
         executionTimeAllowance = 120
@@ -614,6 +737,7 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertEqual(draft.value as? String, "keep this draft")
         XCTAssertTrue(app.webViews.staticTexts["Document loads: 1"].exists)
         app.typeKey("w", modifierFlags: .command)
+        try nativeDialogButton("入力を破棄して閉じる", in: app).click()
         XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
         app.typeKey("t", modifierFlags: [.command, .shift])
         XCTAssertTrue(app.webViews.textFields["Draft"].waitForExistence(timeout: 10))

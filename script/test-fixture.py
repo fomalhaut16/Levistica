@@ -34,6 +34,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             return
         pages = {
+            "/input-guard": '''<title>Input guard fixture</title><h1>Input guard fixture</h1>
+                <input aria-label="Guard draft" id="guard-draft">
+                <button onclick="const field=document.getElementById('guard-draft');field.value='synthetic programmatic value';field.dispatchEvent(new Event('input',{bubbles:true,composed:true}));document.getElementById('bridge-status').textContent=typeof window.webkit?.messageHandlers?.levisticaInputActivity==='undefined'?'Page native handler absent':'Page native handler exposed'">Programmatic input</button>
+                <p id="bridge-status">Waiting</p><iframe title="Input frame" id="input-frame"></iframe>
+                <script>document.getElementById('input-frame').src='http://localhost:'+location.port+'/input-frame';</script>''',
+            "/input-frame": '<title>Input frame</title><input aria-label="Frame draft">',
             "/dialogs": '''<title>Dialogs fixture</title><h1>Dialogs fixture</h1>
                 <button onclick="alert('Synthetic site notice'); result.textContent='Alert returned'">Site alert</button>
                 <button onclick="result.textContent='Confirm: '+confirm('Synthetic confirmation')">Site confirm</button>
@@ -65,7 +71,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                   if(event.origin===location.origin && event.source===child && event.data==='synthetic-complete')
                     document.getElementById('result').textContent='Related page completed';
                 });</script>''',
-            "/popup-child": '''<title>Related child</title><h1>Related child</h1><p id="cookie"></p>
+            "/popup-child": '''<title>Related child</title><h1>Related child</h1><p id="cookie"></p><input aria-label="Child draft">
                 <button onclick="window.opener.postMessage('synthetic-complete', location.origin); window.close()">Send result and close</button>
                 <script>document.getElementById('cookie').textContent = document.cookie.includes('levistica_fixture=synthetic') ? 'Shared fixture cookie' : 'Missing fixture cookie';</script>''',
             "/automatic-popup": '''<title>Automatic popup fixture</title><p id="state">Waiting</p>
