@@ -18,6 +18,13 @@ struct BrowserRootView: View {
     private func tabContent(_ tab: BrowserTab) -> some View {
         VStack(spacing: 0) {
             BrowserNavigationBar(session: session, tab: tab).id(tab.id)
+            if let notice = session.externalOpenNotice {
+                HStack {
+                    Text(notice).accessibilityIdentifier("externalOpenNotice")
+                    Spacer()
+                    Button("閉じる") { session.externalOpenNotice = nil }
+                }.padding(8)
+            }
             if let origin = tab.openerOrigin {
                 Text("別タブの要求元: \(origin)")
                     .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)

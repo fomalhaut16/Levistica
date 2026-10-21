@@ -2,7 +2,60 @@ import AppKit
 
 @MainActor
 final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
-    weak var session: BrowserSession?
+    private(set) weak var session: BrowserSession?
+    private var openBrowserWindow: (() -> Void)?
+    private var pendingURLs: [URL] = []
+    private var droppedPendingURLs = false
+
+    private var deliveryTask: Task<Void, Never>?
+
+    func connect(session: BrowserSession, openWindow: @escaping () -> Void) {
+        self.session = session
+        openBrowserWindow = openWindow
+        scheduleDelivery()
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        let capacity = max(0, 1000 - pendingURLs.count)
+        pendingURLs.append(contentsOf: urls.prefix(capacity))
+        droppedPendingURLs = droppedPendingURLs || urls.count > capacity
+        if session != nil {
+            scheduleDelivery()
+            openBrowserWindow?()
+        }
+    }
+
+    private func scheduleDelivery() {
+        deliveryTask?.cancel()
+        deliveryTask = Task { @MainActor [weak self] in
+            // Launch Services may split one multi-URL request into several events.
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            self?.deliverPendingURLs()
+        }
+    }
+
+    func deliverPendingURLs() {
+        guard let session else { return }
+        deliveryTask?.cancel()
+        deliveryTask = nil
+        let pending = pendingURLs
+        pendingURLs.removeAll()
+        if !pending.isEmpty { session.receiveExternalURLs(pending) }
+        if droppedPendingURLs {
+            session.externalOpenNotice = "受け取ったリンクが多すぎるため、一部を開きませんでした。"
+            droppedPendingURLs = false
+        }
+        session.activateInitialSelection()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag, let openBrowserWindow else { return true }
+        openBrowserWindow()
+        return false
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if let session, session.downloads.hasActive {

@@ -417,3 +417,24 @@ WKNavigationDelegateでdownload属性とContent-Disposition、表示不能なMIM
 Releaseのビルド・署名検証・隔離起動も成功した。最終entitlementはapp-sandbox、network.client、files.user-selected.read-writeの3項目で、試験用の広い読み取り権限はReleaseへ含めていない。計測パーサー12件とスクリプト構文も確認した。
 
 GitHubのランナーが稼働し、PR #8と、再実行したPR #7のCIが成功した。両PRは各チェックのsuccessと対象HEADを確認してから、後続PRの系譜を保つマージコミットでmainへ統合した。待機コマンドの終了コードだけでは判断していない。
+
+### 外部URLの受信とウィンドウの再表示
+
+[NSApplicationDelegateのURL受信](https://developer.apple.com/documentation/appkit/nsapplicationdelegate/application(_:open:))と[再表示要求](https://developer.apple.com/documentation/appkit/nsapplicationdelegate/applicationshouldhandlereopen(_:hasvisiblewindows:))を、AppDelegateから既存BrowserSessionとSwiftUIのopenWindowへ接続した。Info.plistではHTTP/HTTPSの受信能力を宣言する。既定ブラウザを設定するAPIやLaunch Servicesの既定値変更は呼ばない。
+
+画面の準備前のURLはAppDelegateで最大1000件まで待機させる。接続時に一度だけ取り出し、保存済みの旧選択タブを読み込む前に適用する。通常の受信でもHTTP/HTTPSだけを受け入れ、既存の入力を上書きせず、タブ総数の防御上限1000件を守る。一回の受信配列では最後のページだけにWKWebViewを作る。Launch Servicesが複数URLをイベントに分けて渡すことを実機で確認したため、最後の要求から100ms待ってまとめて処理する。この待機中は旧選択ページの初回読込も保留する。100ms以上離れた要求は別の受信として扱う。大量タブでの性能保証や、読み込み済みページの自動休眠とは別である。
+
+ウィンドウを閉じてもApp所有のセッションとページは残し、再表示で再読込しない。AppDelegateのコールバックはSwiftUIのOpenWindowActionだけを保持し、画面自体を別の所有者にしない。入力中のページを守る再表示と、入力中の終了・タブ閉鎖の確認は別で、後者は引き続き未実装である。
+
+最初のcold launch UI試験では、sandbox付きテストランナーからNSWorkspaceへ渡した起動設定が反映されず、開発用の通常プロファイルへ合成ページのタブが加わった。接続済みXCUIApplicationのactivateも別の起動を始めるため、この試験方法を採用しない。Debug限定の引数を試したが、SDKのNSWorkspace.hにもsandboxからのargumentsは無視されるとあり、追加した引数は撤去した。以後のUI試験は同じcheckoutの起動済み隔離アプリが存在しなければthrowして止める。cold launchは外側のコマンドで隔離を指定して確認する。通常プロファイルの手動削除や書き戻しは行わない。
+
+最後のウィンドウを閉じるとアプリが終了していたため、applicationShouldTerminateAfterLastWindowClosedで終了しないよう明示した。修正後の対象UI試験は成功し、元の入力とDocument loads: 1を保持したまま外部リンクの表示と元ページへの復帰を確認した（`.local/artifacts/tests.dRQ3Cp/Results.xcresult`）。
+
+修正後のReleaseを `open -n --env LEVISTICA_EPHEMERAL=1 -a <このcheckoutのRelease> <合成URL1> <合成URL2>` でcold launchした。CUAで2タブ・読み込み済み1、最後のページの表示画像を確認し、最初のタブを選ぶと初めて読み込み済み2になることを確認した。認証データや通常ブラウザは使用していない。OSが分割する実際の受信経路でも、短時間の連続イベントをまとめる効果を確認できた。
+
+最終差分は単体44件・UI21経路の統合実行がすべて成功した（`.local/artifacts/tests.3tlnHy/Results.xcresult`）。分割されたURL要求のまとめ処理、起動前要求の一度だけの適用、既存URL入力の保持を単体で確認し、外部リンク受信・URLなしの再表示・フォーム入力と読込回数の保持をUIで確認した。保存・添付・POST再送防止・全画面・タブ保存復元などの既存経路も同じ実行で通った。Releaseのビルド・署名検証・隔離起動と、計測パーサー12件・スクリプト構文も確認済み。通常プロファイルの受入やメモリの比較合格とは区別する。
+
+保存・添付のPR #9は、対象HEADと全checkのSUCCESSを確認してmainへ統合した。外部URL受信も独立したPRで、同じ成功確認をしてから統合する。
+
+CI follow-up: run `39488794525` built Release successfully, but Xcode 26.6 rejected the UI-test helper converting its completion to a Sendable closure. The helper now declares `@Sendable` explicitly. This changes the test callback type only; the application code is unchanged. The merge remains gated on success for the corrected HEAD.
+The corrected callback passed the native-link reopen UI test locally (`.local/artifacts/tests.8KPRrA/Results.xcresult`), including preservation of the original draft and document load count.

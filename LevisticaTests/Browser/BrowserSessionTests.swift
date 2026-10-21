@@ -1,9 +1,76 @@
 import Testing
+import AppKit
 import WebKit
 @testable import Levistica
 
 @MainActor
 struct BrowserSessionTests {
+    @Test func externalBatchOnlyLoadsItsLastPage() throws {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let urls = (0..<50).compactMap { URL(string: "http://127.0.0.1:54321/external-\($0)") }
+        session.receiveExternalURLs(urls)
+        #expect(session.tabs.count == 50)
+        #expect(session.loadedPageCount == 1)
+        #expect(session.page?.url == urls.last)
+        #expect(session.tabs.dropLast().allSatisfy { $0.page == nil && $0.pendingURL != nil })
+        session.activateInitialSelection()
+        #expect(session.loadedPageCount == 1)
+    }
+
+    @Test func externalURLsPreserveAddressDraftsAndRejectNativeSchemes() throws {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let original = session.activeTab
+        original.addressDraft = "unfinished address"
+        session.receiveExternalURLs([try #require(URL(string: "file:///etc/passwd")),
+                                     try #require(URL(string: "javascript:alert(1)"))])
+        #expect(session.tabs.count == 1)
+        #expect(session.loadedPageCount == 0)
+        #expect(original.addressDraft == "unfinished address")
+        #expect(session.externalOpenNotice != nil)
+        session.receiveExternalURLs([try #require(URL(string: "http://127.0.0.1:54321/external"))])
+        #expect(session.tabs.count == 2)
+        #expect(original.page == nil)
+        #expect(original.addressDraft == "unfinished address")
+    }
+
+    @Test func startupURLsDrainOnceBeforeRestoringTheOldSelection() throws {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let old = session.activeTab
+        let oldAddress = "http://127.0.0.1:54321/old"
+        let oldURL: URL = try #require(URL(string: oldAddress))
+        old.pendingURL = oldURL
+        let delegate = BrowserAppDelegate()
+        let incoming = try #require(URL(string: "http://127.0.0.1:54321/incoming"))
+        delegate.application(.shared, open: [incoming])
+        var windowRequests = 0
+        delegate.connect(session: session, openWindow: { windowRequests += 1 })
+        delegate.deliverPendingURLs()
+        session.activateInitialSelection()
+        #expect(session.tabs.count == 2)
+        #expect(session.loadedPageCount == 1)
+        #expect(session.page?.url == incoming)
+        #expect(old.page == nil)
+        delegate.connect(session: session, openWindow: { windowRequests += 1 })
+        #expect(session.tabs.count == 2)
+        #expect(delegate.applicationShouldHandleReopen(.shared, hasVisibleWindows: false) == false)
+        #expect(windowRequests == 1)
+    }
+
+    @Test func splitNativeEventsAreDeliveredAsOneBatch() throws {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let delegate = BrowserAppDelegate()
+        delegate.connect(session: session, openWindow: {})
+        let first = try #require(URL(string: "http://127.0.0.1:54321/first"))
+        let second = try #require(URL(string: "http://127.0.0.1:54321/second"))
+        delegate.application(.shared, open: [first])
+        delegate.application(.shared, open: [second])
+        #expect(session.loadedPageCount == 0)
+        delegate.deliverPendingURLs()
+        #expect(session.tabs.count == 2)
+        #expect(session.loadedPageCount == 1)
+        #expect(session.page?.url == second)
+    }
+
     @Test func relatedPageCallbacksDoNotRetainAClosedRuntime() throws {
         let session = BrowserSession(dataStore: .nonPersistent())
         let openerID = session.selectedID

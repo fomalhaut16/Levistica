@@ -14,6 +14,7 @@ final class BrowserSession {
     private var initialSelectionActivated = false
     private(set) var recoveryRequired = false
     private(set) var storageFailure: String?
+    var externalOpenNotice: String?
     var discardUnsavedChangesOnQuit = false
     private var closedTabs: [ClosedTab] = []
     let downloads = DownloadManager()
@@ -168,6 +169,34 @@ final class BrowserSession {
     func selectAdjacent(_ offset: Int) {
         guard let index = tabs.firstIndex(where: { $0.id == selectedID }) else { return }
         select(tabs[(index + offset % tabs.count + tabs.count) % tabs.count].id)
+    }
+
+    func receiveExternalURLs(_ urls: [URL]) {
+        var last: UUID?
+        var rejected = urls.count > 1000
+        for url in urls.prefix(1000) {
+            guard NavigationPolicy.allows(url, isMainFrame: true) else { rejected = true; continue }
+            let blank = tabs.count == 1 && activeTab.page == nil && activeTab.pendingURL == nil
+                && activeTab.addressDraft.isEmpty && activeTab.inputError == nil && activeTab.restorationNotice == nil
+                && (activeTab.storedTitle.isEmpty || activeTab.storedTitle == "新しいタブ")
+            guard blank || tabs.count < 1000 else { rejected = true; continue }
+            let tab = blank ? activeTab : BrowserTab()
+            tab.pendingURL = url
+            tab.addressDraft = url.absoluteString
+            tab.storedTitle = url.host ?? "ページ"
+            if !blank { tabs.append(tab) }
+            last = tab.id
+        }
+        if let last {
+            selectedID = last
+            // This is an explicit external request, even during crash recovery.
+            // Other restored and newly received tabs remain unloaded.
+            activatePendingTab()
+            persistSession()
+        }
+        if rejected {
+            externalOpenNotice = "一部のリンクを開けませんでした。HTTP/HTTPSのリンクだけを受け取り、タブ一覧は1000件まで保存できます。"
+        }
     }
 
     func moveTabs(from source: IndexSet, to destination: Int) {

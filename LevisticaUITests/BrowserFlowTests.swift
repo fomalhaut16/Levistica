@@ -3,6 +3,82 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testExternalURLReopensTheWindowAndKeepsTheOriginalDraft() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/tab-state", in: app)
+        let draft = app.webViews.textFields["Draft"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        waitForInputIndicator(in: app)
+        draft.click()
+        waitForInputIndicator(in: app)
+        draft.typeText("keep across native reopen")
+        let window = app.windows["browser"]
+        window.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertTrue(window.waitForNonExistence(timeout: 5))
+        XCTAssertNotEqual(app.state, .notRunning)
+        try deliverNativeURLs([XCTUnwrap(URL(string: base + "/two"))])
+        app.activate()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み2"].exists)
+        app.typeKey("[", modifierFlags: [.command, .shift])
+        XCTAssertTrue(app.webViews.textFields["Draft"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.webViews.textFields["Draft"].value as? String, "keep across native reopen")
+        XCTAssertTrue(app.webViews.staticTexts["Document loads: 1"].exists)
+        app.terminate()
+    }
+
+    @MainActor
+    func testNativeReopenWithoutURLRestoresTheExistingWindow() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        let window = app.windows["browser"]
+        window.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertTrue(window.waitForNonExistence(timeout: 5))
+        XCTAssertNotEqual(app.state, .notRunning)
+        try deliverNativeURLs([])
+        app.activate()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].exists)
+        app.terminate()
+    }
+
+    @MainActor
+    private func deliverNativeURLs(_ urls: [URL]) throws {
+        // This helper must only address the already-running EPHEMERAL test app.
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let application = root.appendingPathComponent(".local/DerivedData/Build/Products/Debug/Levistica.app")
+        _ = try XCTUnwrap(NSWorkspace.shared.runningApplications.first {
+            $0.bundleURL?.standardizedFileURL == application.standardizedFileURL && !$0.isTerminated
+        }, "The isolated application must already be running; never cold-launch from the sandboxed runner.")
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.environment = ["LEVISTICA_EPHEMERAL": "1"]
+        configuration.allowsRunningApplicationSubstitution = false
+        configuration.addsToRecentItems = false
+        configuration.promptsUserIfNeeded = false
+        let delivered = expectation(description: "Launch Services delivered the request to this checkout")
+        let completion: @Sendable (NSRunningApplication?, Error?) -> Void = { application, error in
+            XCTAssertNotNil(application)
+            XCTAssertNil(error)
+            delivered.fulfill()
+        }
+        if urls.isEmpty {
+            NSWorkspace.shared.openApplication(at: application, configuration: configuration, completionHandler: completion)
+        } else {
+            NSWorkspace.shared.open(urls, withApplicationAt: application, configuration: configuration, completionHandler: completion)
+        }
+        wait(for: [delivered], timeout: 15)
+    }
+
+    @MainActor
     func testQuittingCancelsAnUnfinishedTransfer() throws {
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
         let (app, folder) = try fileTestApplication()
