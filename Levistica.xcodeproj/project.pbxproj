@@ -5,6 +5,10 @@
 	objectVersion = "56";
 	archiveVersion = "1";
 	objects = {
+		16E13E52BC21D8EC612F4C45 = { isa = PBXFileReference; path = "LevisticaTests/Browser/PageDialogTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		CE988948B1CA82472E0C4C3D = { isa = PBXBuildFile; fileRef = 16E13E52BC21D8EC612F4C45; };
+		0336FB6645ECBE1DCFD2BF64 = { isa = PBXFileReference; path = "Levistica/Browser/PageDialogController.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		36CCD8E95E0EB4C494BEC7B1 = { isa = PBXBuildFile; fileRef = 0336FB6645ECBE1DCFD2BF64; };
 		AD7088C74305D62C68AD80D3 = { isa = PBXFileReference; path = "LevisticaTests/Browser/DownloadTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
 		1DC57427B849C429C39A80C8 = { isa = PBXBuildFile; fileRef = AD7088C74305D62C68AD80D3; };
 		FD852BD7C6E6FDEF84743F16 = { isa = PBXFileReference; path = "Levistica/Views/DownloadShelf.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
@@ -302,6 +306,7 @@
 			files = (
 				04A1139D2C0128F848875553,
 				0843339345F2AC47B633608B,
+				36CCD8E95E0EB4C494BEC7B1,
 				9BBD268D36EF1B68166091EE,
 				95DE925BD42F0092B6B491D4,
 				78A7D0CF7B17E90C395C2F22,
@@ -368,6 +373,7 @@
 			children = (
 				FD852BD7C6E6FDEF84743F16,
 				CE80D8313D9B72F503E3CC2C,
+				0336FB6645ECBE1DCFD2BF64,
 				CE2B44BB85CA1F32376BB6B6,
 				65E4AC2824657CBA80082789,
 				6D0CE91E9849C30D53327BB9,
@@ -402,6 +408,7 @@
 			name = "LevisticaTests";
 			children = (
 				AD7088C74305D62C68AD80D3,
+				16E13E52BC21D8EC612F4C45,
 				DC70A475EC7D651D1F28F561,
 				E7FE958BD69394833A189050,
 				6B783834263E93601337696C,
@@ -611,6 +618,7 @@
 			buildActionMask = "2147483647";
 			files = (
 				1DC57427B849C429C39A80C8,
+				CE988948B1CA82472E0C4C3D,
 				6C529011BAF3ADE3A4F12862,
 				ADA290719B47EA0309618CDA,
 				FC20B29EDAC101588A668101,

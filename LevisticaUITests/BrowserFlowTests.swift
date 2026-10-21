@@ -3,6 +3,128 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testSiteDialogsReturnAlertConfirmAndPromptResults() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/dialogs", in: app)
+        let alertButton = app.webViews.buttons["Site alert"]
+        XCTAssertTrue(alertButton.waitForExistence(timeout: 10))
+        let fixtureFrame = app.windows["browser"].frame
+        alertButton.click()
+        let ok = try siteDialogButton("OK", in: app)
+        XCTAssertTrue(app.sheets.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Synthetic site notice", "Synthetic site notice")).firstMatch.exists)
+        XCTAssertTrue(app.sheets.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", base, base)).firstMatch.exists)
+        attachWindowImage(app, name: "site-alert-origin", knownFrame: fixtureFrame)
+        ok.click()
+        XCTAssertTrue(app.webViews.staticTexts["Alert returned"].waitForExistence(timeout: 5))
+        app.webViews.buttons["Site confirm"].click()
+        try siteDialogButton("キャンセル", in: app).click()
+        XCTAssertTrue(app.webViews.staticTexts["Confirm: false"].waitForExistence(timeout: 5))
+        app.webViews.buttons["Site confirm"].click()
+        try siteDialogButton("OK", in: app).click()
+        XCTAssertTrue(app.webViews.staticTexts["Confirm: true"].waitForExistence(timeout: 5))
+        app.webViews.buttons["Site prompt"].click()
+        _ = try siteDialogButton("OK", in: app)
+        // NSAlert focuses and selects the prompt's default text on presentation.
+        let promptSheet = app.sheets.firstMatch
+        promptSheet.typeKey("a", modifierFlags: .command)
+        promptSheet.typeText("synthetic reply")
+        // Let the OS input-source HUD fade without querying the paused WebContent tree.
+        Thread.sleep(forTimeInterval: 2.5)
+        attachWindowImage(app, name: "site-prompt-input", knownFrame: fixtureFrame)
+        try siteDialogButton("OK", in: app).click()
+        XCTAssertTrue(app.webViews.staticTexts["Prompt: synthetic reply"].waitForExistence(timeout: 5))
+        app.webViews.buttons["Site prompt"].click()
+        try siteDialogButton("キャンセル", in: app).click()
+        XCTAssertTrue(app.webViews.staticTexts["Prompt: cancelled"].waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
+    @MainActor
+    func testStoppingSiteDialogsAndReloadingResetsTheChoice() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/dialogs", in: app)
+        let repeated = app.webViews.buttons["Repeated alerts"]
+        XCTAssertTrue(repeated.waitForExistence(timeout: 10))
+        repeated.click()
+        try siteDialogButton("このページのダイアログを停止", in: app).click()
+        XCTAssertTrue(app.webViews.staticTexts["Dialogs completed: 8"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["siteDialogNotice"].exists)
+        app.buttons["reloadButton"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Waiting for dialog"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.webViews.buttons["Frame confirm"].waitForExistence(timeout: 10))
+        app.webViews.buttons["Frame confirm"].click()
+        _ = try siteDialogButton("キャンセル", in: app)
+        let frameOrigin = base.replacingOccurrences(of: "127.0.0.1", with: "localhost")
+        XCTAssertTrue(app.sheets.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", frameOrigin, frameOrigin)).firstMatch.exists)
+        try siteDialogButton("キャンセル", in: app).click()
+        XCTAssertTrue(app.webViews.staticTexts["Frame: false"].waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
+    @MainActor
+    func testQuitClosesAPendingSiteDialog() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/dialogs", in: app)
+        XCTAssertTrue(app.webViews.buttons["Site confirm"].waitForExistence(timeout: 10))
+        app.webViews.buttons["Site confirm"].click()
+        _ = try siteDialogButton("キャンセル", in: app)
+        app.sheets.firstMatch.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
+    @MainActor
+    func testLongSiteMessageKeepsTheConfirmationButtonReachable() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/dialogs", in: app)
+        XCTAssertTrue(app.webViews.buttons["Long site alert"].waitForExistence(timeout: 10))
+        let fixtureFrame = app.windows["browser"].frame
+        app.webViews.buttons["Long site alert"].click()
+        let ok = try siteDialogButton("OK", in: app)
+        let reachable = ok.isHittable
+        attachWindowImage(app, name: "site-long-message", knownFrame: fixtureFrame)
+        let message = app.sheets.scrollViews.firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        message.scroll(byDeltaX: 0, deltaY: -3000)
+        attachWindowImage(app, name: "site-long-message-scrolled", knownFrame: fixtureFrame)
+        message.scroll(byDeltaX: 0, deltaY: 3000)
+        app.sheets.firstMatch.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.webViews.staticTexts["Long alert returned"].waitForExistence(timeout: 5))
+        XCTAssertTrue(reachable, "A site message must not push its confirmation button off-screen.")
+        app.terminate()
+    }
+
+    @MainActor
+    private func siteDialogButton(_ title: String, in app: XCUIApplication) throws -> XCUIElement {
+        let button = app.sheets.buttons[title].firstMatch
+        XCTAssertTrue(button.waitForExistence(timeout: 10))
+        return button
+    }
+
+    @MainActor
     func testExternalURLReopensTheWindowAndKeepsTheOriginalDraft() throws {
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
         let app = XCUIApplication()
@@ -582,11 +704,11 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func attachWindowImage(_ app: XCUIApplication, name: String) {
+    private func attachWindowImage(_ app: XCUIApplication, name: String, knownFrame: CGRect? = nil) {
         // macOS application screenshots may include other applications. Crop to this
         // fixture window before retaining any image in the test result.
-        let image = app.screenshot().image
-        let frame = app.windows.firstMatch.frame
+        let image = knownFrame == nil ? app.screenshot().image : XCUIScreen.main.screenshot().image
+        let frame = knownFrame ?? app.windows.firstMatch.frame
         guard let screen = NSScreen.main, !frame.isEmpty,
               let original = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
         let scaleX = CGFloat(original.width) / screen.frame.width

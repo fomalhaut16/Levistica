@@ -31,6 +31,13 @@ struct BrowserRootView: View {
                     .lineLimit(1).padding(.horizontal, 10).padding(.vertical, 4)
                     .accessibilityIdentifier("pageOpenerOrigin")
             }
+            if let dialogs = tab.page?.dialogs, let notice = dialogs.notice {
+                HStack {
+                    Text(notice).accessibilityIdentifier("siteDialogNotice")
+                    Spacer()
+                    Button("閉じる") { dialogs.notice = nil }
+                }.padding(8)
+            }
             if let message = session.storageFailure {
                 HStack {
                     Text(message).accessibilityIdentifier("storageFailure")

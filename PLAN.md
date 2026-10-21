@@ -438,3 +438,28 @@ GitHubのランナーが稼働し、PR #8と、再実行したPR #7のCIが成�
 
 CI follow-up: run `39488794525` built Release successfully, but Xcode 26.6 rejected the UI-test helper converting its completion to a Sendable closure. The helper now declares `@Sendable` explicitly. This changes the test callback type only; the application code is unchanged. The merge remains gated on success for the corrected HEAD.
 The corrected callback passed the native-link reopen UI test locally (`.local/artifacts/tests.8KPRrA/Results.xcresult`), including preservation of the original draft and document load count.
+
+### サイトの確認・入力ダイアログ
+
+WKUIDelegateのalert・confirm・promptを、PageRuntime所有のPageDialogControllerからNSAlertのsheetへ接続する。アプリ側で要求元frameのsecurityOriginを表示し、サイト本文と区別する。確認は取消でfalse、入力は取消でnilを返し、入力内容をDB・ログへ保存しない。ページを閉じる・次の文書が確定する・WebContentが終了する・正常終了が確定する際は、残ったcompletionを一度だけ完了させる。
+
+背面タブ、非アクティブなウィンドウ、別sheetの表示中は新しいダイアログを出さず、安全側の取消結果を返してアプリ内に通知を残す。1文書で5回までとし、利用者がそのページのダイアログを停止する操作も用意する。再読み込みや別文書への移動で制限をリセットする。メッセージと初期値の表示はUTF-16で4096単位までで、省略時はその旨を示す。利用者が確認画面に入力した文字列は、そのままサイトのpromptへ返す。WebKitの警告やTLSエラーを回避する機能にはしない。
+
+最初のUI試験は標準ダイアログのボタン探索、続いて本文の完全一致探索で停滞した。アプリ本体のmain threadはイベント待機で、CUAでは標準sheetの要求元・本文・ボタンが表示されていた。標準sheetでは要求元と本文が一つのアクセシビリティテキストになっていたため、試験側をsheet内の部分一致へ修正した。表示画像も確認した。アプリの権限やWebKitのセキュリティ設定を緩めて通すものではない。
+
+ダイアログ中のapp.screenshotも探索待ちになったため、新規試験の画像は表示前に取得したfixtureウィンドウの範囲を使い、画面画像を同じ範囲で切り出す方式にした。他アプリを含む画像は保持しない。結合文字の連続を1文字として無制限に通さないよう、サイト文言とprompt初期値の制限をUTF-16単位とし、結合文字・サロゲート対の単体試験を追加した。
+
+統合試験ではサイトのconfirmを開いたままCmd-Qで終了する経路が失敗した。NSAlertのwindowが既定で終了を阻止するため、サイトのダイアログだけ公開API preventsApplicationTerminationWhenModalをfalseにする。これでAppDelegateの通常の終了判断へ進み、終了が確定したときに未完了のWebKit応答を取り消す。転送中の確認やDB保存失敗による終了取消を飛ばすものではない。
+
+統合実行 `.local/artifacts/tests.KIgoph/Results.xcresult` は単体46件が成功し、UI24経路中23経路が成功した。失敗は上記のconfirm表示中の終了1経路で、連続表示の停止・再読み込みによる解除、親と異なるlocalhostのframeの要求元表示、confirmとpromptの戻り値は成功した。表示画像は `.local/artifacts/site-dialog-review/` に書き出し、要求元・本文・入力欄・各ボタンに欠けがないことを確認した。最終差分では終了の修正後に再検証する。
+
+終了の修正後、対象UI試験は `.local/artifacts/tests.sqdhMl/Results.xcresult` で成功した。Cmd-Qの迂回監視や非公開APIは追加せず、[NSWindowの公開設定](https://developer.apple.com/documentation/appkit/nswindow/preventsapplicationterminationwhenmodal)で通常の終了処理へ接続している。ホスト側から取り消すときはsheetを終了して非表示にし、WebKitへ一度だけ取消結果を返す。
+
+終了修正後のReleaseビルド・strict署名検証・隔離起動も成功した。起動確認はプロセス継続の確認で、実際のダイアログ操作はDebugの合成ページで検証している。Releaseのentitlementはapp-sandbox、network.client、files.user-selected.read-writeの3項目で、追加権限はない。
+
+終了修正後の統合実行は、単体46件・UI24経路がすべて成功した（`.local/artifacts/tests.d3MCIh/Results.xcresult`）。サイトの確認中のCmd-Q、転送中の終了取消・中断終了、別originのframe、ダイアログの停止と再読み込み後の再表示、通常タブ・入力・復元・全画面を同じ実行で確認した。長いサイトメッセージでも確認ボタンに到達できるかは、追加の境界試験として確認する。
+
+長文の追加試験 `.local/artifacts/tests.vjKXy8/Results.xcresult` では、大量の改行を含む本文によりsheetが約3839ptの高さになり、OKボタンが画面外へ出た。本文をUTF-16で4096単位へ切るだけでは防げないため、256単位を超える本文、または6行を超える本文は高さ180ptのスクロール欄へ収める。短い本文は従来の標準表示とし、長い本文でも要求元、入力欄、取消・停止・確認ボタンを操作できる設計に修正した。入力欄の文字列は横にスクロールする標準NSTextFieldで扱う。
+
+長文の修正後は `.local/artifacts/tests.DUeyPT/Results.xcresult` の追加UI試験が成功した。確認ボタンの操作、本文の往復スクロール、応答後のページ継続を確認し、`.local/artifacts/site-long-dialog-review/` の切り出し画像で先頭0行目から165行目以降へ移動してもボタンが画面内に残ることを確認した。検証は統合実行の単体46件・UI24経路と、長文の追加UI1経路に分かれる。長文の表示分岐だけを追加修正しており、25経路が一つの実行ですべて通ったとは記録しない。
+Final unit run after the long-message fix: 46 tests passed in `.local/artifacts/tests.8qYB4K/Results.xcresult`. The final Release build, strict signature verification, and isolated launch also passed. Memory attribution parser tests: 12 passed.
