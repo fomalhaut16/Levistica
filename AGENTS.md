@@ -38,9 +38,10 @@ CUAのgetAppは、対象アプリが終了していると通常起動する。XC
 | 署名・権限の確認 | `skills/signing-entitlements/SKILL.md` | codesign、App Sandbox、Gatekeeper。ビルド入口や配布工程を重複生成しない |
 | Swift 6の並行処理 | `skills/swift-concurrency/SKILL.md` | 実際のコンパイラ・言語モード・actor境界を確認。UIの所有はswiftui-patternsに従う |
 | 単体・統合テスト | `skills/swift-testing-pro/SKILL.md` | 対応コンパイラを確認してSwift Testingを使用。UI試験はXCTest/XCUITest |
+| 性能の原因調査 | `skills/performance-profiling/SKILL.md` | Release・代表データ・参照保持・増加傾向の調査。複数processのphysical footprintは本書とPLANを優先し、RSSのコード例やiOS向け上限を流用しない |
 | 日本語の推敲 | `/Users/User/.codex/skills/yomiyasu/SKILL.md` | 下記のユーザー指定で、手元のリンターを最後に1回使う |
 
-ビルド入口の規則はbuild-run-debugだけを正とし、swiftui-patternsから重複生成しない。スキル中のscaffold作成・アプリ起動の手順は、PLAN.mdの実装順序と環境条件が整った段階で適用する。Git操作は上記の掲載依頼に従う。常時テレメトリ、MCP、hooks、グローバル設定は追加しない。
+ビルド入口の規則はbuild-run-debugだけを正とし、swiftui-patternsから重複生成しない。スキル中のscaffold作成・アプリ起動の手順は、PLAN.mdの実装順序と環境条件が整った段階で適用する。Git操作は上記の掲載依頼に従う。常時テレメトリ、MCP、hooks、グローバル設定は追加しない。profilingの「他アプリを閉じる」は通常利用のアプリへの終了許可にしない。非表示タブの破棄やキャッシュ削除も入力・動画・通話の保護を優先する。Instruments等の詳細解析と通常の比較測定を分ける。
 
 追加スキルはPLAN.mdの工程別導入表に従い、該当作業を計画・開始する時点で必要性を確認し、必要なものをCodexが自動で導入する。候補の説明だけで止めず、本文、ライセンス、採用版・commit、必要な参照・依存、既存指示との重複を確認し、プロジェクト内へ配置して利用可能性を確かめる。導入済みなら再取得せず参照する。取得・認証・権限の承認が必要な場合は、具体的な操作を示してユーザーを挟む。有料契約・大規模ツール・グローバル設定・外部連携の追加は自動承認されたものと扱わない。
 

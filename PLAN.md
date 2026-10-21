@@ -534,3 +534,36 @@ measure-memoryのローカル結果をschema 2にし、帰属の前後・実行�
 OS 26.6（25G72）・arm64・32GiB・バッテリー駆動で、通常利用中の他アプリは止めていない。Chromeは155.0.8059.85、LevisticaのappソースはPDF統合時と同じで、全3起動のReleaseバイナリhashは `419c2ef5601f` で始まる同一値だった。計測ツールは作業中の差分を含み、source HEAD・dirty状態とバイナリの完全hashを各結果へ保存した。途中で欠測PIDの診断を追加し、L3/C3からは計測スクリプトのhashも保存した。証拠は `.local/artifacts/memory/pdf-era-*/result.json` の12件。生の結果・比較専用プロファイルはGit対象外とした。測定後は識別済みの比較用Chromeと専用loopbackサーバーだけを終了した。
 
 計測ツールの最終回帰は15件、Python構文・shell構文・diff検査も成功した。今回appソースは変更していない。新しいスキルや常駐ツールを追加せず、M1の基準計測を継続した。動画・同じloaded数の複数タブ・Safari・長時間稼働は未測定で、RAM上限や削減目標の合意は引き続き未取得。次は動画の再生条件を固定し、5→20→50→100タブの順で状態保護と計測を進める。
+
+### 固定動画による比較
+
+次の動画比較は、合成テストパターンのH.264・1280×720・30fps・30秒loop・無音を使う。既存ffmpegのtestsrc2から生成し、ffprobeでcodec・寸法・fps・音声なしを確認する。映像は `.local/artifacts/video/synthetic-720p.mp4` に置き、Gitへ含めない。localhostの同一MP4と同一HTML、640×360 CSSピクセルの動画表示、同じviewport・DPR、muted・速度1・前面再生を条件とする。解像度が配信側で変わるYouTubeの比較や、音声・広告・DRMの評価とは分ける。
+
+投入上限は同じReleaseとChromeの独立3起動ずつ、順序L1→C1→C2→L2→L3→C3、各起動で再生開始120秒後に1標本。計測前後の時点で停止・非表示・寸法変更・報告や再生進行の3秒以上の停止があれば無効とし、そのplayback報告を残す。待機中すべての報告を保存する長時間試験とは区別する。値が取れない場合は欠測として残し、無効な値を0や都合のよい再試行へ置き換えない。fixture実装はファイル配信・byte range・再生状態の記録までとし、ブラウザ向けの汎用自動化基盤や別アプリには広げない。未完了なら結果と理由を残し、上限を超えて追わない。
+
+performance-profilingをPLANの候補から追加した。公式skill-installerのGit方式でupstream commit `9ffb83138209057875698dd11c1720c657c47a92` に固定し、SKILL・5参照・rootのMIT本文を `skills/performance-profiling/` へ配置した。依存は既存Xcode/InstrumentsとmacOS診断コマンドで、外部サービスや常時テレメトリは追加していない。本文とmemory-profiling参照を手動で読み、相対リンクから読めることを確認した。現在のセッションの自動一覧にはまだ現れておらず、自動認識は次ターンで確認する。
+
+同スキルはiOS/macOS 27向けの記述を含むため、macOS 26.6の実機Release・代表データ・所有関係と増加の調査だけに使う。iOSの50/200MB等の目標、UIKit/background処理、常時MetricKit、他アプリの終了、非表示タブの一律解放は採用しない。memory-profiling内のmach_task_basic_info.resident_sizeはRSSであり、比較のphysical footprintへ置き換えない。ビルド入口はbuild-run-debug、複数processの帰属と合否は本書を優先する。
+
+再生開始120秒後の6試行はすべて有効だった。ffmpeg 8.1.2で生成し、ffprobeでH.264・yuv420p・30fps・30秒・1280×720の単一映像streamを確認した。音声streamはない。MP4は11,360,576byte、SHA-256は `18234a3f773cb3c0d71ae22aea1f8637636b89e6110c40bb771f5728d472b9be`。全試行で同じMP4・HTML・viewport 779×683・DPR 2・表示640×360 CSSピクセルを使った。
+
+| 起動 | 有効標本 | 帰属した集合のMiB | 取得開始・終了（再生開始から秒） |
+|---|---|---|---|
+| L1 | 1/1 | 202.22 | 120.15〜120.39 |
+| C1 | 1/1 | 336.90 | 120.18〜120.64 |
+| C2 | 1/1 | 332.74 | 120.16〜120.62 |
+| L2 | 1/1 | 209.16 | 120.16〜120.40 |
+| L3 | 1/1 | 202.13 | 120.15〜120.39 |
+| C3 | 1/1 | 332.35 | 120.17〜120.62 |
+
+levisticaの3起動の中央値は202.22MiB、範囲は202.13〜209.16MiBだった。
+
+chromeの3起動の中央値は332.74MiB、範囲は332.35〜336.90MiBだった。
+
+UI本体だけでなく、帰属したWebContent・Networking・GPU・補助processを含むphysical footprintの和である。共用領域の重複と集合外の共用サービスの限界を含み、専有RAMとは呼ばない。0.5秒ごとのloopback報告の観測負荷を両者に含む。待機中すべての報告を保存する連続監視やピーク測定ではない。ハードウェアデコードの利用、音声、実効fps・聴感・体感の滑らかさ、YouTube配信・広告・DRM・4K・複数タブ・Safariの比較は未確認。ブラウザごとの再生品質reportは保存したが、APIの計数の違いを検証せず品質順位を付けない。
+
+Apple M5・32GiB、OS 26.6（25G72）、バッテリー駆動で実施し、通常利用の他アプリは終了していない。LevisticaはnonPersistentの正式Release、Chromeは試行ごとの新規専用プロファイル155.0.8059.85を使った。Levisticaは各起動で再生ボタンを押し、Chromeはmuted autoplayから開始した。起動時間の比較とは扱わず、再生開始のserver clockから120秒でそろえた。全3起動のReleaseバイナリhashは `419c2ef5601f` で始まる同一値で、appソースは変更していない。各結果にHEAD・dirty状態・計測scriptとバイナリの完全hash・systemの圧縮/swap/pressureを残した。証拠は `.local/artifacts/memory/fixed-video-*/result.json` の6件。
+
+CUAでLevisticaの最初の映像と再生後の異なるフレーム、経過時間の進行を確認した。画面確認は隔離Releaseだけで行い、XCTestとは重ねていない。測定後は比較専用Chromeを既存のidentity照合で終了し、専用loopbackサーバーを止めた。通常のブラウザのウィンドウやプロファイルは操作していない。
+
+最終のツール回帰19件、Python/shell構文・diff検査が成功した。Releaseの正式入口によるビルド・strict署名検証・隔離起動と実際の動画表示を確認した。今回の結果だけでM1/M3の完了やRAM目標の合意にはしない。次は固定文書5タブを個別に表示して読込済み5をそろえ、未読込の復元タブとは分けて比較する。その後20→50→100へ進む際も、圧迫・応答低下・process終了の中断条件を維持する。

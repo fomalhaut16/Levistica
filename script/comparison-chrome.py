@@ -24,7 +24,7 @@ parser.add_argument('--height', type=int, default=770)
 args = parser.parse_args()
 if args.action == 'start':
     import re
-    if not args.url or not re.fullmatch(r'http://127\.0\.0\.1:\d+/document', args.url):
+    if not args.url or not re.fullmatch(r'http://127\.0\.0\.1:\d+/(document|video)', args.url):
         parser.error('Only the loopback memory fixture URL is allowed')
     if not 420 <= args.height <= 1500 or not 420 <= args.width <= 3000:
         parser.error('Window dimensions outside supported diagnostic range')
