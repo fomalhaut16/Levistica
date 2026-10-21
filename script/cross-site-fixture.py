@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Five loopback-only hosts with fixed documents and same-origin SSE pulses.
+"""Five or twenty loopback-only hosts with fixed documents and same-origin SSE pulses.
 
 No DNS changes, browser flags, external assets, or cross-origin page messaging.
-This deliberately measures responsive documents with five persistent streams,
+This deliberately measures responsive documents with one persistent stream per document,
 not idle static pages or real Internet services.
 """
 import argparse
@@ -17,7 +17,15 @@ import threading
 import time
 import uuid
 
-HOSTS = {str(i): f'document-{i}.localhost' for i in range(1, 6)}
+COUNTS = (5, 20)
+
+def hosts(count):
+    if type(count) is not int or count not in COUNTS:
+        raise ValueError('Document count must be 5 or 20')
+    return {str(i): f'document-{i}.localhost' for i in range(1, count + 1)}
+
+
+HOSTS = hosts(5)
 
 
 def document(number):
@@ -63,14 +71,15 @@ def validated_report(data):
                                       'dpr', 'visibility', 'sections', 'complete')}
 
 
-def create_server(state_path):
+def create_server(state_path, count=5):
+    assigned_hosts = hosts(count)
     state_path = pathlib.Path(state_path)
-    bodies = {key: document(key) for key in HOSTS}
+    bodies = {key: document(key) for key in assigned_hosts}
     lock = threading.Lock()
     state = {'kind': 'cross-site-documents', 'transport': 'same-origin-sse-v1',
-             'run_id': str(uuid.uuid4()), 'expected_tabs': 5, 'loads': 0,
+             'run_id': str(uuid.uuid4()), 'expected_tabs': count, 'loads': 0,
              'document_hashes': {key: hashlib.sha256(body).hexdigest() for key, body in bodies.items()},
-             'documents': {}, 'stream_connections': {key: 0 for key in HOSTS}}
+             'documents': {}, 'stream_connections': {key: 0 for key in assigned_hosts}}
 
     def save():
         temporary = state_path.with_suffix('.tmp')
@@ -79,11 +88,11 @@ def create_server(state_path):
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def route(self, prefix):
-            match = re.fullmatch(prefix + '/([1-5])', self.path)
-            if not match:
+            match = re.fullmatch(prefix + '/([1-9][0-9]*)', self.path)
+            if not match or match[1] not in assigned_hosts:
                 return None
             key = match[1]
-            expected = f'{HOSTS[key]}:{self.server.server_port}'
+            expected = f'{assigned_hosts[key]}:{self.server.server_port}'
             return key if self.headers.get('Host') == expected else None
 
         def do_GET(self):
@@ -149,7 +158,7 @@ def create_server(state_path):
                 data['origin'] = state['origins'][key]
                 data['reported_monotonic'] = time.monotonic()
                 state['documents'][key] = data
-                if len(state['documents']) == 5 and all(
+                if len(state['documents']) == count and all(
                         d['seenVisible'] and d['complete'] and d['pulse'] > 0
                         for d in state['documents'].values()):
                     state.setdefault('ready_monotonic', time.monotonic())
@@ -163,7 +172,7 @@ def create_server(state_path):
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     server.daemon_threads = True
     server.stopping = threading.Event()
-    state['origins'] = {key: f'http://{host}:{server.server_port}' for key, host in HOSTS.items()}
+    state['origins'] = {key: f'http://{host}:{server.server_port}' for key, host in assigned_hosts.items()}
     state['urls'] = {key: origin + '/document/' + key for key, origin in state['origins'].items()}
     state_path.parent.mkdir(parents=True, exist_ok=True)
     save()
@@ -173,8 +182,9 @@ def create_server(state_path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state', type=pathlib.Path, required=True)
+    parser.add_argument('--count', type=int, choices=COUNTS, default=5)
     args = parser.parse_args()
-    server = create_server(args.state)
+    server = create_server(args.state, args.count)
     print(args.state, flush=True)
     try:
         server.serve_forever()

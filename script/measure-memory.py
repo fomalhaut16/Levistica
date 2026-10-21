@@ -194,15 +194,19 @@ def check_fixture(current, original=None, now=None):
     if current.get('kind') in ('documents', 'cross-site-documents'):
         now = time.monotonic() if now is None else now
         docs = current.get('documents', {})
-        if current.get('expected_tabs') != 5 or set(docs) != {'1', '2', '3', '4', '5'} or not current.get('ready_monotonic') or current.get('loads') != 5:
-            raise ValueError('Exactly five visited documents must be loaded once')
+        count = current.get('expected_tabs')
+        allowed = (5, 20) if current['kind'] == 'cross-site-documents' else (5,)
+        if type(count) is not int or count not in allowed:
+            raise ValueError('Unsupported document count')
+        keys = {str(i) for i in range(1, count + 1)}
+        if set(docs) != keys or not current.get('ready_monotonic') or type(current.get('loads')) is not int or current['loads'] != count:
+            raise ValueError('Every expected document must be visited and loaded once')
         if sum(d.get('visibility') == 'visible' for d in docs.values()) != 1:
             raise ValueError('Exactly one document must be visible')
         for d in docs.values():
             if d.get('seenVisible') is not True or d.get('complete') is not True or d.get('sections') != 240 or not 0 <= now - d.get('reported_monotonic', 0) <= 15:
                 raise ValueError('A document is incomplete, unvisited, or no longer reporting')
         if current['kind'] == 'cross-site-documents':
-            keys = {'1', '2', '3', '4', '5'}
             urls, origins = current.get('urls', {}), current.get('origins', {})
             hashes = current.get('document_hashes', {})
             streams = current.get('stream_connections', {})
@@ -210,7 +214,7 @@ def check_fixture(current, original=None, now=None):
                     or not current.get('run_id') or set(urls) != keys or set(origins) != keys
                     or set(hashes) != keys or set(streams) != keys
                     or any(type(streams[key]) is not int or streams[key] != 1 for key in keys)
-                    or docs['5'].get('visibility') != 'visible'
+                    or docs[str(count)].get('visibility') != 'visible'
                     or len({(d.get('width'), d.get('height'), d.get('dpr')) for d in docs.values()}) != 1):
                 raise ValueError('Cross-site document workload is incomplete or reconnected')
             ports = set()
