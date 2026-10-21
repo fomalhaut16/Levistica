@@ -65,7 +65,7 @@ final class BrowserFlowTests: XCTestCase {
         configuration.addsToRecentItems = false
         configuration.promptsUserIfNeeded = false
         let delivered = expectation(description: "Launch Services delivered the request to this checkout")
-        let completion: (NSRunningApplication?, Error?) -> Void = { application, error in
+        let completion: @Sendable (NSRunningApplication?, Error?) -> Void = { application, error in
             XCTAssertNotNil(application)
             XCTAssertNil(error)
             delivered.fulfill()

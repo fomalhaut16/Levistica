@@ -435,3 +435,6 @@ GitHubのランナーが稼働し、PR #8と、再実行したPR #7のCIが成�
 最終差分は単体44件・UI21経路の統合実行がすべて成功した（`.local/artifacts/tests.3tlnHy/Results.xcresult`）。分割されたURL要求のまとめ処理、起動前要求の一度だけの適用、既存URL入力の保持を単体で確認し、外部リンク受信・URLなしの再表示・フォーム入力と読込回数の保持をUIで確認した。保存・添付・POST再送防止・全画面・タブ保存復元などの既存経路も同じ実行で通った。Releaseのビルド・署名検証・隔離起動と、計測パーサー12件・スクリプト構文も確認済み。通常プロファイルの受入やメモリの比較合格とは区別する。
 
 保存・添付のPR #9は、対象HEADと全checkのSUCCESSを確認してmainへ統合した。外部URL受信も独立したPRで、同じ成功確認をしてから統合する。
+
+CI follow-up: run `39488794525` built Release successfully, but Xcode 26.6 rejected the UI-test helper converting its completion to a Sendable closure. The helper now declares `@Sendable` explicitly. This changes the test callback type only; the application code is unchanged. The merge remains gated on success for the corrected HEAD.
+The corrected callback passed the native-link reopen UI test locally (`.local/artifacts/tests.8KPRrA/Results.xcresult`), including preservation of the original draft and document load count.
