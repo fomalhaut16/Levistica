@@ -24,6 +24,12 @@ struct LevisticaApp: App {
                     .disabled(session.page?.canSavePDF != true)
                 Button("タブを閉じる") { session.closeTab(session.selectedID) }.keyboardShortcut("w")
             }
+            CommandMenu("ブックマーク") {
+                Button("現在のページを追加") { session.addCurrentBookmark() }.keyboardShortcut("d")
+                    .disabled(!session.canAddBookmark)
+                Button("ブックマークを表示") { session.showBookmarks() }
+                    .keyboardShortcut("b", modifiers: [.command, .option])
+            }
             CommandMenu("ページ") {
                 Button("ページ内を検索") { session.showFind() }.keyboardShortcut("f")
                     .disabled(session.page == nil)

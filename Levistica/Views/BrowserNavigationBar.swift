@@ -7,6 +7,8 @@ struct BrowserNavigationBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            Button("ブックマーク", systemImage: "book") { session.showBookmarks() }
+                .accessibilityIdentifier("showBookmarksButton")
             Button("戻る", systemImage: "chevron.left") { tab.page?.back() }
                 .disabled(tab.page?.canGoBack != true).accessibilityIdentifier("backButton")
             Button("進む", systemImage: "chevron.right") { tab.page?.forward() }

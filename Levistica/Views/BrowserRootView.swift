@@ -4,15 +4,22 @@ struct BrowserRootView: View {
     @Bindable var session: BrowserSession
 
     var body: some View {
-        VStack(spacing: 0) {
-            HSplitView {
-                TabSidebar(session: session)
-                tabContent(session.activeTab)
-                    .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                HSplitView {
+                    TabSidebar(session: session)
+                    tabContent(session.activeTab)
+                        .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
+                }
+                DownloadShelf(manager: session.downloads)
             }
-            DownloadShelf(manager: session.downloads)
+            if session.isBookmarkListVisible {
+                Divider()
+                BookmarkPanel(session: session, library: session.bookmarks)
+                    .frame(width: 320)
+            }
         }
-        .frame(minWidth: 800, minHeight: 420)
+        .frame(minWidth: session.isBookmarkListVisible ? 1120 : 800, minHeight: 420)
     }
 
     private func tabContent(_ tab: BrowserTab) -> some View {
