@@ -24,6 +24,49 @@ struct SessionStoreTests {
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
     }
 
+    @MainActor @Test func keptAndSleepingTabsPersistWithoutCreatingPages() throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url)
+        let tab = SavedTab(id: UUID(), title: "Sleeping document", url: URL(string: "https://example.com/document"),
+                           mayReload: true, isKept: true, isSleeping: true)
+        try store.save(SavedSession(tabs: [tab], selectedID: tab.id, wasRunning: false))
+        let session = BrowserSession(dataStore: .nonPersistent(), store: store)
+        session.activateInitialSelection()
+        #expect(session.activeTab.isSleeping)
+        #expect(session.activeTab.isKept)
+        #expect(session.loadedPageCount == 0)
+        session.toggleKeep(tab.id)
+        #expect(try store.load()?.tabs.first?.isKept == false)
+        #expect(try store.load()?.tabs.first?.isSleeping == true)
+        #expect(session.prepareToQuit())
+    }
+
+    @Test(arguments: ["is_kept=4294967296", "is_sleeping=-1", "is_kept='text'", "is_sleeping=1.5"])
+    func invalidLifecycleFlagsAreRejected(_ update: String) throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url)
+        let tab = SavedTab(id: UUID(), title: "Before", url: URL(string: "https://example.com/"), mayReload: true)
+        try store.save(SavedSession(tabs: [tab], selectedID: tab.id, wasRunning: false))
+        var database: OpaquePointer?
+        #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        #expect(sqlite3_exec(database, "UPDATE session_tabs SET " + update, nil, nil, nil) == SQLITE_OK)
+        #expect(throws: (any Error).self) { _ = try store.load() }
+    }
+
+    @Test func sleepingStateRequiresAReloadableWebURL() throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url)
+        for tab in [SavedTab(id: UUID(), title: "Blank", url: nil, mayReload: true, isSleeping: true),
+                    SavedTab(id: UUID(), title: "POST", url: URL(string: "https://example.com/"), mayReload: false, isSleeping: true),
+                    SavedTab(id: UUID(), title: "PDF", url: nil, mayReload: false, kind: .localPDF, isSleeping: true)] {
+            #expect(throws: (any Error).self) { try store.save(SavedSession(tabs: [tab], selectedID: tab.id, wasRunning: false)) }
+        }
+    }
+
     @Test(arguments: ["https://example.com/callback?code=secret&state=test", "https://example.com/#access_token=secret", "https://u:p@example.com/", "javascript:alert(1)", "https://example.com/?co%64e=secret"])
     func recognizableSecretsAndUnsafeSchemesAreNotPersisted(_ value: String) throws {
         #expect(SessionStore.persistableURL(URL(string: value)) == nil)
@@ -74,18 +117,20 @@ struct SessionStoreTests {
         #expect(try store.load() == before)
     }
 
-    @Test func versionOneMigratesWithoutChangingExistingTabs() throws {
+    @Test(arguments: [1, 2]) func olderVersionsMigrateWithoutChangingExistingTabs(_ version: Int) throws {
         let url = try temporaryURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let id = UUID()
         var database: OpaquePointer?
         #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
-        let sql = "CREATE TABLE session_tabs (id TEXT PRIMARY KEY NOT NULL, position INTEGER UNIQUE NOT NULL, title TEXT NOT NULL, url TEXT, may_reload INTEGER NOT NULL); CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK(id=1), selected_id TEXT NOT NULL, was_running INTEGER NOT NULL); INSERT INTO session_tabs VALUES ('\(id.uuidString)',0,'Original tab','https://example.com/',1); INSERT INTO session_meta VALUES (1,'\(id.uuidString)',0); PRAGMA user_version=1;"
+        let kindColumn = version == 2 ? ", kind TEXT NOT NULL DEFAULT 'web'" : ""
+        let kindValue = version == 2 ? ", 'web'" : ""
+        let sql = "CREATE TABLE session_tabs (id TEXT PRIMARY KEY NOT NULL, position INTEGER UNIQUE NOT NULL, title TEXT NOT NULL, url TEXT, may_reload INTEGER NOT NULL\(kindColumn)); CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK(id=1), selected_id TEXT NOT NULL, was_running INTEGER NOT NULL); INSERT INTO session_tabs VALUES ('\(id.uuidString)',0,'Original tab','https://example.com/',1\(kindValue)); INSERT INTO session_meta VALUES (1,'\(id.uuidString)',0); PRAGMA user_version=\(version);"
         #expect(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
         sqlite3_close(database)
         let store = try SessionStore(fileURL: url)
         let saved = try #require(try store.load())
-        #expect(saved.selectedID == id && !saved.wasRunning)
+        #expect(saved.selectedID == id && saved.wasRunning == false)
         #expect(saved.tabs == [SavedTab(id: id, title: "Original tab", url: URL(string: "https://example.com/"), mayReload: true)])
         try store.save(saved)
         #expect(try store.load() == saved)

@@ -11,17 +11,30 @@ final class PageDialogController {
     private var suppressed = false
 
     func confirmDeparture(window: NSWindow?, completion: @escaping @MainActor (Bool) -> Void) {
+        confirmBrowserAction(window: window, title: "ページを離れる前に入力内容を確認してください",
+                             message: "入力操作がありました。再読み込みやページの移動で、入力内容や添付の選択を失う場合があります。保存・送信が済んでいるか確認してください。",
+                             action: "入力を破棄して移動", completion: completion)
+    }
+
+    func confirmSleep(window: NSWindow?, completion: @escaping @MainActor (Bool) -> Void) {
+        confirmBrowserAction(window: window, title: "このタブを休眠しますか？",
+                             message: "ページを解放し、再開時にURLから読み込み直します。入力、ページ内の戻る履歴、スクロール、再生位置、通話や接続の状態は復元されません。独自の入力欄や通信は検知できない場合があります。保存・送信と接続の終了を確認してください。",
+                             action: "状態を破棄して休眠", completion: completion)
+    }
+
+    private func confirmBrowserAction(window: NSWindow?, title: String, message: String, action: String,
+                                      completion: @escaping @MainActor (Bool) -> Void) {
         // Browser-owned protection is independent of a site's dialog allowance.
         guard activeAlert == nil, let window, window.isKeyWindow, window.attachedSheet == nil else {
-            notice = "入力操作のあったページからの移動を止めました。このタブを選び、ほかの確認画面を閉じてから操作してください。"
+            notice = "操作を取り消しました。このタブを選び、ほかの確認画面を閉じてから操作してください。"
             completion(false)
             return
         }
         let alert = NSAlert()
-        alert.messageText = "ページを離れる前に入力内容を確認してください"
-        alert.informativeText = "入力操作がありました。再読み込みやページの移動で、入力内容や添付の選択を失う場合があります。保存・送信が済んでいるか確認してください。"
+        alert.messageText = title
+        alert.informativeText = message
         let keep = alert.addButton(withTitle: "ページに戻る")
-        let leave = alert.addButton(withTitle: "入力を破棄して移動")
+        let leave = alert.addButton(withTitle: action)
         leave.hasDestructiveAction = true
         alert.window.defaultButtonCell = keep.cell as? NSButtonCell
         alert.window.preventsApplicationTerminationWhenModal = false

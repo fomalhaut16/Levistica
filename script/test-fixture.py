@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Loopback-only deterministic pages for UI tests; never logs requests."""
+import base64
+import io
+import wave
 import http.server
 import json
 import pathlib
@@ -32,6 +35,16 @@ def synthetic_pdf(port):
     for offset in offsets[1:]: result.extend(("%010d 00000 n \n" % offset).encode())
     result.extend(("trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(offsets), xref)).encode())
     return bytes(result)
+
+
+def silent_audio_data():
+    output = io.BytesIO()
+    with wave.open(output, 'wb') as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(8000)
+        audio.writeframes(bytes(16000))
+    return 'data:audio/wav;base64,' + base64.b64encode(output.getvalue()).decode()
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -134,6 +147,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/popup-burst": '''<title>Popup burst fixture</title><h1>Popup burst fixture</h1>
                 <button onclick="for(let i=0;i<20;i++) window.open('/burst-child','burst-'+i)">Open twenty related pages</button>''',
             "/burst-child": '<title>Burst child</title><h1>Burst child</h1>',
+            "/sleep-media": '''<title>Sleep media fixture</title><h1>Sleep media fixture</h1><p id="state">No media</p>
+                <button onclick="play()">Play muted media</button><button onclick="setTimeout(play,10000)">Schedule muted media</button>
+                <script>function play(){const media=new Audio(''' + json.dumps(silent_audio_data()) + ''');
+                media.muted=true;media.loop=true;media.onplaying=()=>state.textContent='Muted media playing';
+                document.body.append(media);media.play();}</script>''',
+            "/sleep-state": '''<title>Sleep fixture</title><h1>Sleep fixture</h1><p id="loads"></p><p id="marker">Fresh page</p>
+                <button onclick="marker.textContent='Transient marker'">Change page marker</button>
+                <script>const n=+(document.cookie.match(/(?:^|; )sleep_loads=([0-9]+)/)?.[1]||0)+1;
+                document.cookie='sleep_loads='+n+'; SameSite=Lax; path=/';loads.textContent='Sleep loads: '+n;</script>''',
             "/tab-state": '<title>State tab</title><h1>State tab</h1><input aria-label="Draft"><p id="loads"></p><script>const n=+(sessionStorage.getItem("loads")||0)+1;sessionStorage.setItem("loads",n);document.getElementById("loads").textContent="Document loads: "+n;</script>',
             "/post-form": '<h1>Post fixture</h1><form action="/submitted" method="post"><input name="draft" value="synthetic"><button>Submit fixture</button></form>',
             "/submitted": '<h1>Unexpected GET replay</h1>',

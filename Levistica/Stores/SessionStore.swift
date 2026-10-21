@@ -8,8 +8,11 @@ struct SavedTab: Equatable {
     let title: String
     let url: URL?
     let mayReload: Bool
-    init(id: UUID, title: String, url: URL?, mayReload: Bool, kind: Kind = .web) {
+    let isKept: Bool
+    let isSleeping: Bool
+    init(id: UUID, title: String, url: URL?, mayReload: Bool, kind: Kind = .web, isKept: Bool = false, isSleeping: Bool = false) {
         self.id = id; self.title = title; self.url = url; self.mayReload = mayReload; self.kind = kind
+        self.isKept = isKept; self.isSleeping = isSleeping
     }
 }
 
@@ -47,7 +50,7 @@ final class SessionStore {
             defer { sqlite3_finalize(version) }
             guard sqlite3_step(version) == SQLITE_ROW else { throw Failure.invalidData }
             let number = sqlite3_column_int(version, 0)
-            guard number <= 2 else { throw Failure.newerVersion }
+            guard number <= 3 else { throw Failure.newerVersion }
             if number == 0 {
                 try execute("BEGIN IMMEDIATE")
                 do {
@@ -71,6 +74,18 @@ final class SessionStore {
                     throw error
                 }
             }
+            if number < 3 {
+                try execute("BEGIN IMMEDIATE")
+                do {
+                    try execute("ALTER TABLE session_tabs ADD COLUMN is_kept INTEGER NOT NULL DEFAULT 0")
+                    try execute("ALTER TABLE session_tabs ADD COLUMN is_sleeping INTEGER NOT NULL DEFAULT 0")
+                    try execute("PRAGMA user_version=3")
+                    try execute("COMMIT")
+                } catch {
+                    try? execute("ROLLBACK")
+                    throw error
+                }
+            }
         } catch {
             sqlite3_close(database)
             database = nil
@@ -81,7 +96,7 @@ final class SessionStore {
     deinit { if let database { sqlite3_close(database) } }
 
     func load() throws -> SavedSession? {
-        let rows = try statement("SELECT id, position, title, url, may_reload, kind FROM session_tabs ORDER BY position")
+        let rows = try statement("SELECT id, position, title, url, may_reload, kind, is_kept, is_sleeping FROM session_tabs ORDER BY position")
         defer { sqlite3_finalize(rows) }
         var tabs: [SavedTab] = []
         var ids = Set<UUID>()
@@ -97,7 +112,13 @@ final class SessionStore {
             guard mayReload == 0 || mayReload == 1 else { throw Failure.invalidData }
             guard let rawKind = text(rows, 5), let kind = SavedTab.Kind(rawValue: rawKind),
                   kind != .localPDF || (url == nil && mayReload == 0) else { throw Failure.invalidData }
-            tabs.append(SavedTab(id: id, title: title, url: url, mayReload: mayReload == 1, kind: kind))
+            let kept = sqlite3_column_int64(rows, 6)
+            let sleeping = sqlite3_column_int64(rows, 7)
+            guard sqlite3_column_type(rows, 6) == SQLITE_INTEGER, sqlite3_column_type(rows, 7) == SQLITE_INTEGER,
+                  (kept == 0 || kept == 1), (sleeping == 0 || sleeping == 1),
+                  sleeping == 0 || (kind == .web && url != nil && mayReload == 1) else { throw Failure.invalidData }
+            tabs.append(SavedTab(id: id, title: title, url: url, mayReload: mayReload == 1, kind: kind,
+                                 isKept: kept == 1, isSleeping: sleeping == 1))
             result = sqlite3_step(rows)
         }
         guard result == SQLITE_DONE else { throw Failure.unavailable }
@@ -117,12 +138,13 @@ final class SessionStore {
         guard !session.tabs.isEmpty, session.tabs.count <= 1000,
               Set(session.tabs.map(\.id)).count == session.tabs.count,
               session.tabs.contains(where: { $0.id == session.selectedID }),
-              session.tabs.allSatisfy({ $0.kind != .localPDF || ($0.url == nil && !$0.mayReload) }) else { throw Failure.invalidData }
+              session.tabs.allSatisfy({ ($0.kind != .localPDF || ($0.url == nil && !$0.mayReload))
+                  && (!$0.isSleeping || ($0.kind == .web && $0.mayReload && Self.persistableURL($0.url) != nil)) }) else { throw Failure.invalidData }
         try execute("BEGIN IMMEDIATE")
         do {
             try execute("DELETE FROM session_tabs")
             for (index, tab) in session.tabs.enumerated() {
-                let row = try statement("INSERT INTO session_tabs VALUES (?, ?, ?, ?, ?, ?)")
+                let row = try statement("INSERT INTO session_tabs VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
                 defer { sqlite3_finalize(row) }
                 try bind(tab.id.uuidString, to: 1, in: row)
                 guard sqlite3_bind_int(row, 2, Int32(index)) == SQLITE_OK else { throw Failure.unavailable }
@@ -130,6 +152,8 @@ final class SessionStore {
                 try bind(Self.persistableURL(tab.url)?.absoluteString, to: 4, in: row)
                 try bind(tab.kind.rawValue, to: 6, in: row)
                 guard sqlite3_bind_int(row, 5, tab.mayReload ? 1 : 0) == SQLITE_OK,
+                      sqlite3_bind_int(row, 7, tab.isKept ? 1 : 0) == SQLITE_OK,
+                      sqlite3_bind_int(row, 8, tab.isSleeping ? 1 : 0) == SQLITE_OK,
                       sqlite3_step(row) == SQLITE_DONE else { throw Failure.unavailable }
             }
             let meta = try statement("INSERT OR REPLACE INTO session_meta VALUES (1, ?, ?)")

@@ -22,7 +22,7 @@ struct BrowserNavigationBar: View {
                     if session.navigate(tab.addressDraft) { addressFocused = false }
                 }
                 .onExitCommand {
-                    tab.addressDraft = tab.page?.url?.absoluteString ?? ""
+                    tab.addressDraft = (tab.page?.url ?? tab.pendingURL)?.absoluteString ?? ""
                     addressFocused = false
                 }
             if tab.page?.isLoading == true {
@@ -36,11 +36,11 @@ struct BrowserNavigationBar: View {
         .labelStyle(.iconOnly).padding(10)
         .onAppear {
             if let url = tab.page?.url { tab.addressDraft = url.absoluteString }
-            addressFocused = tab.page == nil
+            addressFocused = tab.page == nil && !tab.isSleeping
         }
         .onChange(of: session.addressFocusRequest) { addressFocused = true }
         .onChange(of: tab.page?.url) { _, url in
-            if !addressFocused { tab.addressDraft = url?.absoluteString ?? "" }
+            if !addressFocused { tab.addressDraft = (url ?? tab.pendingURL)?.absoluteString ?? "" }
         }
         .onChange(of: addressFocused) { _, focused in
             if !focused, tab.inputError == nil, let url = tab.page?.url { tab.addressDraft = url.absoluteString }

@@ -5,6 +5,21 @@ import WebKit
 
 @MainActor
 struct BrowserSessionTests {
+    @Test func keepStatePreventsSleepAndSurvivesClosingAndReopening() {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let tab = session.activeTab
+        session.toggleKeep(tab.id)
+        #expect(tab.isKept)
+        session.requestSelectedTabSleep()
+        #expect(session.isRequestingSleep == false)
+        #expect(tab.sleepNotice?.contains("保持") == true)
+        session.closeTab(tab.id)
+        session.reopenClosedTab()
+        #expect(session.activeTab.isKept)
+        #expect(session.activeTab.isSleeping == false)
+        #expect(session.loadedPageCount == 0)
+    }
+
     @Test func departureConfirmationDistinguishesSendingAndSameDocumentLinks() throws {
         let current = try #require(URL(string: "https://example.com/draft?q=1"))
         let fragment = try #require(URL(string: "https://example.com/draft?q=1#section"))

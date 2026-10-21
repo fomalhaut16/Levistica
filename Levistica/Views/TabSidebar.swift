@@ -29,7 +29,8 @@ struct TabSidebar: View {
             )) {
                 ForEach(visibleTabs) { tab in
                     HStack {
-                        Image(systemName: tab.page == nil ? "doc" : "globe")
+                        Image(systemName: tab.isKept ? "pin.fill" : (tab.isSleeping ? "moon.zzz" : (tab.page == nil ? "doc" : "globe")))
+                            .accessibilityLabel(tab.isKept ? "保持するタブ" : (tab.isSleeping ? "休眠中" : "ページ"))
                         Text(tab.displayTitle).lineLimit(1)
                         if tab.page?.inputGuard.hasEditedInput == true {
                             Image(systemName: "pencil").accessibilityLabel("入力操作あり")
@@ -44,6 +45,12 @@ struct TabSidebar: View {
                     .tag(tab.id)
                     .accessibilityIdentifier("tab-\(tab.id)")
                     .contextMenu {
+                        Button(tab.isKept ? "タブの保持を解除" : "このタブを保持") { session.toggleKeep(tab.id) }
+                        if tab.id == session.selectedID {
+                            Button("このタブを休眠…") { session.requestSelectedTabSleep() }
+                                .disabled(tab.page == nil || session.isRequestingSleep)
+                        }
+                        Divider()
                         Button("タブを閉じる") { session.closeTab(tab.id) }
                         Divider()
                         Button("前に移動") { session.moveTab(tab.id, by: -1) }

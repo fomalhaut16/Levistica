@@ -6,6 +6,13 @@ MODE="${1:-run}"
 CONFIGURATION="${CONFIGURATION:-Debug}"
 case "$MODE" in run|--build|--verify|--debug|--logs|--telemetry) ;; *) echo "usage: $0 [--build|--verify|--debug|--logs|--telemetry]" >&2; exit 2;; esac
 case "$CONFIGURATION" in Debug|Release) ;; *) echo 'CONFIGURATION must be Debug or Release' >&2; exit 2;; esac
+# Persistent manual tests must opt into both a Debug build and isolated data.
+if [[ -n "${LEVISTICA_SESSION_TEST_ID:-}" ]]; then
+    if [[ "$CONFIGURATION" != Debug || "${LEVISTICA_EPHEMERAL:-0}" != 1 || ! "$LEVISTICA_SESSION_TEST_ID" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]; then
+        echo 'SESSION_TEST_ID requires Debug, EPHEMERAL=1, and a UUID' >&2
+        exit 2
+    fi
+fi
 APP_BUNDLE="$ROOT_DIR/.local/DerivedData/Build/Products/$CONFIGURATION/Levistica.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/Levistica"
 LOG_DIR="$ROOT_DIR/.local/artifacts"
@@ -21,7 +28,7 @@ for pid in $(/usr/bin/pgrep -x Levistica || true); do
     esac
     bundle="${actual%/Contents/MacOS/Levistica}"
     identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$bundle/Contents/Info.plist" 2>/dev/null || true)"
-    if [[ "$identifier" == dev.fomalhaut16.Levistica ]]; then
+    if [[ "$identifier" == dev.fomalhaut16.Levistica || "$identifier" == dev.fomalhaut16.Levistica.debug ]]; then
         /bin/kill -TERM "$pid"
         for ((attempt=0; attempt<50; attempt++)); do
             /bin/kill -0 "$pid" 2>/dev/null || break
@@ -47,7 +54,11 @@ case "$MODE" in
     --debug) exec /usr/bin/xcrun lldb -- "$APP_BINARY" ;;
 esac
 if [[ "${LEVISTICA_EPHEMERAL:-0}" == 1 ]]; then
-    /usr/bin/open -n --env LEVISTICA_EPHEMERAL=1 "$APP_BUNDLE"
+    LEVISTICA_OPEN_ARGS=(-n --env LEVISTICA_EPHEMERAL=1)
+    if [[ -n "${LEVISTICA_SESSION_TEST_ID:-}" ]]; then
+        LEVISTICA_OPEN_ARGS+=(--env "LEVISTICA_SESSION_TEST_ID=$LEVISTICA_SESSION_TEST_ID")
+    fi
+    /usr/bin/open "${LEVISTICA_OPEN_ARGS[@]}" "$APP_BUNDLE"
 else
     /usr/bin/open -n "$APP_BUNDLE"
 fi
