@@ -20,6 +20,8 @@ final class BrowserSession {
     private var closedTabs: [ClosedTab] = []
     @ObservationIgnored private var inputConfirmationInProgress = false
     let downloads = DownloadManager()
+    let bookmarks: BookmarkLibrary
+    var isBookmarkListVisible = false
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
 
     @ObservationIgnored private var localPDFPanel: NSOpenPanel?
@@ -32,7 +34,8 @@ final class BrowserSession {
         let index: Int
     }
 
-    init(dataStore: WKWebsiteDataStore? = nil, store: SessionStore? = nil) {
+    init(dataStore: WKWebsiteDataStore? = nil, store: SessionStore? = nil, bookmarkFileURL: URL? = nil) {
+        bookmarks = BookmarkLibrary(fileURL: bookmarkFileURL)
         let tab = BrowserTab()
         tabs = [tab]
         selectedID = tab.id
@@ -73,17 +76,35 @@ final class BrowserSession {
         let testID: UUID? = nil
         #endif
         if environment["LEVISTICA_EPHEMERAL"] == "1" && testID == nil { return BrowserSession() }
+        var bookmarkURL: URL?
         do {
             var folder = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                                       appropriateFor: nil, create: true)
                 .appendingPathComponent("Levistica", isDirectory: true)
             if let testID { folder.append(path: "SessionTests/" + testID.uuidString, directoryHint: .isDirectory) }
-            return BrowserSession(store: try SessionStore(fileURL: folder.appendingPathComponent("session.sqlite3")))
+            bookmarkURL = folder.appendingPathComponent("bookmarks.sqlite3")
+            return BrowserSession(store: try SessionStore(fileURL: folder.appendingPathComponent("session.sqlite3")), bookmarkFileURL: bookmarkURL)
         } catch {
-            let session = BrowserSession()
+            let session = BrowserSession(bookmarkFileURL: bookmarkURL)
             session.storageFailure = "タブ一覧の保存先を開けませんでした。この起動ではタブ一覧を保存しません。"
             return session
         }
+    }
+
+    var canAddBookmark: Bool {
+        guard let page, !activeTab.isLocalPDF, !page.isLoading, page.failure == nil, page.canRetry else { return false }
+        return SessionStore.persistableURL(page.url) != nil
+    }
+
+    func addCurrentBookmark() {
+        guard canAddBookmark, let url = page?.url else { return }
+        bookmarks.add(url: url, title: activeTab.displayTitle)
+        isBookmarkListVisible = true
+    }
+
+    func showBookmarks() {
+        bookmarks.load()
+        isBookmarkListVisible = true
     }
 
     func activateInitialSelection() {

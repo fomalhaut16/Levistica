@@ -3,6 +3,81 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testBookmarksCanBeRenamedSearchedReopenedAndRestored() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launch()
+        app.activate()
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["reloadButton"].waitForExistence(timeout: 10))
+        waitForInputIndicator(in: app)
+        app.typeKey("d", modifierFlags: .command)
+        let title = app.textFields["bookmarkTitleField"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        title.click()
+        waitForInputIndicator(in: app)
+        title.typeKey("a", modifierFlags: .command)
+        title.typeText("Saved research page")
+        app.buttons["saveBookmarkTitleButton"].click()
+        XCTAssertTrue(app.staticTexts["Saved research page"].firstMatch.waitForExistence(timeout: 5))
+        app.typeKey("d", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["1件・上限1000件"].waitForExistence(timeout: 5))
+        XCTAssertEqual(title.value as? String, "Saved research page")
+        let search = app.textFields["bookmarkSearchField"]
+        search.click()
+        waitForInputIndicator(in: app)
+        search.typeText("does-not-match")
+        XCTAssertFalse(app.staticTexts["Saved research page"].exists)
+        search.typeKey("a", modifierFlags: .command)
+        search.typeKey(.delete, modifierFlags: [])
+        waitForInputIndicator(in: app)
+        let row = app.staticTexts["Saved research page"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.click()
+        attachWindowImage(app, name: "bookmarks-panel", knownFrame: app.windows["browser"].frame)
+        app.buttons["openBookmarkButton"].click()
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み2"].waitForExistence(timeout: 10))
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10), "The bookmark panel must not prevent normal termination")
+        app.launch()
+        app.activate()
+        app.buttons["showBookmarksButton"].click()
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み1"].waitForExistence(timeout: 10))
+        row.click()
+        app.buttons["deleteBookmarkButton"].click()
+        XCTAssertTrue(app.staticTexts["0件・上限1000件"].waitForExistence(timeout: 5))
+        app.buttons["undoBookmarkDeletionButton"].click()
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        app.buttons["closeBookmarksButton"].click()
+        XCTAssertFalse(app.textFields["bookmarkSearchField"].exists)
+        app.terminate()
+    }
+
+    @MainActor
+    func testPostPDFCannotBeAddedAsAReloadableBookmark() throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/pdf-post-form", in: app)
+        let button = app.webViews.buttons["Submit PDF fixture"]
+        XCTAssertTrue(button.waitForExistence(timeout: 10))
+        button.click()
+        XCTAssertTrue(app.staticTexts["webPDFNotice"].waitForExistence(timeout: 10))
+        app.menuBars.menuBarItems["ブックマーク"].click()
+        XCTAssertFalse(app.menuItems["現在のページを追加"].isEnabled)
+        app.typeKey(.escape, modifierFlags: [])
+        app.terminate()
+    }
+
+    @MainActor
     func testWebPDFDisplaysAndFindsText() throws {
         continueAfterFailure = false
         executionTimeAllowance = 120
@@ -882,6 +957,8 @@ final class BrowserFlowTests: XCTestCase {
         submit(base + "/fullscreen", in: app)
         let enter = app.webViews.buttons["Enter fullscreen"]
         XCTAssertTrue(enter.waitForExistence(timeout: 10))
+        app.buttons["showBookmarksButton"].click()
+        XCTAssertTrue(app.textFields["bookmarkSearchField"].waitForExistence(timeout: 5))
         let beforeFrame = app.webViews.firstMatch.frame
         attachWindowImage(app, name: "fullscreen-before")
         enter.click()
@@ -905,6 +982,11 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertEqual(afterFrame.width, beforeFrame.width, accuracy: 2)
         XCTAssertEqual(afterFrame.height, beforeFrame.height, accuracy: 2)
         attachWindowImage(app, name: "fullscreen-after")
+        XCTAssertTrue(app.textFields["bookmarkSearchField"].exists)
+        app.buttons["closeBookmarksButton"].click()
+        XCTAssertFalse(app.textFields["bookmarkSearchField"].exists)
+        XCTAssertGreaterThan(app.webViews.firstMatch.frame.width, beforeFrame.width + 200)
+        attachWindowImage(app, name: "fullscreen-after-bookmarks-closed")
         app.terminate()
     }
 
@@ -920,6 +1002,11 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(draft.waitForExistence(timeout: 10))
         draft.click()
         draft.typeText("keep this draft")
+        app.buttons["showBookmarksButton"].click()
+        XCTAssertTrue(app.textFields["bookmarkSearchField"].waitForExistence(timeout: 5))
+        app.buttons["closeBookmarksButton"].click()
+        XCTAssertEqual(draft.value as? String, "keep this draft")
+        XCTAssertTrue(app.webViews.staticTexts["Document loads: 1"].exists)
         app.typeKey("t", modifierFlags: .command)
         XCTAssertEqual(app.webViews.count, 0)
         submit(base + "/one", in: app)
