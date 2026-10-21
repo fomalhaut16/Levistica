@@ -3,6 +3,68 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testHistorySearchDeleteAndClearKeepBookmarksAndTheCurrentPage() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launch()
+        app.activate()
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["reloadButton"].waitForExistence(timeout: 10))
+        waitForInputIndicator(in: app)
+        app.typeKey("d", modifierFlags: .command)
+        XCTAssertTrue(app.textFields["bookmarkTitleField"].waitForExistence(timeout: 10))
+        app.buttons["closeBookmarksButton"].click()
+        submit(base + "/two", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        app.buttons["showHistoryButton"].click()
+        XCTAssertTrue(app.staticTexts["2件表示"].waitForExistence(timeout: 10))
+        let search = app.textFields["historySearchField"]
+        search.click()
+        waitForInputIndicator(in: app)
+        search.typeText("/one")
+        waitForInputIndicator(in: app)
+        search.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.staticTexts["1件表示"].waitForExistence(timeout: 10))
+        let list = app.descendants(matching: .any).matching(identifier: "historyList").firstMatch
+        let one = list.staticTexts["Fixture one"].firstMatch
+        XCTAssertTrue(one.waitForExistence(timeout: 5))
+        waitForInputIndicator(in: app)
+        one.click()
+        attachWindowImage(app, name: "history-panel", knownFrame: app.windows["browser"].frame)
+        app.buttons["openHistoryButton"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み2"].waitForExistence(timeout: 10))
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch()
+        app.activate()
+        app.buttons["showHistoryButton"].click()
+        XCTAssertTrue(app.staticTexts["2件表示"].waitForExistence(timeout: 10))
+        let two = list.staticTexts["Fixture two"].firstMatch
+        XCTAssertTrue(two.waitForExistence(timeout: 5))
+        two.click()
+        let remove = app.buttons["deleteHistoryButton"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        remove.click()
+        XCTAssertTrue(app.staticTexts["1件表示"].waitForExistence(timeout: 10))
+        app.buttons["clearHistoryButton"].click()
+        app.buttons["confirmClearHistoryButton"].click()
+        XCTAssertTrue(app.staticTexts["0件表示"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].exists)
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み1"].exists)
+        app.buttons["showBookmarksButton"].click()
+        XCTAssertTrue(app.staticTexts["1件・上限1000件"].waitForExistence(timeout: 5))
+        app.buttons["closeBookmarksButton"].click()
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
+    @MainActor
     func testBookmarksCanBeRenamedSearchedReopenedAndRestored() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180
@@ -74,6 +136,9 @@ final class BrowserFlowTests: XCTestCase {
         app.menuBars.menuBarItems["ブックマーク"].click()
         XCTAssertFalse(app.menuItems["現在のページを追加"].isEnabled)
         app.typeKey(.escape, modifierFlags: [])
+        app.buttons["showHistoryButton"].click()
+        XCTAssertTrue(app.staticTexts["1件表示"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "historyList").firstMatch.staticTexts["PDF POST form"].waitForExistence(timeout: 5))
         app.terminate()
     }
 

@@ -7,6 +7,7 @@ final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
     private var pendingURLs: [URL] = []
     private var droppedPendingURLs = false
     private var checkingTermination = false
+    private var flushingHistory = false
 
     private var deliveryTask: Task<Void, Never>?
 
@@ -59,7 +60,7 @@ final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard !checkingTermination else { return .terminateCancel }
+        guard !checkingTermination, !flushingHistory else { return .terminateCancel }
         checkingTermination = true
         defer { checkingTermination = false }
         if let session, session.downloads.hasActive {
@@ -72,6 +73,15 @@ final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
             return .terminateCancel
         }
         if session?.confirmEditedInputForQuit() == false { return .terminateCancel }
+        if let session, session.history.isBusy {
+            flushingHistory = true
+            Task { [weak self] in
+                await session.history.flush()
+                self?.flushingHistory = false
+                sender.reply(toApplicationShouldTerminate: session.prepareToQuit())
+            }
+            return .terminateLater
+        }
         return session?.prepareToQuit() == false ? .terminateCancel : .terminateNow
     }
 }

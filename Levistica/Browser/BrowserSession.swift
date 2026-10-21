@@ -20,6 +20,7 @@ final class BrowserSession {
     private var closedTabs: [ClosedTab] = []
     @ObservationIgnored private var inputConfirmationInProgress = false
     let downloads = DownloadManager()
+    let history: HistoryLibrary
     let bookmarks: BookmarkLibrary
     var isBookmarkListVisible = false
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
@@ -34,7 +35,8 @@ final class BrowserSession {
         let index: Int
     }
 
-    init(dataStore: WKWebsiteDataStore? = nil, store: SessionStore? = nil, bookmarkFileURL: URL? = nil) {
+    init(dataStore: WKWebsiteDataStore? = nil, store: SessionStore? = nil, bookmarkFileURL: URL? = nil, historyFileURL: URL? = nil) {
+        history = HistoryLibrary(fileURL: historyFileURL)
         bookmarks = BookmarkLibrary(fileURL: bookmarkFileURL)
         let tab = BrowserTab()
         tabs = [tab]
@@ -77,15 +79,17 @@ final class BrowserSession {
         #endif
         if environment["LEVISTICA_EPHEMERAL"] == "1" && testID == nil { return BrowserSession() }
         var bookmarkURL: URL?
+        var historyURL: URL?
         do {
             var folder = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                                       appropriateFor: nil, create: true)
                 .appendingPathComponent("Levistica", isDirectory: true)
             if let testID { folder.append(path: "SessionTests/" + testID.uuidString, directoryHint: .isDirectory) }
             bookmarkURL = folder.appendingPathComponent("bookmarks.sqlite3")
-            return BrowserSession(store: try SessionStore(fileURL: folder.appendingPathComponent("session.sqlite3")), bookmarkFileURL: bookmarkURL)
+            historyURL = folder.appendingPathComponent("history.sqlite3")
+            return BrowserSession(store: try SessionStore(fileURL: folder.appendingPathComponent("session.sqlite3")), bookmarkFileURL: bookmarkURL, historyFileURL: historyURL)
         } catch {
-            let session = BrowserSession(bookmarkFileURL: bookmarkURL)
+            let session = BrowserSession(bookmarkFileURL: bookmarkURL, historyFileURL: historyURL)
             session.storageFailure = "タブ一覧の保存先を開けませんでした。この起動ではタブ一覧を保存しません。"
             return session
         }
@@ -99,12 +103,20 @@ final class BrowserSession {
     func addCurrentBookmark() {
         guard canAddBookmark, let url = page?.url else { return }
         bookmarks.add(url: url, title: activeTab.displayTitle)
+        history.isVisible = false
         isBookmarkListVisible = true
     }
 
     func showBookmarks() {
         bookmarks.load()
+        history.isVisible = false
         isBookmarkListVisible = true
+    }
+
+    func showHistory() {
+        isBookmarkListVisible = false
+        history.isVisible = true
+        history.load()
     }
 
     func activateInitialSelection() {
@@ -342,6 +354,14 @@ final class BrowserSession {
     }
 
     private func connect(_ runtime: PageRuntime, to tab: BrowserTab) {
+        runtime.onVisit = { [weak self, weak tab] url, title, visited in
+            guard let self, let tab, self.tabs.contains(where: { $0 === tab }) else { return }
+            self.history.record(url: url, title: title, visited: visited)
+        }
+        runtime.onVisitTitle = { [weak self, weak tab] url, title, visited in
+            guard let self, let tab, self.tabs.contains(where: { $0 === tab }) else { return }
+            self.history.updateTitle(url: url, title: title, visited: visited)
+        }
         runtime.onDownload = { [weak self, weak tab] download in
             guard let self, let tab else { download.cancel { _ in }; return }
             self.downloads.accept(download, tabID: tab.id)
