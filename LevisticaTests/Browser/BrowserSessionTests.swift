@@ -5,6 +5,20 @@ import WebKit
 
 @MainActor
 struct BrowserSessionTests {
+    @Test func departureConfirmationDistinguishesSendingAndSameDocumentLinks() throws {
+        let current = try #require(URL(string: "https://example.com/draft?q=1"))
+        let fragment = try #require(URL(string: "https://example.com/draft?q=1#section"))
+        let other = try #require(URL(string: "https://example.com/draft?q=2"))
+        #expect(PageRuntime.requiresDepartureConfirmation(type: .reload, current: current, destination: current))
+        #expect(PageRuntime.requiresDepartureConfirmation(type: .other, current: current, destination: current))
+        #expect(PageRuntime.requiresDepartureConfirmation(type: .other, current: current, destination: fragment))
+        #expect(PageRuntime.requiresDepartureConfirmation(type: .backForward, current: current, destination: other))
+        #expect(PageRuntime.requiresDepartureConfirmation(type: .backForward, current: current, destination: fragment))
+        #expect(PageRuntime.requiresDepartureConfirmation(type: .linkActivated, current: current, destination: fragment) == false)
+        #expect(PageRuntime.requiresDepartureConfirmation(type: .formSubmitted, current: current, destination: other) == false)
+        #expect(PageRuntime.requiresDepartureConfirmation(type: .formResubmitted, current: current, destination: other) == false)
+    }
+
     @Test func externalBatchOnlyLoadsItsLastPage() throws {
         let session = BrowserSession(dataStore: .nonPersistent())
         let urls = (0..<50).compactMap { URL(string: "http://127.0.0.1:54321/external-\($0)") }
