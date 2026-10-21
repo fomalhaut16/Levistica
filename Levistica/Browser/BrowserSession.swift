@@ -1,5 +1,6 @@
 import Observation
 import WebKit
+import AppKit
 
 @MainActor
 @Observable
@@ -21,7 +22,10 @@ final class BrowserSession {
     let downloads = DownloadManager()
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
 
+    @ObservationIgnored private var localPDFPanel: NSOpenPanel?
+
     private struct ClosedTab {
+        let isLocalPDF: Bool
         let url: URL?
         let draft: String
         let mayReload: Bool
@@ -39,6 +43,8 @@ final class BrowserSession {
                 if let saved = try store.load() {
                     tabs = saved.tabs.map { record in
                         let restored = BrowserTab(id: record.id)
+                        restored.isLocalPDF = record.kind == .localPDF
+                        if restored.isLocalPDF { restored.restorationNotice = "ローカルPDFは保存していません。ファイルを選び直してください。" }
                         restored.pendingURL = record.url
                         restored.addressDraft = record.url?.absoluteString ?? ""
                         restored.storedTitle = record.title
@@ -143,8 +149,10 @@ final class BrowserSession {
 
     private func snapshot(wasRunning: Bool) -> SavedSession {
         SavedSession(tabs: tabs.map { tab in
-            SavedTab(id: tab.id, title: tab.displayTitle, url: tab.page?.url ?? tab.pendingURL,
-                     mayReload: tab.page?.canRetry ?? tab.mayRestoreAutomatically)
+            SavedTab(id: tab.id, title: tab.isLocalPDF ? "ローカルPDF" : tab.displayTitle,
+                     url: tab.isLocalPDF ? nil : (tab.page?.url ?? tab.pendingURL),
+                     mayReload: tab.isLocalPDF ? false : (tab.page?.canRetry ?? tab.mayRestoreAutomatically),
+                     kind: tab.isLocalPDF ? .localPDF : .web)
         }, selectedID: selectedID, wasRunning: wasRunning)
     }
 
@@ -264,7 +272,7 @@ final class BrowserSession {
         }
         tab.page?.dialogs.cancel()
         tab.page?.cancelFileSelection()
-        closedTabs.append(ClosedTab(url: tab.page?.url ?? tab.pendingURL, draft: tab.addressDraft,
+        closedTabs.append(ClosedTab(isLocalPDF: tab.isLocalPDF, url: tab.isLocalPDF ? nil : (tab.page?.url ?? tab.pendingURL), draft: tab.isLocalPDF ? "" : tab.addressDraft,
                                     mayReload: tab.page?.canRetry ?? tab.mayRestoreAutomatically, index: index))
         if closedTabs.count > 20 { closedTabs.removeFirst() }
         tab.page?.stop()
@@ -286,6 +294,11 @@ final class BrowserSession {
     func reopenClosedTab() {
         guard let closed = closedTabs.popLast() else { return }
         let tab = BrowserTab()
+        tab.isLocalPDF = closed.isLocalPDF
+        if closed.isLocalPDF {
+            tab.storedTitle = "ローカルPDF"
+            tab.restorationNotice = "ローカルPDFは保存していません。ファイルを選び直してください。"
+        }
         tab.addressDraft = closed.url?.absoluteString ?? closed.draft
         tabs.insert(tab, at: min(closed.index, tabs.count))
         selectedID = tab.id
@@ -365,6 +378,59 @@ final class BrowserSession {
         persistSession()
     }
 
+    private func websiteDataStore() -> WKWebsiteDataStore {
+        if let dataStore { return dataStore }
+        let isolated = ProcessInfo.processInfo.environment["LEVISTICA_EPHEMERAL"] == "1"
+        let value: WKWebsiteDataStore = isolated ? .nonPersistent() : .default()
+        dataStore = value
+        return value
+    }
+
+    func chooseLocalPDF(replacing id: UUID? = nil) {
+        guard localPDFPanel == nil, let window = NSApp.keyWindow, window.attachedSheet == nil else { return }
+        let panel = LocalPDF.panel()
+        localPDFPanel = panel
+        panel.beginSheetModal(for: window) { [weak self] result in
+            guard let self else { return }
+            self.localPDFPanel = nil
+            guard result == .OK, let url = panel.url else { return }
+            do { try self.openLocalPDF(selectedURL: url, replacing: id) }
+            catch { self.externalOpenNotice = error.localizedDescription }
+        }
+    }
+
+    func openLocalPDF(selectedURL: URL, replacing id: UUID? = nil) throws {
+        // Validate before altering selection or creating a tab. A cancelled or
+        // rejected choice must leave the current page and its input untouched.
+        let document = try LocalPDF(selectedURL: selectedURL)
+        let tab: BrowserTab
+        if let id {
+            guard let existing = tabs.first(where: { $0.id == id }), existing.isLocalPDF, existing.page == nil else { return }
+            tab = existing
+        } else if tabs.count == 1, activeTab.page == nil, activeTab.pendingURL == nil,
+                  activeTab.addressDraft.isEmpty, activeTab.inputError == nil,
+                  activeTab.restorationNotice == nil, !activeTab.isLocalPDF {
+            tab = activeTab
+        } else {
+            tab = BrowserTab()
+            tabs.append(tab)
+        }
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = websiteDataStore()
+        let runtime = PageRuntime(configuration: configuration, localPDF: document)
+        connect(runtime, to: tab)
+        tab.isLocalPDF = true
+        tab.storedTitle = document.url.lastPathComponent
+        tab.restorationNotice = nil
+        tab.inputError = nil
+        tab.pendingURL = nil
+        tab.addressDraft = document.url.absoluteString
+        tab.page = runtime
+        selectedID = tab.id
+        runtime.loadLocalPDF()
+        persistSession()
+    }
+
     func navigate(_ input: String) -> Bool {
         do {
             let url = try AddressResolver.resolve(input)
@@ -372,17 +438,16 @@ final class BrowserSession {
             tab.inputError = nil
             tab.restorationNotice = nil
             tab.pendingURL = nil
+            if tab.isLocalPDF {
+                tab.page?.stop()
+                tab.page = nil
+                tab.isLocalPDF = false
+            }
             tab.addressDraft = url.absoluteString
             if tab.page == nil {
-                if dataStore == nil {
-                    let isolated = ProcessInfo.processInfo.environment["LEVISTICA_EPHEMERAL"] == "1"
-                    dataStore = isolated ? .nonPersistent() : .default()
-                }
-                if let dataStore {
-                    let runtime = PageRuntime(dataStore: dataStore)
-                    connect(runtime, to: tab)
-                    tab.page = runtime
-                }
+                let runtime = PageRuntime(dataStore: websiteDataStore())
+                connect(runtime, to: tab)
+                tab.page = runtime
             }
             tab.page?.load(url)
             persistSession()

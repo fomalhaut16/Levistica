@@ -5,6 +5,7 @@ import Observation
 @Observable
 final class BrowserTab: Identifiable {
     let id: UUID
+    var isLocalPDF = false
     var pendingURL: URL?
     var mayRestoreAutomatically = true
     var storedTitle = ""

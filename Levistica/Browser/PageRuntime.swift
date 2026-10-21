@@ -6,6 +6,7 @@ import WebKit
 final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     let inputGuard: PageInputGuard
     let dialogs = PageDialogController()
+    let localPDF: LocalPDF?
     let webView: WKWebView
     var onMetadataChange: (() -> Void)?
     var onCreatePage: ((WKWebViewConfiguration, String, Bool) -> WKWebView?)?
@@ -17,6 +18,9 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var recentPageCreations: [TimeInterval] = []
     private(set) var url: URL?
     private(set) var title = "Levistica"
+    private(set) var isPDF = false
+    private var pendingPDFTitle: String?
+    private var pdfTitle: String?
     private(set) var isLoading = false
     private(set) var canGoBack = false
     private(set) var canGoForward = false
@@ -38,7 +42,9 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         self.init(configuration: configuration)
     }
 
-    init(configuration: WKWebViewConfiguration, permitsInitialBlankPage: Bool = false) {
+    init(configuration: WKWebViewConfiguration, permitsInitialBlankPage: Bool = false, localPDF: LocalPDF? = nil) {
+        self.localPDF = localPDF
+        if localPDF != nil { configuration.defaultWebpagePreferences.allowsContentJavaScript = false }
         self.permitsInitialBlankPage = permitsInitialBlankPage
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.preferences.isElementFullscreenEnabled = true
@@ -69,7 +75,8 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         let previousURL = url
         let previousTitle = title
         if failure == nil, let current = webView.url, current.absoluteString != "about:blank" { url = current }
-        title = webView.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Levistica"
+        title = localPDF?.url.lastPathComponent ?? (isPDF ? pdfTitle : nil)
+            ?? webView.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Levistica"
         isLoading = webView.isLoading
         canGoBack = webView.canGoBack
         canGoForward = webView.canGoForward
@@ -112,6 +119,29 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         webView.pageZoom = 1
     }
 
+    var canSavePDF: Bool {
+        isPDF && localPDF == nil && !isLoading && canRetry && NavigationPolicy.allows(url, isMainFrame: true)
+    }
+
+    func savePDF() {
+        guard canSavePDF, let url else { return }
+        webView.startDownload(using: URLRequest(url: url)) { [weak self] download in
+            guard let onDownload = self?.onDownload else { download.cancel { _ in }; return }
+            onDownload(download)
+        }
+    }
+
+    func loadLocalPDF() {
+        guard let localPDF else { return }
+        invalidateFindResult()
+        failure = nil
+        url = localPDF.url
+        lastRequest = URLRequest(url: localPDF.url)
+        canRetry = true
+        activeNavigation = webView.loadFileURL(localPDF.url, allowingReadAccessTo: localPDF.url)
+        if activeNavigation == nil { failure = "PDFの読み込みを開始できませんでした。ファイルを選び直してください。" }
+    }
+
     func load(_ url: URL) {
         load(URLRequest(url: url))
     }
@@ -131,6 +161,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     func back() { failure = nil; activeNavigation = webView.goBack() }
     func forward() { failure = nil; activeNavigation = webView.goForward() }
     func reload() {
+        if localPDF != nil { loadLocalPDF(); return }
         guard canRetry else {
             failure = "送信内容の重複を避けるため、このページは自動で再送しません。URLを入力して開き直してください。"
             return
@@ -142,6 +173,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     func dismissFailure() { failure = nil }
 
     func retry() {
+        if localPDF != nil { loadLocalPDF(); return }
         // Retrying a POST could send a purchase or message twice. Never do it here.
         guard canRetry, let lastRequest else { return }
         failure = nil
@@ -150,6 +182,28 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        if let localPDF {
+            let main = action.targetFrame?.isMainFrame == true
+            if action.navigationType == .linkActivated, action.request.httpMethod == "GET",
+               let link = action.request.url, NavigationPolicy.allows(link, isMainFrame: true) {
+                let background = (action.modifierFlags.contains(.command) || action.buttonNumber == 2)
+                    && !action.modifierFlags.contains(.shift)
+                // Do not forward a local path as a referrer or reuse PDF-only settings.
+                onOpenLink?(URLRequest(url: link), !background, "ローカルPDF")
+                decisionHandler(.cancel)
+                return
+            }
+            let selectedFile = main && localPDF.allows(action.request.url) && action.request.httpMethod == "GET"
+            let embedded = action.targetFrame != nil && !main && ["about", "blob", "data"].contains(action.request.url?.scheme)
+            guard selectedFile || embedded else {
+                failure = "このPDFからそのリンクは開けません。別のローカルファイルは選び直してください。"
+                decisionHandler(.cancel)
+                return
+            }
+            if main { lastRequest = action.request; url = action.request.url; canRetry = true }
+            decisionHandler(.allow)
+            return
+        }
         if action.targetFrame == nil {
             let allowed = NavigationPolicy.allowsNewContext(action.request.url)
             if !allowed { failure = "この種類のリンクは別タブに開けません。" }
@@ -226,7 +280,15 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
                  decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {
         let disposition = (response.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")?
             .split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased()
-        decisionHandler(!response.canShowMIMEType || disposition == "attachment" ? .download : .allow)
+        let download = !response.canShowMIMEType || disposition == "attachment"
+        if response.isForMainFrame && !download {
+            pendingPDFTitle = nil
+            if response.response.mimeType?.lowercased() == "application/pdf" {
+                let name = response.response.suggestedFilename ?? "PDF資料"
+                pendingPDFTitle = String(decoding: name.utf16.prefix(512), as: UTF16.self).components(separatedBy: .controlCharacters).joined(separator: " ")
+            }
+        }
+        decisionHandler(download ? .download : .allow)
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
@@ -294,6 +356,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         activeNavigation = navigation
+        pendingPDFTitle = nil
         failure = nil
         updateSnapshot()
     }
@@ -301,6 +364,8 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { updateSnapshot() }
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         dialogs.beginDocument()
+        isPDF = localPDF != nil || pendingPDFTitle != nil
+        pdfTitle = pendingPDFTitle
         inputGuard.beginDocument()
         committedRequest = lastRequest
         invalidateFindResult()

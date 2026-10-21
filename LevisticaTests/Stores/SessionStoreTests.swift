@@ -74,6 +74,41 @@ struct SessionStoreTests {
         #expect(try store.load() == before)
     }
 
+    @Test func versionOneMigratesWithoutChangingExistingTabs() throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let id = UUID()
+        var database: OpaquePointer?
+        #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
+        let sql = "CREATE TABLE session_tabs (id TEXT PRIMARY KEY NOT NULL, position INTEGER UNIQUE NOT NULL, title TEXT NOT NULL, url TEXT, may_reload INTEGER NOT NULL); CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK(id=1), selected_id TEXT NOT NULL, was_running INTEGER NOT NULL); INSERT INTO session_tabs VALUES ('\(id.uuidString)',0,'Original tab','https://example.com/',1); INSERT INTO session_meta VALUES (1,'\(id.uuidString)',0); PRAGMA user_version=1;"
+        #expect(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(database)
+        let store = try SessionStore(fileURL: url)
+        let saved = try #require(try store.load())
+        #expect(saved.selectedID == id && !saved.wasRunning)
+        #expect(saved.tabs == [SavedTab(id: id, title: "Original tab", url: URL(string: "https://example.com/"), mayReload: true)])
+        try store.save(saved)
+        #expect(try store.load() == saved)
+    }
+
+    @MainActor @Test func localPDFRestoresOnlyASelectionPlaceholder() throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url)
+        let tab = SavedTab(id: UUID(), title: "ローカルPDF", url: nil, mayReload: false, kind: .localPDF)
+        try store.save(SavedSession(tabs: [tab], selectedID: tab.id, wasRunning: false))
+        let session = BrowserSession(dataStore: .nonPersistent(), store: store)
+        session.activateInitialSelection()
+        #expect(session.activeTab.isLocalPDF && session.loadedPageCount == 0)
+        #expect(session.activeTab.pendingURL == nil && session.activeTab.addressDraft.isEmpty)
+        #expect(session.activeTab.restorationNotice != nil)
+        #expect(session.prepareToQuit())
+        #expect(try store.load()?.tabs == [tab])
+        let invalid = SavedTab(id: tab.id, title: "Never save this", url: URL(fileURLWithPath: "/private/synthetic.pdf"), mayReload: true, kind: .localPDF)
+        #expect(throws: (any Error).self) { try store.save(SavedSession(tabs: [invalid], selectedID: tab.id, wasRunning: false)) }
+        #expect(try store.load()?.tabs == [tab])
+    }
+
     @MainActor
     @Test func oneHundredRestoredTabsStartWithoutWebViewsAndUncleanExitDefersLoading() throws {
         let url = try temporaryURL()

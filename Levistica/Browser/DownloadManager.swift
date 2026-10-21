@@ -164,11 +164,8 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         panel.prompt = "保存"
         if let directory = FilePanelDefaults.testDirectory { panel.directoryURL = directory }
         let origin = download.originatingFrame.securityOrigin
-        var source = URLComponents()
-        source.scheme = origin.protocol
-        source.host = origin.host
-        if origin.port > 0 { source.port = origin.port }
-        panel.message = "要求元: \(source.string ?? "不明な要求元")\n転送が完了してからファイルを保存します。"
+        let source = Self.displayOrigin(scheme: origin.protocol, host: origin.host, port: origin.port)
+        panel.message = "要求元: \(source)\n転送が完了してからファイルを保存します。"
         panel.nameFieldStringValue = Self.safeFilename(suggestedFilename)
         panel.canCreateDirectories = true
         item.filename = panel.nameFieldStringValue
@@ -192,6 +189,17 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
                 self.finish(item, status: "保存先に書き込めませんでした。別の保存先で試してください。")
             }
         }
+    }
+
+    static func displayOrigin(scheme: String, host: String, port: Int) -> String {
+        // Opaque origins can have an empty protocol, including response downloads.
+        // URLComponents traps for an invalid scheme; validate before assigning it.
+        guard ["http", "https"].contains(scheme), !host.isEmpty else { return "不明な要求元" }
+        var source = URLComponents()
+        source.scheme = scheme
+        source.host = host
+        if (1...65535).contains(port) { source.port = port }
+        return source.string ?? "不明な要求元"
     }
 
     static func safeFilename(_ suggestion: String) -> String {
