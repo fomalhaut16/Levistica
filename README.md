@@ -110,3 +110,11 @@ python3 script/media-fixture.py --state .local/artifacts/video-comparison/state.
 ```
 
 正式入口から隔離起動したReleaseで表示URLを開き、再生ボタンを押します。比較用Chromeも新規専用プロファイルで同じURLを開き、fixtureが記録する表示領域とDPRをそろえます。再生中は `python3 script/measure-memory.py --label fixed-video --loaded-pages 1 --total-tabs 1 --samples 1 --ready-file .local/artifacts/video-comparison/state.json --ready-delay 120` で計測できます。Chromeの計測時は既存のbrowser・chrome-profile指定も加えてください。一度に起動する比較対象は片方だけとし、試行ごとに新しく起動します。計測前後に停止・非表示・再生進行の停止・表示領域の変更を検知した標本は無効です。映像ファイルと結果はGit対象外で、YouTube・音声・DRMの対応をこの比較だけで判断しません。
+
+### 読込済み5タブの比較
+
+`python3 script/document-set-fixture.py --state .local/artifacts/five-documents/state.json` で5文書を配信します。正式入口から隔離起動したLevisticaで、表示されたURLの末尾へ `/1`〜`/5` を加えた文書を、新規タブで順に表示してください。最後は5番を選択し、「5タブ・読み込み済み5」を確認します。
+
+比較用Chromeは既存のstartコマンドに `--tabs 5 --ready-file .local/artifacts/five-documents/state.json` を加えます。専用user-data-dirを指定した起動引数で1件ずつ前面表示し、各タブの報告を待ちます。通常利用のChromeへキー操作を送りません。試行ごとに比較対象だけを終了し、fixtureの同じloopback originへPOST `/reset` を送って報告を初期化します。
+
+計測時は `--loaded-pages 5 --total-tabs 5 --samples 1 --ready-file .local/artifacts/five-documents/state.json --ready-delay 120` を指定します。全タブを一度表示し、各タブの本文・固有instance・報告の新しさを照合できた標本だけが有効です。前面タブからのBroadcastChannelにも各タブが応答するため、純粋な待機状態とは区別します。タブ数だけの比較や、異なるoriginのSNS5件の結果には広げません。

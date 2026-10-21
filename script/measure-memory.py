@@ -190,6 +190,23 @@ def attribution_change(before, after):
 
 def check_fixture(current, original=None, now=None):
     """Refuse stale/paused video while retaining the fixed-document contract."""
+    if current.get('kind') == 'documents':
+        now = time.monotonic() if now is None else now
+        docs = current.get('documents', {})
+        if current.get('expected_tabs') != 5 or set(docs) != {'1', '2', '3', '4', '5'} or not current.get('ready_monotonic') or current.get('loads') != 5:
+            raise ValueError('Exactly five visited documents must be loaded once')
+        if sum(d.get('visibility') == 'visible' for d in docs.values()) != 1:
+            raise ValueError('Exactly one document must be visible')
+        for d in docs.values():
+            if d.get('seenVisible') is not True or d.get('complete') is not True or d.get('sections') != 240 or not 0 <= now - d.get('reported_monotonic', 0) <= 15:
+                raise ValueError('A document is incomplete, unvisited, or no longer reporting')
+        if original is not None:
+            if any(current.get(k) != original.get(k) for k in ['kind', 'expected_tabs', 'document_hashes', 'loads', 'url', 'ready_monotonic']):
+                raise ValueError('Document workload changed')
+            for key, d in docs.items():
+                if any(d.get(k) != original['documents'][key].get(k) for k in ['instance', 'width', 'height', 'dpr', 'visibility']):
+                    raise ValueError('Document instance, viewport, or selection changed')
+        return
     if current.get('kind') != 'video':
         if not current.get('ready_monotonic') or current.get('viewport', {}).get('sections') != 240 or current.get('viewport', {}).get('visibility') != 'visible':
             raise ValueError('Fixture must report a complete, visible document')

@@ -31,6 +31,7 @@ jobs:
         run: |
           git diff --check
           bash -n script/build_and_run.sh script/test.sh
+          python3 -m py_compile script/*.py
       - name: Build Release app
         run: CONFIGURATION=Release ./script/build_and_run.sh --build
       - name: Run unit tests
