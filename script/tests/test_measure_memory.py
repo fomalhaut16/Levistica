@@ -1,6 +1,7 @@
 import importlib.util
 import pathlib
 import unittest
+import copy
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("measure_memory", pathlib.Path(__file__).parents[1] / "measure-memory.py")
@@ -9,6 +10,34 @@ spec.loader.exec_module(measure)
 
 
 class AttributionTests(unittest.TestCase):
+    def document_set(self):
+        return {'kind': 'documents', 'expected_tabs': 5, 'loads': 5, 'ready_monotonic': 10,
+                'url': 'http://127.0.0.1:1/document', 'document_hashes': {'1': 'synthetic'},
+                'documents': {str(i): {'instance': str(i), 'seenVisible': True, 'complete': True,
+                                      'sections': 240, 'reported_monotonic': 99, 'width': 779,
+                                      'height': 683, 'dpr': 2,
+                                      'visibility': 'visible' if i == 5 else 'hidden'} for i in range(1, 6)}}
+
+    def test_all_five_documents_must_be_fresh_visited_and_unchanged(self):
+        original = self.document_set()
+        current = copy.deepcopy(original)
+        current['documents']['1']['reported_monotonic'] = 100
+        measure.check_fixture(current, original, now=100)
+        for key, value in [('instance', 'recreated'), ('reported_monotonic', 70),
+                           ('seenVisible', False), ('complete', False), ('sections', 0),
+                           ('width', 1000), ('visibility', 'visible')]:
+            current = copy.deepcopy(original)
+            current['documents']['1'][key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                measure.check_fixture(current, original, now=100)
+
+    def test_missing_or_reloaded_document_set_is_rejected(self):
+        original = self.document_set()
+        for field, value in [('loads', 6), ('expected_tabs', 4), ('ready_monotonic', None),
+                             ('documents', {}), ('document_hashes', {'1': 'changed'})]:
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                measure.check_fixture({**original, field: value}, original, now=100)
+
     def domain(self):
         return '''pid/100 = {
 \toriginator = /tmp/Levistica.app

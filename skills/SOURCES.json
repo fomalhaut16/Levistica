@@ -285,7 +285,7 @@
       "acquired_on": "2026-10-21",
       "license": "MIT; upstream root LICENSE copied verbatim",
       "method": "Official skill-installer, --method git, fixed commit, project-local --dest",
-      "recognition": "Relative .agents/skills link and manual reads verified; automatic catalog recognition pending next turn",
+      "recognition": "2026-10-21 follow-up: project-relative link and manual use verified; active available-skills catalog still does not list this skill. No global changes or reinstall.",
       "scope": "Release, representative data, ownership and growth analysis only. No iOS thresholds, global app closing, background tab destruction, MetricKit telemetry, or RSS-as-footprint example. Existing multi-process physical-footprint method remains authoritative.",
       "files": [
         {
