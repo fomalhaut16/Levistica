@@ -672,3 +672,23 @@ PR #18の統合後、設定画面に履歴とサイトデータをまとめる�
 確認sheetの最終画像は `.local/artifacts/departure-confirmation-final/` で見直し、本文・取消・破棄のボタンが収まっている。全体実行の全画面4枚も `departure-fullscreen-verified` で実際に確認し、全画面の寸法と解除後の復帰、パネルを閉じた後の幅の回復に崩れはなかった。すべて隔離fixtureで、実アカウントや通常プロファイルは操作していない。新たな依存物・権限・グローバル設定は追加していない。次は異なるサイトを組み合わせたメモリ比較の条件を整え、同一siteの5文書の結果を一般化せずに検証する。
 
 正式入口のReleaseビルド・strict署名検証・隔離起動のprocess確認は成功した。操作試験は前述のDebugであり、Releaseの起動確認と区別する。入力保護を含む版のRAMと実サイト互換性全般は未計測・未受入である。
+
+### 2026-10-22 異なるサイトの比較条件の準備
+
+PR #20はGitHubのmacOS ARMランナーを確保できず、ビルド前にキャンセルされた。未統合のcommitを保った別ブランチで、固定5文書の比較条件を整える。アプリ本体の機能変更と独立させ、通常プロファイルや参照資料、OSのDNS・hosts・証明書設定を変更しない。
+
+最初に正式Releaseの隔離起動で、既存のloopback fixtureを127.0.0.1とlocalhost配下の異なるhost名から開けるかを確認する。準備診断は1起動・対照1URLと候補2URL・15分まで。候補hostが読めなければ環境の成立条件を満たさないと記録し、別のブラウザフラグやグローバル設定で結果を作らない。5つの独立siteを再現できたと仮定せず、利用可能なhost数を明記する。
+
+採用するfixtureは文書の識別・本文hash・host・instance・表示済み・viewport・選択・報告の鮮度を照合し、originをまたぐBroadcastChannelへ依存しない。報告の継続に必要な通信も負荷の一部として両ブラウザで揃える。準備段階の表示確認やツール試験をメモリ実測済みとは扱わず、測定前に待機時間・起動回数・中断条件を別途固定する。
+
+接続診断では正式Releaseで対照・one.localhost・two.localhostの表示が成功した。OSのgetaddrinfoでは候補hostが解決しなかったため、OSの診断結果だけでブラウザの対応を決めず、実際の表示を根拠にする。5ホスト版はdocument-1.localhost〜document-5.localhostを使い、各ページが同じoriginへのEventSourceを1本維持して2秒ごとの報告を行う。再接続・再読込・instance変更・host不一致・報告停止は不成立にする。完全な待機状態やインターネット上の5サイトを再現したとは扱わない。
+
+準備確認はLevisticaと新規専用Chromeで各1起動とし、Chromeのviewport合わせだけ追加2起動まで許容する。全5件を前面に一度表示し、5番を選択して120秒後も5件の報告が成立することを先に確認する。この段階ではfootprintの比較値を採らない。準備が通った場合の本計測は、同じRelease・文書hash・viewport/DPR、L1→C1→C2→L2→L3→C3の独立3起動ずつ、準備完了120秒後に1標本とする。過去の同一origin版と値を混ぜない。圧迫・応答低下・process終了・報告条件の破綻があれば中断し、欠測を都合よく取り直さない。
+
+最初の5ホスト版では、テンプレートの識別子置換がJavaScriptのrandomUUIDまで書き換える不具合を表示診断で検出した。固有の置換文字へ直し、生成した5スクリプトの構文検査を追加した。最初の診断を成功や性能値に読み替えない。前面表示を満たさない状態も測定対象から除き、利用者がウィンドウを見える状態にした後、全5件の表示済み・同一viewport・選択1件・報告の継続を確認した。
+
+LevisticaとChromeの準備確認は両方とも成功した。各5文書・viewport 799×683・DPR 2・再読み込みなし・各hostのstream1本で120秒間維持できた。準備の状態は `.local/cross-site-prep-result.json` と `.local/cross-site-prep-chrome-result.json` に保存し、比較用のfootprintは採っていない。Chromeは新規専用プロファイルで、通常のウィンドウやプロファイルを操作していない。OS 26.6、Chrome 155.0.8059.85を再確認した。
+
+計測関連のPython試験27件が成功し、生成JavaScriptの構文、host/Origin/入力形式の拒否、SSE受信、5文書の成立、鮮度、instance変更、再接続、viewport/選択の変化の拒否を含む。Nodeがない環境では構文検査だけをskipと明示し、新たにインストールしない。今回のMacではNodeを使った検査も実施した。workflowのYAML解析とdiff検査も成功した。
+
+Macに依存しないPython試験は、[GitHub公式の標準ランナー](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)にあるubuntu-24.04の独立jobへ移す。macOS ARMでのReleaseビルド・Swift単体試験は残し、その成功をLinuxの結果で代替しない。新しい契約・有料ランナー・権限・グローバル設定は追加しない。

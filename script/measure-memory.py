@@ -17,6 +17,7 @@ import statistics
 import subprocess
 import tempfile
 import time
+import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APP = ROOT / ".local/DerivedData/Build/Products/Release/Levistica.app"
@@ -190,7 +191,7 @@ def attribution_change(before, after):
 
 def check_fixture(current, original=None, now=None):
     """Refuse stale/paused video while retaining the fixed-document contract."""
-    if current.get('kind') == 'documents':
+    if current.get('kind') in ('documents', 'cross-site-documents'):
         now = time.monotonic() if now is None else now
         docs = current.get('documents', {})
         if current.get('expected_tabs') != 5 or set(docs) != {'1', '2', '3', '4', '5'} or not current.get('ready_monotonic') or current.get('loads') != 5:
@@ -200,6 +201,37 @@ def check_fixture(current, original=None, now=None):
         for d in docs.values():
             if d.get('seenVisible') is not True or d.get('complete') is not True or d.get('sections') != 240 or not 0 <= now - d.get('reported_monotonic', 0) <= 15:
                 raise ValueError('A document is incomplete, unvisited, or no longer reporting')
+        if current['kind'] == 'cross-site-documents':
+            keys = {'1', '2', '3', '4', '5'}
+            urls, origins = current.get('urls', {}), current.get('origins', {})
+            hashes = current.get('document_hashes', {})
+            streams = current.get('stream_connections', {})
+            if (current.get('transport') != 'same-origin-sse-v1' or current.get('invalid_reason')
+                    or not current.get('run_id') or set(urls) != keys or set(origins) != keys
+                    or set(hashes) != keys or set(streams) != keys
+                    or any(type(streams[key]) is not int or streams[key] != 1 for key in keys)
+                    or docs['5'].get('visibility') != 'visible'
+                    or len({(d.get('width'), d.get('height'), d.get('dpr')) for d in docs.values()}) != 1):
+                raise ValueError('Cross-site document workload is incomplete or reconnected')
+            ports = set()
+            for key in keys:
+                expected_host = f'document-{key}.localhost'
+                parsed = urllib.parse.urlsplit(urls[key])
+                ports.add(parsed.port)
+                if (parsed.scheme != 'http' or parsed.hostname != expected_host or parsed.username is not None
+                        or parsed.password is not None or not parsed.port or parsed.path != '/document/' + key
+                        or parsed.query or parsed.fragment or origins[key] != f'http://{expected_host}:{parsed.port}'
+                        or docs[key].get('origin') != origins[key]
+                        or type(docs[key].get('pulse')) is not int or docs[key]['pulse'] <= 0
+                        or not isinstance(hashes[key], str) or not re.fullmatch(r'[0-9a-f]{64}', hashes[key])):
+                    raise ValueError('Document host, origin, hash, or pulse is invalid')
+            if len(ports) != 1:
+                raise ValueError('Cross-site documents must use the same loopback listener')
+            if original is not None and any(current.get(key) != original.get(key) for key in (
+                    'transport', 'run_id', 'urls', 'origins', 'stream_connections')):
+                raise ValueError('Cross-site document identity changed')
+            if original is not None and any(docs[key]['pulse'] < original['documents'][key]['pulse'] for key in keys):
+                raise ValueError('Cross-site document pulse moved backwards')
         if original is not None:
             if any(current.get(k) != original.get(k) for k in ['kind', 'expected_tabs', 'document_hashes', 'loads', 'url', 'ready_monotonic']):
                 raise ValueError('Document workload changed')
