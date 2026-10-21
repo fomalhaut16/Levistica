@@ -61,7 +61,8 @@ def identities(pids):
             raise ValueError("Unrecognized ps identity row")
         result[int(fields[0])] = {"started": " ".join(fields[1:6]), "executable": fields[6]}
     if set(result) != set(pids):
-        raise ValueError("A process exited while identities were read")
+        raise ValueError("Process identity set changed; missing PIDs: " +
+                         ",".join(map(str, sorted(set(pids) - set(result)))))
     return result
 
 
@@ -168,9 +169,29 @@ def role(pid, root_pid, services):
     return "owned-XPC-helper"
 
 
+def attribution_change(before, after):
+    """Only live membership/identity affects validity; retain exited changes separately."""
+    old, new = before["identities"], after["identities"]
+    old_services = {(s["pid"], s["service"]) for s in before["services"]}
+    new_services = {(s["pid"], s["service"]) for s in after["services"]}
+    change = {
+        "live_added": sorted(new.keys() - old.keys()),
+        "live_removed": sorted(old.keys() - new.keys()),
+        "identity_changed": sorted(p for p in old.keys() & new.keys() if old[p] != new[p]),
+        "services_added": sorted(new_services - old_services),
+        "services_removed": sorted(old_services - new_services),
+        "exited_added": sorted(set(after["exited_descendant_pids"]) - set(before["exited_descendant_pids"])),
+        "exited_removed": sorted(set(before["exited_descendant_pids"]) - set(after["exited_descendant_pids"])),
+    }
+    stable = not any(change[key] for key in (
+        "live_added", "live_removed", "identity_changed", "services_added", "services_removed"))
+    return stable, change
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ready-file", type=pathlib.Path, help="Optional synthetic fixture state; wait 60s after readiness")
+    parser.add_argument("--ready-file", type=pathlib.Path, help="Optional synthetic fixture readiness state")
+    parser.add_argument("--ready-delay", type=float, default=60, help="Minimum seconds after readiness (default: 60)")
     parser.add_argument("--browser", choices=["levistica", "chrome"], default="levistica")
     parser.add_argument("--chrome-profile", type=pathlib.Path)
     parser.add_argument("--label", required=True, help="Non-private state label, never a URL")
@@ -187,6 +208,8 @@ def main():
         parser.error("total-tabs must be 1..1000 and at least loaded-pages")
     if not 1 <= args.samples <= 10 or not 0 <= args.interval <= 60:
         parser.error("samples must be 1..10; interval must be 0..60 seconds")
+    if not 0 <= args.ready_delay <= 600 or (not args.ready_file and args.ready_delay != 60):
+        parser.error("ready-delay must be 0..600 seconds and requires ready-file")
     app, binary, profile = APP, BINARY, None
     if args.browser == "chrome":
         if not args.chrome_profile:
@@ -205,17 +228,20 @@ def main():
         viewport = fixture.get("viewport", {})
         if not ready or viewport.get("sections") != 240 or viewport.get("visibility") != "visible":
             parser.error("Fixture must report a complete, visible document")
-        remaining = ready + 60 - time.monotonic()
+        remaining = ready + args.ready_delay - time.monotonic()
         if remaining > 0:
             print(f"Waiting {remaining:.1f}s after fixture readiness", flush=True)
-            time.sleep(remaining)
+            while (remaining := ready + args.ready_delay - time.monotonic()) > 0:
+                time.sleep(min(remaining, 30))
     pid = find_app(binary, profile)
     output_parent = ROOT / ".local/artifacts/memory"
     output_parent.mkdir(parents=True, exist_ok=True)
     output = pathlib.Path(tempfile.mkdtemp(prefix=args.label + ".", dir=output_parent))
     record = {
-        "schema": 1, "label": args.label, "fixture": fixture, "loaded_pages": args.loaded_pages, "total_tabs": args.total_tabs,
+        "schema": 2, "label": args.label, "fixture": fixture, "ready_delay_seconds": args.ready_delay if fixture else None,
+        "loaded_pages": args.loaded_pages, "total_tabs": args.total_tabs,
         "browser": args.browser, "pid": pid, "source_head_at_sampling": run(["git", "rev-parse", "HEAD"]).strip(),
+        "measurement_script_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "worktree_dirty": bool(run(["git", "status", "--porcelain", "--untracked-files=no"]).strip()),
         "os_version": run(["/usr/bin/sw_vers", "-productVersion"]).strip(),
@@ -241,10 +267,13 @@ def main():
     }
     for index in range(args.samples):
         sample = {"time_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(), "valid": False}
+        if fixture:
+            sample["seconds_after_ready"] = time.monotonic() - fixture["ready_monotonic"]
         try:
             if args.ready_file and json.loads(args.ready_file.read_text()) != fixture:
                 raise ValueError("Fixture changed after readiness")
             before = snapshot(pid, app, binary, profile)
+            sample["attribution_before"] = before
             pids = sorted(before["identities"])
             raw = output / f"footprint-{index + 1}.json"
             # The standard tool accepts explicit positional PID lists. Never query all processes.
@@ -252,10 +281,11 @@ def main():
             document = json.loads(raw.read_text())
             values, missing = metrics(document, pids)
             after = snapshot(pid, app, binary, profile)
+            sample["attribution_after"] = after
             if args.ready_file and json.loads(args.ready_file.read_text()) != fixture:
                 raise ValueError("Fixture changed during measurement")
             sample["exited_descendant_pids"] = before["exited_descendant_pids"]
-            sample["identity_stable"] = before == after
+            sample["identity_stable"], sample["attribution_change"] = attribution_change(before, after)
             sample["missing_pids"] = missing
             sample["tool_errors"] = document.get("errors", [])
             sample["tool_warnings"] = document.get("warnings", [])
@@ -264,11 +294,13 @@ def main():
                  "services": [s["service"] for s in before["services"] if s["pid"] == p],
                  "physical_footprint_bytes": values.get(p)} for p in pids
             ]
-            sample["valid"] = before == after and not missing and not sample["tool_errors"]
+            sample["valid"] = sample["identity_stable"] and not missing and not sample["tool_errors"]
             sample["sum_attributed_physical_footprints_bytes"] = sum(values.values()) if sample["valid"] else None
         except (ValueError, OSError, subprocess.SubprocessError) as error:
             # Error classes and fixed diagnostics only: never dump a subprocess's environment.
             sample["error"] = str(error) if isinstance(error, ValueError) else type(error).__name__
+        if fixture:
+            sample["completed_seconds_after_ready"] = time.monotonic() - fixture["ready_monotonic"]
         record["samples"].append(sample)
         (output / "result.json").write_text(json.dumps(record, indent=2) + "\n")
         print(f"Sample {index + 1}: valid={sample['valid']}", flush=True)

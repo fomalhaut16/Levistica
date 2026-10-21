@@ -65,7 +65,7 @@ python3 script/memory-fixture.py .local/artifacts/comparison/fixture-state.json
 
 Levisticaを隔離データで起動する場合は、`LEVISTICA_EPHEMERAL=1 CONFIGURATION=Release ./script/build_and_run.sh` を使います。この起動ではログイン情報を終了後に残しません。通常起動の保存データは使いません。
 
-比較用Chromeは `python3 script/comparison-chrome.py start --url 表示されたローカルURL` で、新しいプロジェクト内プロファイルに起動します。返されたprofileを指定して、計測コマンドに `--browser chrome --chrome-profile プロファイルの絶対パス` を加えます。両ブラウザとも `--ready-file .local/artifacts/comparison/fixture-state.json` を加えると、ページの準備完了から60秒待って測ります。一度に測るのは片方だけにし、その間は別ページを読み込まないでください。
+比較用Chromeは `python3 script/comparison-chrome.py start --url 表示されたローカルURL` で、新しいプロジェクト内プロファイルに起動します。返されたprofileを指定して、計測コマンドに `--browser chrome --chrome-profile プロファイルの絶対パス` を加えます。両ブラウザとも `--ready-file .local/artifacts/comparison/fixture-state.json` を加えると、ページの準備完了から60秒待って測ります。`--samples 1 --ready-delay 60`と、同じ起動のまま`--samples 1 --ready-delay 120`を順に使うと、表示後の時間をそろえて比較できます。実際の開始・終了時刻は結果へ残ります。比較用Chromeの`--width`と`--height`はウィンドウ寸法なので、fixtureが返す表示領域のwidth・height・DPRも照合してください。一度に測るのは片方だけにし、その間は別ページを読み込まないでください。
 
 Chromeの試行後は `python3 script/comparison-chrome.py stop --profile プロファイルの絶対パス` で、作成済みの比較用インスタンスだけを終了できます。専用プロファイル、実行パス、PID、開始時刻を照合し、合わなければ終了しません。通常利用のChromeは対象外です。起動用のフラグはChromiumの[ユーザーデータディレクトリの公式資料](https://chromium.googlesource.com/chromium/src/+/main/docs/user_data_dir.md)に従っています。
 
