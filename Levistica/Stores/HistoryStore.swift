@@ -8,6 +8,12 @@ struct HistoryEntry: Identifiable, Sendable {
     let visited: Date
 }
 
+struct HistoryPreferences: Equatable, Sendable {
+    var recordingEnabled = true
+    var retentionDays = 90
+    static let allowedDays = [1, 7, 30, 90, 365]
+}
+
 // SQLite and file I/O stay on this actor. Only bounded value snapshots reach the UI.
 actor HistoryStore {
     private let fileURL: URL?
@@ -27,6 +33,7 @@ actor HistoryStore {
         guard BookmarkStore.validTitle(storedTitle), now.timeIntervalSince1970.isFinite else { throw HistoryDatabase.Failure.invalidData }
         let db = try source()
         try db.transaction {
+            guard try db.preferences().recordingEnabled else { return }
             let row = try db.statement("INSERT INTO history VALUES (?,?,?) ON CONFLICT(url) DO UPDATE SET title=excluded.title,visited=excluded.visited")
             defer { sqlite3_finalize(row) }
             try db.bind(url.absoluteString, row, 1)
@@ -50,6 +57,7 @@ actor HistoryStore {
         guard BookmarkStore.validTitle(value) else { throw HistoryDatabase.Failure.invalidData }
         let db = try source()
         try db.transaction {
+            guard try db.preferences().recordingEnabled else { return }
             let row = try db.statement("UPDATE history SET title=? WHERE url=? AND visited=?")
             defer { sqlite3_finalize(row) }
             try db.bind(value, row, 1); try db.bind(url.absoluteString, row, 2)
@@ -73,6 +81,22 @@ actor HistoryStore {
         }
         guard step == SQLITE_DONE else { throw HistoryDatabase.Failure.unavailable }
         return result
+    }
+
+    func preferences() throws -> HistoryPreferences { try source().preferences() }
+
+    func setPreferences(_ value: HistoryPreferences, now: Date = Date()) throws {
+        guard HistoryPreferences.allowedDays.contains(value.retentionDays) else { throw HistoryDatabase.Failure.invalidData }
+        let db = try source()
+        try db.transaction {
+            _ = try db.preferences()
+            let row = try db.statement("UPDATE history_preferences SET enabled=?,days=? WHERE id=1")
+            defer { sqlite3_finalize(row) }
+            guard sqlite3_bind_int(row, 1, value.recordingEnabled ? 1 : 0) == SQLITE_OK,
+                  sqlite3_bind_int(row, 2, Int32(value.retentionDays)) == SQLITE_OK,
+                  sqlite3_step(row) == SQLITE_DONE else { throw HistoryDatabase.Failure.unavailable }
+            try db.prune(now: now)
+        }
     }
 
     func remove(_ url: URL) throws {
@@ -124,7 +148,7 @@ private final class HistoryDatabase {
             defer { sqlite3_finalize(version) }
             guard sqlite3_step(version) == SQLITE_ROW else { throw Failure.invalidData }
             let number = sqlite3_column_int(version, 0)
-            guard number == 0 || number == 1 else { throw Failure.newerVersion }
+            guard (0...2).contains(number) else { throw Failure.newerVersion }
             if number == 0 {
                 try transaction {
                     try execute("CREATE TABLE history (url TEXT PRIMARY KEY NOT NULL,title TEXT NOT NULL,visited REAL NOT NULL)")
@@ -144,6 +168,14 @@ private final class HistoryDatabase {
                 step = sqlite3_step(rows)
             }
             guard step == SQLITE_DONE else { throw Failure.invalidData }
+            if number < 2 {
+                try transaction {
+                    try execute("CREATE TABLE history_preferences (id INTEGER PRIMARY KEY CHECK(id=1),enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),days INTEGER NOT NULL CHECK(days IN (1,7,30,90,365)))")
+                    try execute("INSERT INTO history_preferences VALUES(1,1,90)")
+                    try execute("PRAGMA user_version=2")
+                }
+            }
+            _ = try preferences()
             try execute("PRAGMA secure_delete=ON")
         } catch { sqlite3_close(db); db = nil; throw error }
     }
@@ -164,10 +196,23 @@ private final class HistoryDatabase {
         return HistoryEntry(url: url, title: title, visited: Date(timeIntervalSince1970: timestamp))
     }
 
+    func preferences() throws -> HistoryPreferences {
+        let row = try statement("SELECT id,enabled,days FROM history_preferences")
+        defer { sqlite3_finalize(row) }
+        guard sqlite3_step(row) == SQLITE_ROW,
+              sqlite3_column_type(row, 0) == SQLITE_INTEGER, sqlite3_column_int64(row, 0) == 1,
+              sqlite3_column_type(row, 1) == SQLITE_INTEGER, sqlite3_column_type(row, 2) == SQLITE_INTEGER else { throw Failure.invalidData }
+        let enabled = sqlite3_column_int64(row, 1)
+        let days = Int(sqlite3_column_int64(row, 2))
+        guard [0,1].contains(enabled), HistoryPreferences.allowedDays.contains(days),
+              sqlite3_step(row) == SQLITE_DONE else { throw Failure.invalidData }
+        return HistoryPreferences(recordingEnabled: enabled == 1, retentionDays: days)
+    }
+
     func prune(now: Date) throws {
         let row = try statement("DELETE FROM history WHERE visited<?")
         defer { sqlite3_finalize(row) }
-        guard sqlite3_bind_double(row, 1, now.addingTimeInterval(-90 * 86400).timeIntervalSince1970) == SQLITE_OK,
+        guard sqlite3_bind_double(row, 1, now.addingTimeInterval(-Double(try preferences().retentionDays) * 86400).timeIntervalSince1970) == SQLITE_OK,
               sqlite3_step(row) == SQLITE_DONE else { throw Failure.unavailable }
         try execute("DELETE FROM history WHERE url IN (SELECT url FROM history ORDER BY visited DESC,url LIMIT -1 OFFSET 10000)")
     }

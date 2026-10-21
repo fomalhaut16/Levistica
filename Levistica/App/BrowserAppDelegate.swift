@@ -63,6 +63,14 @@ final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
         guard !checkingTermination, !flushingHistory else { return .terminateCancel }
         checkingTermination = true
         defer { checkingTermination = false }
+        if session?.isDeletingSiteData == true {
+            let alert = NSAlert()
+            alert.messageText = "サイトデータを削除中です"
+            alert.informativeText = "完了を待ってから、もう一度終了してください。削除を途中で取り消したことにはしません。"
+            alert.addButton(withTitle: "アプリに戻る")
+            alert.runModal()
+            return .terminateCancel
+        }
         if let session, session.downloads.hasActive {
             let alert = NSAlert()
             alert.messageText = "ダウンロード中です"

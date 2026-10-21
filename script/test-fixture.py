@@ -69,6 +69,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 pass
             self.close_connection = True
             return
+        if self.path in ["/site-data-set", "/site-data-check"]:
+            seed = "document.cookie='levistica_site_data=synthetic; SameSite=Lax; Path=/';localStorage.setItem('levistica_site_data','synthetic');" if self.path == "/site-data-set" else ""
+            page = """<title>Site data fixture</title><h1>Site data fixture</h1><input aria-label="Storage draft">
+                <button onclick="check()">Check saved data</button><p id="cookie-status"></p><p id="storage-status"></p>
+                <script>function check(){document.getElementById('cookie-status').textContent=document.cookie.includes('levistica_site_data=')?'Cookie present':'Cookie absent';document.getElementById('storage-status').textContent=localStorage.getItem('levistica_site_data')===null?'Storage absent':'Storage present';}
+                """ + seed + "check();</script>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(page.encode())
+            return
         pages = {
             "/pdf-cookie": '<title>PDF cookie fixture</title><a href="/protected.pdf">Protected PDF</a>',
             "/pdf-post-form": '<title>PDF POST form</title><form action="/pdf-post" method="post"><button>Submit PDF fixture</button></form>',

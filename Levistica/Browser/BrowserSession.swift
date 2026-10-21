@@ -20,6 +20,10 @@ final class BrowserSession {
     private var closedTabs: [ClosedTab] = []
     @ObservationIgnored private var inputConfirmationInProgress = false
     let downloads = DownloadManager()
+    @ObservationIgnored private var siteDataModel: SiteDataLibrary?
+    var isDeletingSiteData: Bool { siteDataModel?.isDeleting == true }
+    enum SettingsSection: Hashable { case history, siteData }
+    var settingsSection = SettingsSection.history
     let history: HistoryLibrary
     let bookmarks: BookmarkLibrary
     var isBookmarkListVisible = false
@@ -113,6 +117,13 @@ final class BrowserSession {
         isBookmarkListVisible = true
     }
 
+    func siteDataLibrary() -> SiteDataLibrary {
+        if let siteDataModel { return siteDataModel }
+        let value = SiteDataLibrary { [weak self] in self?.websiteDataStore() }
+        siteDataModel = value
+        return value
+    }
+
     func showHistory() {
         isBookmarkListVisible = false
         history.isVisible = true
@@ -158,7 +169,7 @@ final class BrowserSession {
     }
 
     func prepareToQuit() -> Bool {
-        if downloads.hasActive { return false }
+        if downloads.hasActive || isDeletingSiteData { return false }
         pendingSave?.cancel()
         pendingSave = nil
         guard let store, !persistenceDisabled, !discardUnsavedChangesOnQuit else {
