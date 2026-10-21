@@ -24,6 +24,7 @@ measure = module('measure-memory.py', 'cross_site_measure')
 
 class CrossSiteFixtureTests(unittest.TestCase):
     count = 5
+
     @unittest.skipUnless(shutil.which('node'), 'Node is only needed for generated JavaScript syntax checks')
     def test_generated_scripts_parse_without_running_page_code(self):
         for key in fixture.hosts(20):
@@ -143,7 +144,6 @@ class CrossSiteFixtureTests(unittest.TestCase):
         self.assertEqual(self.request('POST', '/report/1', data=self.report('1'))[0], 204)
         with self.assertRaises(ValueError):
             measure.check_fixture(self.state())
-
 
     def test_count_is_bounded_and_cannot_change_during_sampling(self):
         state = self.ready()

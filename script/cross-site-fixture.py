@@ -19,13 +19,11 @@ import uuid
 
 COUNTS = (5, 20)
 
+
 def hosts(count):
     if type(count) is not int or count not in COUNTS:
         raise ValueError('Document count must be 5 or 20')
     return {str(i): f'document-{i}.localhost' for i in range(1, count + 1)}
-
-
-HOSTS = hosts(5)
 
 
 def document(number):
