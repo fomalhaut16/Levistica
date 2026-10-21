@@ -4,6 +4,7 @@ import WebKit
 @MainActor
 @Observable
 final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
+    let dialogs = PageDialogController()
     let webView: WKWebView
     var onMetadataChange: (() -> Void)?
     var onCreatePage: ((WKWebViewConfiguration, String, Bool) -> WKWebView?)?
@@ -245,9 +246,31 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         if let onDownload { onDownload(download) } else { download.cancel { _ in } }
     }
 
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor () -> Void) {
+        dialogs.present(message: message, origin: Self.origin(of: frame), window: webView.window,
+                        allowsCancel: false) { _, _ in completionHandler() }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor (Bool) -> Void) {
+        dialogs.present(message: message, origin: Self.origin(of: frame), window: webView.window,
+                        allowsCancel: true) { accepted, _ in completionHandler(accepted) }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
+                 defaultText: String?, initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping @MainActor (String?) -> Void) {
+        dialogs.present(message: prompt, origin: Self.origin(of: frame), window: webView.window,
+                        allowsCancel: true, promptDefault: defaultText, isPrompt: true) { accepted, text in
+            completionHandler(accepted ? text : nil)
+        }
+    }
+
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor ([URL]?) -> Void) {
-        guard filePanel == nil, let window = webView.window else { completionHandler(nil); return }
+        guard filePanel == nil, let window = webView.window,
+              window.isKeyWindow, window.attachedSheet == nil else { completionHandler(nil); return }
         let panel = NSOpenPanel()
         filePanel = panel
         panel.title = parameters.allowsDirectories ? "サイトへ渡すフォルダを選択" : "サイトへ渡すファイルを選択"
@@ -274,6 +297,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { updateSnapshot() }
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        dialogs.beginDocument()
         committedRequest = lastRequest
         invalidateFindResult()
         updateSnapshot()
@@ -298,6 +322,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        dialogs.cancel()
         updateSnapshot()
         failure = "ページの処理が終了しました。再試行すると、入力内容などが失われる場合があります。"
     }

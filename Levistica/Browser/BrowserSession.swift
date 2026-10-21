@@ -121,15 +121,23 @@ final class BrowserSession {
         if downloads.hasActive { return false }
         pendingSave?.cancel()
         pendingSave = nil
-        guard let store, !persistenceDisabled, !discardUnsavedChangesOnQuit else { return true }
+        guard let store, !persistenceDisabled, !discardUnsavedChangesOnQuit else {
+            dismissPageDialogs()
+            return true
+        }
         do {
             try store.save(snapshot(wasRunning: false))
             storageFailure = nil
+            dismissPageDialogs()
             return true
         } catch {
             storageFailure = "タブ一覧を保存できないため終了を取り消しました。再試行するか、保存せず終了を選んでください。"
             return false
         }
+    }
+
+    private func dismissPageDialogs() {
+        for tab in tabs { tab.page?.dialogs.cancel() }
     }
 
     private func snapshot(wasRunning: Bool) -> SavedSession {
@@ -225,6 +233,7 @@ final class BrowserSession {
             downloads.notice = "ダウンロード中です。転送を取り消すか、完了してからタブを閉じてください。"
             return
         }
+        tab.page?.dialogs.cancel()
         tab.page?.cancelFileSelection()
         closedTabs.append(ClosedTab(url: tab.page?.url ?? tab.pendingURL, draft: tab.addressDraft,
                                     mayReload: tab.page?.canRetry ?? tab.mayRestoreAutomatically, index: index))

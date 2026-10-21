@@ -34,6 +34,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             return
         pages = {
+            "/dialogs": '''<title>Dialogs fixture</title><h1>Dialogs fixture</h1>
+                <button onclick="alert('Synthetic site notice'); result.textContent='Alert returned'">Site alert</button>
+                <button onclick="result.textContent='Confirm: '+confirm('Synthetic confirmation')">Site confirm</button>
+                <button onclick="const reply=prompt('Synthetic prompt','fixture default');result.textContent='Prompt: '+(reply===null?'cancelled':reply)">Site prompt</button>
+                <button onclick="alert(Array.from({length:600},(_,i)=>'Synthetic long line '+i).join('\\n'));result.textContent='Long alert returned'">Long site alert</button>
+                <button onclick="for(let n=0;n<8;n++){alert('Synthetic loop '+n)} result.textContent='Dialogs completed: 8'">Repeated alerts</button>
+                <p id="result">Waiting for dialog</p>
+                <iframe title="Dialog frame" id="child"></iframe>
+                <script>child.src='http://localhost:'+location.port+'/dialog-frame';</script>''',
+            "/dialog-frame": '''<title>Dialog frame</title><button onclick="document.getElementById('frame-result').textContent='Frame: '+confirm('Synthetic frame confirmation')">Frame confirm</button><p id="frame-result"></p>''',
             "/files": '''<title>Files fixture</title><h1>Files fixture</h1>
                 <a href="/download">Download fixture</a>
                 <a href="/download-slow">Slow download</a>
