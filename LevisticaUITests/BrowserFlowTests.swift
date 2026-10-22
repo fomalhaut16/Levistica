@@ -4,7 +4,7 @@ import AppKit
 final class BrowserFlowTests: XCTestCase {
     // Opt-in only: attach to the canonical entrypoint's already running Profile app.
     @MainActor
-    func testProfileSleepWorkload() throws {
+    func testProfileSleepWorkload() async throws {
         guard let path = ProcessInfo.processInfo.environment["LEVISTICA_PROFILE_WORKLOAD"],
               !path.isEmpty, !path.hasPrefix("$(") else {
             throw XCTSkip("Run script/test.sh --profile-ui for this diagnostic workload.")
@@ -16,6 +16,8 @@ final class BrowserFlowTests: XCTestCase {
             let executable: String
             let urls: [String: String]
             let mallocStacks: Bool
+            struct Collector: Decodable { let url: URL; let token: String }
+            let collector: Collector?
         }
         let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
         XCTAssertEqual(workload.urls.count, 5)
@@ -38,51 +40,24 @@ final class BrowserFlowTests: XCTestCase {
                 && running.executableURL?.path == workload.executable
         }
         XCTAssertTrue(identityMatches())
-        func capture(_ stage: String) throws {
+        func capture(_ stage: String) async throws {
             guard workload.mallocStacks else { return }
             XCTAssertTrue(identityMatches())
-            let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
-            for (tool, arguments) in [
-                ("vmmap", ["-summary", String(workload.pid)]),
-                ("malloc_history", [String(workload.pid), "-callTree", ".*[8m+]"])
-            ] {
-                let output = directory.appendingPathComponent("\(stage)-\(tool).txt")
-                XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
-                XCTAssertTrue(FileManager.default.createFile(atPath: output.path, contents: nil,
-                                                            attributes: [.posixPermissions: 0o600]))
-                let handle = try FileHandle(forWritingTo: output)
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/" + tool)
-                process.arguments = arguments
-                process.standardOutput = handle
-                process.standardError = handle
-                defer {
-                    if process.isRunning { process.interrupt(); process.terminate() }
-                    try? handle.close()
-                }
-                try process.run()
-                let deadline = Date().addingTimeInterval(10)
-                var exceeded = false
-                while process.isRunning {
-                    let bytes = try FileManager.default.attributesOfItem(atPath: output.path)[.size] as? NSNumber
-                    if Date() >= deadline || (bytes?.intValue ?? 0) > 8 * 1024 * 1024 {
-                        exceeded = true
-                        process.terminate()
-                        break
-                    }
-                    Thread.sleep(forTimeInterval: 0.05)
-                }
-                if exceeded {
-                    // This is only the tool process created immediately above.
-                    let grace = Date().addingTimeInterval(1)
-                    while process.isRunning && Date() < grace { Thread.sleep(forTimeInterval: 0.05) }
-                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                }
-                process.waitUntilExit()
-                XCTAssertFalse(exceeded, "Diagnostic tool exceeded time or output cap: \(tool)")
-                XCTAssertEqual(process.terminationStatus, 0, "Read the local diagnostic artifact for \(tool)")
-                XCTAssertTrue(identityMatches())
-            }
+            let collector = try XCTUnwrap(workload.collector)
+            XCTAssertEqual(collector.url.scheme, "http")
+            XCTAssertEqual(collector.url.host, "127.0.0.1")
+            XCTAssertNotNil(collector.url.port)
+            XCTAssertNil(collector.url.user)
+            XCTAssertNil(collector.url.password)
+            var request = URLRequest(url: collector.url.appendingPathComponent("snapshot/" + stage))
+            request.httpMethod = "POST"
+            request.setValue(collector.token, forHTTPHeaderField: "X-Levistica-Diagnostic")
+            request.timeoutInterval = 25
+            let (data, response) = try await URLSession.shared.data(for: request)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            struct Reply: Decodable { let success: Bool }
+            XCTAssertTrue(try JSONDecoder().decode(Reply.self, from: data).success)
+            XCTAssertTrue(identityMatches())
         }
         defer {
             if identityMatches() && app.state != .notRunning { app.terminate() }
@@ -95,7 +70,7 @@ final class BrowserFlowTests: XCTestCase {
             XCTAssertTrue(app.webViews.staticTexts["Levistica documents \(number)"].waitForExistence(timeout: 10))
         }
         XCTAssertTrue(app.staticTexts["5タブ・読み込み済み5"].waitForExistence(timeout: 5))
-        try capture("loaded-five")
+        try await capture("loaded-five")
         for cycle in 1...2 {
             for _ in 1...4 { app.typeKey("[", modifierFlags: [.command, .shift]) }
             for number in 1...4 {
@@ -109,7 +84,7 @@ final class BrowserFlowTests: XCTestCase {
                 app.typeKey("]", modifierFlags: [.command, .shift])
             }
             XCTAssertTrue(app.webViews.staticTexts["Levistica documents 5"].waitForExistence(timeout: 10))
-            try capture("sleep-\(cycle)")
+            try await capture("sleep-\(cycle)")
             for number in stride(from: 4, through: 1, by: -1) {
                 app.typeKey("[", modifierFlags: [.command, .shift])
                 XCTAssertTrue(app.webViews.staticTexts["Levistica documents \(number)"].waitForExistence(timeout: 10))
@@ -117,7 +92,7 @@ final class BrowserFlowTests: XCTestCase {
             for _ in 1...4 { app.typeKey("]", modifierFlags: [.command, .shift]) }
             XCTAssertTrue(app.staticTexts["5タブ・読み込み済み5"].waitForExistence(timeout: 5))
         }
-        try capture("resumed-two")
+        try await capture("resumed-two")
         XCTAssertTrue(identityMatches())
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))

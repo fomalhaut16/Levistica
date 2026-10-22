@@ -67,3 +67,75 @@ class SnapshotCompletenessTests(unittest.TestCase):
                 output.truncate(8 * 1024 * 1024 + 1)
             with self.assertRaises(ValueError):
                 module.validate_snapshots(root)
+
+
+class CollectorBoundaryTests(unittest.TestCase):
+    def test_rejects_page_origin_wrong_token_and_request_body(self):
+        headers = {'Host': '127.0.0.1:1234', 'X-Levistica-Diagnostic': 'private-token'}
+        self.assertTrue(module.request_is_valid(headers, '127.0.0.1:1234', 'private-token'))
+        for key, value in [('Origin', 'http://document-1.localhost'),
+                           ('X-Levistica-Diagnostic', 'wrong'), ('X-Levistica-Diagnostic', '非ASCII'),
+                           ('Host', 'localhost:1234'),
+                           ('Content-Length', '1'), ('Transfer-Encoding', 'chunked')]:
+            with self.subTest(key=key):
+                changed = dict(headers)
+                changed[key] = value
+                self.assertFalse(module.request_is_valid(changed, '127.0.0.1:1234', 'private-token'))
+
+    def test_only_fixed_order_can_invoke_fixed_commands(self):
+        import http.client
+        import threading
+        calls = []
+        server = module.create_collector(1234, lambda: None,
+                                         lambda stage, tool, args: calls.append((stage, tool, args)) or {'bytes': 1})
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=5)
+        headers = {'X-Levistica-Diagnostic': server.token}
+        try:
+            connection.request('POST', '/snapshot/sleep-1', headers=headers)
+            response = connection.getresponse()
+            self.assertEqual(response.status, 409)
+            response.read()
+            self.assertEqual(calls, [])
+            for stage in module.STAGES:
+                connection.request('POST', '/snapshot/' + stage, headers=headers)
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                response.read()
+            self.assertEqual(len(calls), 8)
+            self.assertEqual(calls[0], ('loaded-five', 'vmmap', ['-summary', '1234']))
+            self.assertEqual(calls[1], ('loaded-five', 'malloc_history', ['1234', '-callTree', '.*[8m+]']))
+            connection.request('POST', '/snapshot/loaded-five', headers=headers)
+            response = connection.getresponse()
+            self.assertEqual(response.status, 409)
+            response.read()
+            self.assertEqual(len(calls), 8)
+        finally:
+            connection.close()
+            server.shutdown()
+            worker.join(timeout=5)
+            server.server_close()
+
+    def test_failed_identity_never_invokes_a_tool(self):
+        import http.client
+        import threading
+        from unittest.mock import Mock
+        capture = Mock()
+        verify = Mock(side_effect=ValueError('identity changed'))
+        server = module.create_collector(1234, verify, capture)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=5)
+        try:
+            connection.request('POST', '/snapshot/loaded-five', headers={'X-Levistica-Diagnostic': server.token})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 500)
+            response.read()
+            capture.assert_not_called()
+            self.assertEqual(server.failure, 'identity changed')
+        finally:
+            connection.close()
+            server.shutdown()
+            worker.join(timeout=5)
+            server.server_close()

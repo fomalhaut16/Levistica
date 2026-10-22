@@ -19,8 +19,10 @@ python3 "$ROOT_DIR/script/check-app-processes.py" --only Debug
 mkdir -p "$ROOT_DIR/.local/artifacts"
 RUN_DIR="$(mktemp -d "$ROOT_DIR/.local/artifacts/tests.XXXXXX")"
 FIXTURE_PID=""
+COLLECTOR_PID=""
 cleanup() {
     local result=$?
+    if [[ -n "$COLLECTOR_PID" ]]; then kill "$COLLECTOR_PID" 2>/dev/null || true; wait "$COLLECTOR_PID" 2>/dev/null || true; fi
     if [[ "$MODE" == --profile-ui ]]; then
         # Reuse the verified stop/build path even if XCTest never reaches its defer.
         if python3 "$ROOT_DIR/script/check-app-processes.py" --only Profile; then
@@ -52,6 +54,16 @@ elif [[ "$MODE" == --profile-ui ]]; then
     done
     CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=1 "$ROOT_DIR/script/build_and_run.sh" --verify
     python3 "$ROOT_DIR/script/profile-workload.py" prepare "$RUN_DIR/lifecycle.json" "$RUN_DIR/workload.json"
+    if [[ "${LEVISTICA_MALLOC_STACKS:-0}" == 1 ]]; then
+        python3 "$ROOT_DIR/script/profile-workload.py" serve "$RUN_DIR/lifecycle.json" "$RUN_DIR/workload.json" >"$RUN_DIR/collector.log" 2>&1 &
+        COLLECTOR_PID=$!
+        for ((attempt=0; attempt<100; attempt++)); do
+            [[ -f "$RUN_DIR/collector-ready.json" ]] && break
+            kill -0 "$COLLECTOR_PID" 2>/dev/null || { cat "$RUN_DIR/collector.log" >&2; exit 1; }
+            sleep 0.1
+        done
+        [[ -f "$RUN_DIR/collector-ready.json" ]] || { echo 'Diagnostic collector did not become ready' >&2; exit 1; }
+    fi
     BUILD_ARGS+=("LEVISTICA_PROFILE_WORKLOAD=$RUN_DIR/workload.json"
         -only-testing:LevisticaUITests/BrowserFlowTests/testProfileSleepWorkload
         -test-timeouts-enabled YES -maximum-test-execution-time-allowance 180)
@@ -89,6 +101,10 @@ if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" "$TEST_ACTION" >"$RUN_DIR/xcodebuild
 fi
 python3 "$ROOT_DIR/script/check-app-processes.py" --only "$EXPECTED_VARIANT"
 if [[ "$MODE" == --profile-ui ]]; then
+    if [[ -n "$COLLECTOR_PID" ]]; then
+        wait "$COLLECTOR_PID"
+        COLLECTOR_PID=""
+    fi
     python3 "$ROOT_DIR/script/profile-workload.py" validate "$RUN_DIR/lifecycle.json"
 fi
 tail -n 25 "$RUN_DIR/xcodebuild.log"

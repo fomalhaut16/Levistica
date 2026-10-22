@@ -5,6 +5,10 @@ import importlib.util
 import json
 import os
 import pathlib
+import http.server
+import secrets
+import subprocess
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location('app_processes', ROOT / 'script/check-app-processes.py')
@@ -42,12 +46,147 @@ def validate_snapshots(directory):
     return files
 
 
+
+STAGES = ('loaded-five', 'sleep-1', 'sleep-2', 'resumed-two')
+MAX_BYTES = 8 * 1024 * 1024
+
+
+def capture_tool(directory, stage, tool, arguments):
+    output = directory / f'{stage}-{tool}.txt'
+    started = time.monotonic()
+    with output.open('xb') as stream:
+        output.chmod(0o600)
+        process = subprocess.Popen(['/usr/bin/' + tool, *arguments], stdout=stream, stderr=subprocess.STDOUT)
+        try:
+            while process.poll() is None:
+                if time.monotonic() - started > 10 or output.stat().st_size > MAX_BYTES:
+                    raise TimeoutError('Diagnostic command exceeded its time or output cap')
+                time.sleep(0.05)
+            if process.returncode != 0:
+                raise ValueError(f'Diagnostic command failed: {tool}, exit {process.returncode}')
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+    size = output.stat().st_size
+    if not 0 < size <= MAX_BYTES:
+        raise ValueError('Empty or oversized diagnostic command output')
+    return {'name': output.name, 'bytes': size, 'seconds': time.monotonic() - started}
+
+
+def request_is_valid(headers, host, token):
+    supplied = headers.get('X-Levistica-Diagnostic', '')
+    return (isinstance(supplied, str) and supplied.isascii()
+            and headers.get('Host') == host and headers.get('Origin') is None
+            and headers.get('Content-Length') in (None, '0')
+            and headers.get('Transfer-Encoding') is None
+            and secrets.compare_digest(supplied, token))
+
+
+def create_collector(pid, verify, capture):
+    token = secrets.token_urlsafe(32)
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            if not request_is_valid(self.headers, f'127.0.0.1:{self.server.server_port}', token):
+                self.send_error(403)
+                return
+            index = len(self.server.records)
+            if index >= len(STAGES) or self.path != '/snapshot/' + STAGES[index]:
+                self.send_error(409)
+                return
+            stage = STAGES[index]
+            try:
+                results = []
+                for tool, arguments in [('vmmap', ['-summary', str(pid)]),
+                                        ('malloc_history', [str(pid), '-callTree', '.*[8m+]'])]:
+                    verify()
+                    results.append(capture(stage, tool, arguments))
+                    verify()
+                self.server.records.append({'stage': stage, 'samples': results})
+                success = True
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                self.server.failure = str(error)
+                success = False
+            data = json.dumps({'success': success}).encode()
+            self.send_response(200 if success else 500)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *_):
+            pass
+
+    class Collector(http.server.HTTPServer):
+        def get_request(self):
+            connection, address = super().get_request()
+            connection.settimeout(5)
+            return connection, address
+
+    server = Collector(('127.0.0.1', 0), Handler)
+    server.timeout = 1
+    server.records = []
+    server.failure = None
+    server.token = token
+    return server
+
+
+def serve_collector(workload_path):
+    workload = json.loads(workload_path.read_text())
+    if not workload.get('mallocStacks'):
+        raise ValueError('Collector requires explicit Profile stack logging')
+    pid = workload['pid']
+    birth = processes.run_ps(['-p', str(pid), '-o', 'lstart='])
+    if birth is None:
+        raise ValueError('Profile process exited before collector startup')
+
+    def verify():
+        snapshot = processes.run_ps(['-axo', 'pid=,comm='])
+        if snapshot is None:
+            raise ValueError('Cannot enumerate app processes')
+        pids = processes.check_snapshot(snapshot, ROOT, processes.describe_process, os.getuid(), only='Profile')
+        if pids != [pid] or processes.run_ps(['-p', str(pid), '-o', 'lstart=']) != birth:
+            raise ValueError('Profile PID or start time changed')
+
+    verify()
+    directory = workload_path.parent
+    server = create_collector(pid, verify, lambda stage, tool, args: capture_tool(directory, stage, tool, args))
+    workload['collector'] = {'url': f'http://127.0.0.1:{server.server_port}', 'token': server.token}
+    temporary = workload_path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(workload, indent=2) + '\n')
+    temporary.chmod(0o600)
+    temporary.replace(workload_path)
+    (directory / 'collector-ready.json').write_text('{"ready":true}\n')
+    deadline = time.monotonic() + 180
+    try:
+        while len(server.records) < len(STAGES) and server.failure is None and time.monotonic() < deadline:
+            server.handle_request()
+        if len(server.records) != len(STAGES) and server.failure is None:
+            server.failure = 'Collector deadline expired'
+    finally:
+        server.server_close()
+        (directory / 'collector-result.json').write_text(json.dumps(
+            {'records': server.records, 'failure': server.failure}, indent=2) + '\n')
+    if server.failure:
+        raise ValueError(server.failure)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['prepare', 'validate'])
+    parser.add_argument('mode', choices=['prepare', 'validate', 'serve'])
     parser.add_argument('state', type=pathlib.Path)
     parser.add_argument('output', nargs='?', type=pathlib.Path)
     args = parser.parse_args()
+    if args.mode == 'serve':
+        if args.output is None:
+            parser.error('serve requires the workload file')
+        serve_collector(args.output)
+        return
     state = json.loads(args.state.read_text())
     counts = validate_state(state, completed=args.mode == 'validate')
     if args.mode == 'prepare':
