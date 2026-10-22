@@ -4,8 +4,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 MODE="${1:---unit}"
 case "$MODE" in --unit|--ui|--all) ;; *) echo "usage: $0 [--unit|--ui|--all]" >&2; exit 2;; esac
-# Reuse the canonical entrypoint to stop this checkout's Debug/Release app first.
+# Reuse the canonical entrypoint to stop this checkout's verified development apps first.
 "$ROOT_DIR/script/build_and_run.sh" --build
+python3 "$ROOT_DIR/script/check-app-processes.py" --only Debug
 mkdir -p "$ROOT_DIR/.local/artifacts"
 RUN_DIR="$(mktemp -d "$ROOT_DIR/.local/artifacts/tests.XXXXXX")"
 FIXTURE_PID=""
@@ -41,6 +42,8 @@ if [[ -n "${TEST_ONLY:-}" ]]; then BUILD_ARGS+=("-only-testing:$TEST_ONLY"); fi
 echo "Test artifacts: $RUN_DIR"
 if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" test >"$RUN_DIR/xcodebuild.log" 2>&1; then
     tail -n 90 "$RUN_DIR/xcodebuild.log" >&2
+    python3 "$ROOT_DIR/script/check-app-processes.py" --only Debug >&2 || true
     exit 1
 fi
+python3 "$ROOT_DIR/script/check-app-processes.py" --only Debug
 tail -n 25 "$RUN_DIR/xcodebuild.log"

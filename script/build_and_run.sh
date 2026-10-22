@@ -33,6 +33,8 @@ APP_BINARY="$APP_BUNDLE/Contents/MacOS/Levistica"
 BUILD_ARGS=(-project "$ROOT_DIR/Levistica.xcodeproj" -scheme Levistica
     -configuration "$CONFIGURATION" -destination 'platform=macOS' -derivedDataPath "$DERIVED_DATA")
 LOG_DIR="$ROOT_DIR/.local/artifacts"
+# Discover by executable path first. A renamed process must not bypass the stop checks.
+python3 "$ROOT_DIR/script/check-app-processes.py"
 mkdir -p "$LOG_DIR"
 if [[ "$PROFILE" == 1 ]]; then
     PROFILE_ENTITLEMENTS="$LOG_DIR/profile.entitlements"
@@ -100,6 +102,7 @@ fi
 case "$MODE" in
     --verify)
         sleep 2
+        python3 "$ROOT_DIR/script/check-app-processes.py" --only "$VARIANT"
         for pid in $(/usr/bin/pgrep -x Levistica || true); do
             [[ "$(/bin/ps -p "$pid" -o comm= || true)" == "$APP_BINARY" ]] && { echo "Running PID $pid (process check only)"; exit 0; }
         done
