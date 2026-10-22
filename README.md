@@ -149,3 +149,16 @@ python3 script/measure-memory.py --label sleep-after --loaded-pages 1 --total-ta
 ```
 
 各状態で120秒待ち、5秒ごとに文書・接続・圧迫条件を確認します。報告停止だけでは休眠と判断せず、UIのタブ数と読み込み済み数も別に記録してください。休眠前だけの標本や不成立の回は前後比較へ加えません。計測後はfixtureをCtrl-Cで終了します。結果と条件の限界はPLAN.mdに記録します。
+
+
+反復時の保持を調べる場合は、単回比較のcheckpointを流用せず、`--cycle`で全件表示時の履歴を保存します。各回の休眠後は`--sleep-cycle-checkpoint`を渡し、読み込み済み1の同じ状態で測ります。
+
+```sh
+python3 script/sleep-state.py --cycle --state .local/sleep/state.json --output .local/sleep/cycle-1.json
+# 1〜4番を確認付きで休眠し、5番へ戻してから測定
+python3 script/measure-memory.py --label sleep-cycle-1 --loaded-pages 1 --total-tabs 5 --samples 1 --ready-delay 120 --ready-file .local/sleep/state.json --sleep-cycle-checkpoint .local/sleep/cycle-1.json
+# 4ページを再開して5番を選択し、次の全件表示時の履歴を追加
+python3 script/sleep-state.py --cycle --previous-cycle .local/sleep/cycle-1.json --state .local/sleep/state.json --output .local/sleep/cycle-2.json
+```
+
+全件表示時と休眠後のUIの件数も記録し、5件目までを上限にしてください。欠けた再開、余分な接続、5番の再読み込み、履歴の変更を拒否します。前回の単回比較や異なる条件の標本とは混ぜません。反復の5点と未解明の増加はPLAN.mdに記録しています。
