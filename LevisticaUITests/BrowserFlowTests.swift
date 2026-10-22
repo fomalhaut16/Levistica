@@ -4,14 +4,21 @@ import AppKit
 final class BrowserFlowTests: XCTestCase {
     // Opt-in only: attach to the canonical entrypoint's already running Profile app.
     @MainActor
-    func testProfileSleepWorkload() throws {
+    func testProfileSleepWorkload() async throws {
         guard let path = ProcessInfo.processInfo.environment["LEVISTICA_PROFILE_WORKLOAD"],
               !path.isEmpty, !path.hasPrefix("$(") else {
             throw XCTSkip("Run script/test.sh --profile-ui for this diagnostic workload.")
         }
         continueAfterFailure = false
-        executionTimeAllowance = 240
-        struct Workload: Decodable { let pid: Int32; let executable: String; let urls: [String: String] }
+        executionTimeAllowance = 180
+        struct Workload: Decodable {
+            let pid: Int32
+            let executable: String
+            let urls: [String: String]
+            let mallocStacks: Bool
+            struct Collector: Decodable { let url: URL; let token: String }
+            let collector: Collector?
+        }
         let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
         XCTAssertEqual(workload.urls.count, 5)
         for number in 1...5 {
@@ -33,6 +40,25 @@ final class BrowserFlowTests: XCTestCase {
                 && running.executableURL?.path == workload.executable
         }
         XCTAssertTrue(identityMatches())
+        func capture(_ stage: String) async throws {
+            guard workload.mallocStacks else { return }
+            XCTAssertTrue(identityMatches())
+            let collector = try XCTUnwrap(workload.collector)
+            XCTAssertEqual(collector.url.scheme, "http")
+            XCTAssertEqual(collector.url.host, "127.0.0.1")
+            XCTAssertNotNil(collector.url.port)
+            XCTAssertNil(collector.url.user)
+            XCTAssertNil(collector.url.password)
+            var request = URLRequest(url: collector.url.appendingPathComponent("snapshot/" + stage))
+            request.httpMethod = "POST"
+            request.setValue(collector.token, forHTTPHeaderField: "X-Levistica-Diagnostic")
+            request.timeoutInterval = 25
+            let (data, response) = try await URLSession.shared.data(for: request)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            struct Reply: Decodable { let success: Bool }
+            XCTAssertTrue(try JSONDecoder().decode(Reply.self, from: data).success)
+            XCTAssertTrue(identityMatches())
+        }
         defer {
             if identityMatches() && app.state != .notRunning { app.terminate() }
         }
@@ -44,7 +70,8 @@ final class BrowserFlowTests: XCTestCase {
             XCTAssertTrue(app.webViews.staticTexts["Levistica documents \(number)"].waitForExistence(timeout: 10))
         }
         XCTAssertTrue(app.staticTexts["5タブ・読み込み済み5"].waitForExistence(timeout: 5))
-        for _ in 1...2 {
+        try await capture("loaded-five")
+        for cycle in 1...2 {
             for _ in 1...4 { app.typeKey("[", modifierFlags: [.command, .shift]) }
             for number in 1...4 {
                 XCTAssertTrue(identityMatches())
@@ -57,6 +84,7 @@ final class BrowserFlowTests: XCTestCase {
                 app.typeKey("]", modifierFlags: [.command, .shift])
             }
             XCTAssertTrue(app.webViews.staticTexts["Levistica documents 5"].waitForExistence(timeout: 10))
+            try await capture("sleep-\(cycle)")
             for number in stride(from: 4, through: 1, by: -1) {
                 app.typeKey("[", modifierFlags: [.command, .shift])
                 XCTAssertTrue(app.webViews.staticTexts["Levistica documents \(number)"].waitForExistence(timeout: 10))
@@ -64,6 +92,7 @@ final class BrowserFlowTests: XCTestCase {
             for _ in 1...4 { app.typeKey("]", modifierFlags: [.command, .shift]) }
             XCTAssertTrue(app.staticTexts["5タブ・読み込み済み5"].waitForExistence(timeout: 5))
         }
+        try await capture("resumed-two")
         XCTAssertTrue(identityMatches())
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
