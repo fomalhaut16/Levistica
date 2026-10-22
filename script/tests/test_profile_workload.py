@@ -2,6 +2,7 @@ import copy
 import importlib.util
 import pathlib
 import unittest
+import tempfile
 
 path = pathlib.Path(__file__).resolve().parents[1] / 'profile-workload.py'
 spec = importlib.util.spec_from_file_location('profile_workload', path)
@@ -41,3 +42,28 @@ class ProfileWorkloadTests(unittest.TestCase):
         state['documents']['2']['seenVisible'] = False
         with self.assertRaises(ValueError):
             module.validate_state(state, completed=True)
+
+
+class SnapshotCompletenessTests(unittest.TestCase):
+    def test_requires_all_four_pairs_of_nonempty_snapshots(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            for stage in ('loaded-five', 'sleep-1', 'sleep-2', 'resumed-two'):
+                for tool in ('vmmap', 'malloc_history'):
+                    (root / f'{stage}-{tool}.txt').write_text('synthetic tool output')
+            self.assertEqual(len(module.validate_snapshots(root)), 8)
+            (root / 'sleep-2-malloc_history.txt').unlink()
+            with self.assertRaises(FileNotFoundError):
+                module.validate_snapshots(root)
+
+    def test_rejects_empty_and_oversized_snapshots(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            file = root / 'loaded-five-vmmap.txt'
+            file.touch()
+            with self.assertRaises(ValueError):
+                module.validate_snapshots(root)
+            with file.open('wb') as output:
+                output.truncate(8 * 1024 * 1024 + 1)
+            with self.assertRaises(ValueError):
+                module.validate_snapshots(root)

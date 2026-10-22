@@ -8,9 +8,13 @@ case "$MODE" in --unit|--ui|--all|--profile-ui) ;; *) echo "usage: $0 [--unit|--
 if [[ "$MODE" == --profile-ui && -n "${TEST_ONLY:-}" ]]; then
     echo '--profile-ui does not accept TEST_ONLY' >&2; exit 2
 fi
+case "${LEVISTICA_MALLOC_STACKS:-0}" in 0|1) ;; *) echo 'LEVISTICA_MALLOC_STACKS must be 0 or 1' >&2; exit 2;; esac
+if [[ "${LEVISTICA_MALLOC_STACKS:-0}" == 1 && "$MODE" != --profile-ui ]]; then
+    echo 'MALLOC_STACKS requires --profile-ui' >&2; exit 2
+fi
 unset LEVISTICA_PROFILE_WORKLOAD
 # Reuse the canonical entrypoint to stop this checkout's verified development apps first.
-"$ROOT_DIR/script/build_and_run.sh" --build
+LEVISTICA_MALLOC_STACKS=0 "$ROOT_DIR/script/build_and_run.sh" --build
 python3 "$ROOT_DIR/script/check-app-processes.py" --only Debug
 mkdir -p "$ROOT_DIR/.local/artifacts"
 RUN_DIR="$(mktemp -d "$ROOT_DIR/.local/artifacts/tests.XXXXXX")"
@@ -50,7 +54,7 @@ elif [[ "$MODE" == --profile-ui ]]; then
     python3 "$ROOT_DIR/script/profile-workload.py" prepare "$RUN_DIR/lifecycle.json" "$RUN_DIR/workload.json"
     BUILD_ARGS+=("LEVISTICA_PROFILE_WORKLOAD=$RUN_DIR/workload.json"
         -only-testing:LevisticaUITests/BrowserFlowTests/testProfileSleepWorkload
-        -test-timeouts-enabled YES -maximum-test-execution-time-allowance 240)
+        -test-timeouts-enabled YES -maximum-test-execution-time-allowance 180)
 else
     /usr/bin/openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 -subj /CN=localhost \
         -keyout "$RUN_DIR/key.pem" -out "$RUN_DIR/cert.pem" >"$RUN_DIR/cert.log" 2>&1

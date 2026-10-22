@@ -29,6 +29,19 @@ def validate_state(state, completed=False):
     return expected
 
 
+
+def validate_snapshots(directory):
+    files = []
+    for stage in ('loaded-five', 'sleep-1', 'sleep-2', 'resumed-two'):
+        for tool in ('vmmap', 'malloc_history'):
+            path = directory / f'{stage}-{tool}.txt'
+            size = path.stat().st_size
+            if not 0 < size <= 8 * 1024 * 1024:
+                raise ValueError('Missing, empty, or oversized diagnostic snapshot')
+            files.append({'name': path.name, 'bytes': size})
+    return files
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mode', choices=['prepare', 'validate'])
@@ -46,11 +59,13 @@ def main():
         pids = processes.check_snapshot(snapshot, ROOT, processes.describe_process, os.getuid(), only='Profile')
         if len(pids) != 1:
             raise ValueError('Exactly one verified Profile process is required')
-        args.output.write_text(json.dumps({'pid': pids[0], 'executable': next(path for path, identifier in processes.known_apps(ROOT).items() if identifier.endswith('.profile')), 'urls': state['urls']}, indent=2) + '\n')
+        args.output.write_text(json.dumps({'pid': pids[0], 'executable': next(path for path, identifier in processes.known_apps(ROOT).items() if identifier.endswith('.profile')), 'urls': state['urls'], 'mallocStacks': os.environ.get('LEVISTICA_MALLOC_STACKS', '0') == '1'}, indent=2) + '\n')
         args.output.chmod(0o600)
         print('Profile workload prepared for one verified process.')
     else:
-        print(json.dumps({'completed': True, 'cycles': 2, 'sleeps': 8, 'resumes': 8,
+        workload = json.loads(args.state.with_name('workload.json').read_text())
+        snapshots = validate_snapshots(args.state.parent) if workload.get('mallocStacks') else []
+        print(json.dumps({'snapshots': snapshots, 'completed': True, 'cycles': 2, 'sleeps': 8, 'resumes': 8,
                           'loads': sum(counts.values()), 'document_loads': counts}))
 
 
