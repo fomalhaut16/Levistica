@@ -911,3 +911,17 @@ XcodeのUI試験は許可等の確認待ちとして残す。既に操作でき�
 UI自動試験の環境確認では `DevToolsSecurity -status` がdisabledだった。手元のmanはApple署名のdebugger・性能解析ツールへの追加認可に関する設定と説明しており、UI試験の開始失敗の原因とは確認できない。設定変更は行っていない。Allocationsの記録オプションも取得方法を調べただけで、今回のアプリへ記録を追加したわけではない。
 
 次の原因調査は、約13MiBの大きな割当の呼出元と寿命を調べる1回のAllocations記録に絞る。隔離ReleaseのUI processだけを対象とし、準備・後片付けを含め1起動・20分、記録は3分以内、同じ5文書で2サイクル以内とする。traceが256MiBを超えた場合、権限不足、帰属・可視条件の不成立、応答低下では中断する。再現しなくても延長や追加起動をせず、取得できた範囲と未取得を記録する。権限の追加が必要なら具体的な要求を示してユーザーを挟み、開発者向けのグローバル設定を自動で変更しない。これは次の診断計画であり、まだ実施していない。記録のオーバーヘッドを含むため、RAM比較や通常の操作速度の標本には使わない。
+
+### 2026-10-22 Allocationsのattach失敗と次の条件
+
+上記の1回だけを実施したが、AllocationsはUI PIDへのattachに失敗した。対象は `cd1ea83` の隔離Releaseで、バイナリのSHA-256は前回のfootprint測定と同じ `3601b8651c306b26cf6b41b4e7be0c5ec2dc5f384f10bcb06b6c26f88788712b` だった。起動前後と終了前に実行パス・PID・開始時刻・EPHEMERALを照合した。固定5文書の初期状態と2回の再開後は、viewport・可視状態・instanceの条件を満たした。CUAでは計8回の休眠・8回の再開を確認し、読込累計13、1〜4番が各3回、5番が1回だった。この操作の成立は、Allocationsの取得成功を意味しない。
+
+`xctrace record` は `--attach` と `--time-limit 180s` を指定した。途中でRunIssuesに `Failed to attach to target process` が見つかったため中断し、終了コード2と同じエラーを確認した。コマンドの起動から保存完了までは約194.88秒で、準備・停止処理も含む。成功した割当データや記録時間の検証には至らず、約13MiBの割当元・寿命は未取得のままである。観測したtraceサイズの最大値は約33.08MiB、保存後は約20.25MiBで、256MiBの上限内だった。TOCの書き出しも完了せず、対象を照合してそのexportだけを終了した。再記録・追加起動は行っていない。
+
+アプリ・fixture・recorderの終了は、準備開始から約5分19秒で確認した。exportの停止も20分の上限内だった。中断操作では、xcrunがxctraceへexecされたため最初の実行ファイル照合が不一致になり、その時点ではシグナルを送らなかった。同じ開始時刻、正式なxctraceの実行パス、対象PID、traceの出力先を照合し直して中断した。次回のcontrollerはexec後の識別を記録し、attach失敗も監視中に検出して停止させる。今回のcontrollerや失敗traceは診断資料としてGit対象外に残し、通常の計測手順へ採用しない。
+
+署名の確認では、Releaseはad hoc署名・Hardened Runtime有効で、`com.apple.security.get-task-allow` はなかった。プロジェクトもReleaseで `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` を指定している。Appleの[デバッガー権限の説明](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.debugger)は接続先のGet task allowを条件に挙げ、[公証の注意事項](https://developer.apple.com/documentation/security/resolving-common-notarization-issues)は配布物からこの権限を除くよう説明している。接続条件の不足が疑われるが、今回のエラー自体は原因を詳しく示していない。対象PIDに絞ったtaskgated等のログにも追加情報はなく、DevToolsSecurityのdisabledだけを原因とはしない。
+
+次の推奨案は、正式アプリにローカル診断専用のビルド経路を設け、Release最適化を保ったままGet task allowだけを追加すること。専用bundle IDと生成先を使い、隔離データを必須にする。通常のDebug・Releaseや配布物へこの権限を混ぜず、Hardened Runtime・Sandboxは維持する。既存の正式ビルド入口から明示的に選び、通常の起動では使わない。この権限はデバッガー等による対象アプリへの接続を許すため、追加前にユーザーへ確認する。macOS全体の開発者設定・SIP・ライブラリ検証を変更する案は採らない。認可ダイアログが別途出る場合もユーザー本人の操作を待つ。
+
+承認後は、まず署名・隔離・通常Releaseに権限がないことを検証する。その後、別の診断として1起動・20分、記録1回・3分以内、同じ5文書・2サイクル以内・256MiB以内の上限を改めて適用する。attach成功を確認してから操作を始め、失敗・応答低下・可視条件不成立では中断する。今回の失敗を理由に無制限の再試行へ変えない。アプリ本体の機能や計測ツールは今回変更していない。通常のChrome・Safariとプロファイルは操作していない。証拠は `.local/artifacts/allocations-83udwhsq/` のmanifest・checkpoint・recorder・RunIssues・署名・cleanup・公式原文に保存した。UI自動試験の開始条件も未解決のままである。
