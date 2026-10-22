@@ -914,7 +914,7 @@ UI自動試験の環境確認では `DevToolsSecurity -status` がdisabledだっ
 
 ### 2026-10-22 Allocationsのattach失敗と次の条件
 
-上記の1回だけを実施したが、AllocationsはUI PIDへのattachに失敗した。対象は `cd1ea83` の隔離Releaseで、バイナリのSHA-256は前回のfootprint測定と同じ `3601b8651c306b26cf6b41b4e7be0c5ec2dc5f384f10bcb06b6c26f88788712b` だった。起動前後と終了前に実行パス・PID・開始時刻・EPHEMERALを照合した。固定5文書の初期状態と2回の再開後は、viewport・可視状態・instanceの条件を満たした。CUAでは計8回の休眠・8回の再開を確認し、読込累計13、1〜4番が各3回、5番が1回だった。この操作の成立は、Allocationsの取得成功を意味しない。
+上記の1回だけを実施したが、AllocationsはUI PIDへのattachに失敗した。対象は `cd1ea83` の隔離Releaseで、バイナリのSHA-256は前回のfootprint測定と同じ `3601b8651c306b26cf6b41b4e7be0c5ec2dc5f384f10bcb06b6c26f88788712b` だった。CUA接続の前後と終了前に実行パス・PID・開始時刻・EPHEMERALを照合した。固定5文書の初期状態と2回の再開後は、viewport・可視状態・instanceの条件を満たした。CUAでは計8回の休眠・8回の再開を確認し、読込累計13、1〜4番が各3回、5番が1回だった。この操作の成立は、Allocationsの取得成功を意味しない。
 
 `xctrace record` は `--attach` と `--time-limit 180s` を指定した。途中でRunIssuesに `Failed to attach to target process` が見つかったため中断し、終了コード2と同じエラーを確認した。コマンドの起動から保存完了までは約194.88秒で、準備・停止処理も含む。成功した割当データや記録時間の検証には至らず、約13MiBの割当元・寿命は未取得のままである。観測したtraceサイズの最大値は約33.08MiB、保存後は約20.25MiBで、256MiBの上限内だった。TOCの書き出しも完了せず、対象を照合してそのexportだけを終了した。再記録・追加起動は行っていない。
 
@@ -924,4 +924,4 @@ UI自動試験の環境確認では `DevToolsSecurity -status` がdisabledだっ
 
 次の推奨案は、正式アプリにローカル診断専用のビルド経路を設け、Release最適化を保ったままGet task allowだけを追加すること。専用bundle IDと生成先を使い、隔離データを必須にする。通常のDebug・Releaseや配布物へこの権限を混ぜず、Hardened Runtime・Sandboxは維持する。既存の正式ビルド入口から明示的に選び、通常の起動では使わない。この権限はデバッガー等による対象アプリへの接続を許すため、追加前にユーザーへ確認する。macOS全体の開発者設定・SIP・ライブラリ検証を変更する案は採らない。認可ダイアログが別途出る場合もユーザー本人の操作を待つ。
 
-承認後は、まず署名・隔離・通常Releaseに権限がないことを検証する。その後、別の診断として1起動・20分、記録1回・3分以内、同じ5文書・2サイクル以内・256MiB以内の上限を改めて適用する。attach成功を確認してから操作を始め、失敗・応答低下・可視条件不成立では中断する。今回の失敗を理由に無制限の再試行へ変えない。アプリ本体の機能や計測ツールは今回変更していない。通常のChrome・Safariとプロファイルは操作していない。証拠は `.local/artifacts/allocations-83udwhsq/` のmanifest・checkpoint・recorder・RunIssues・署名・cleanup・公式原文に保存した。UI自動試験の開始条件も未解決のままである。
+承認後は、まず署名・隔離・通常Releaseに権限がないことを検証する。その後、別の診断として1起動・20分、記録1回・3分以内、同じ5文書・2サイクル以内・256MiB以内の上限を改めて適用する。attach成功を確認してから操作を始め、失敗・応答低下・可視条件不成立では中断する。今回の失敗を理由に無制限の再試行へ変えない。アプリ本体の機能やGit対象の計測ツールは今回変更していない。通常のChrome・Safariとプロファイルは操作していない。証拠は `.local/artifacts/allocations-83udwhsq/` のmanifest・checkpoint・recorder・RunIssues・署名・cleanup・公式原文に保存した。UI自動試験の開始条件も未解決のままである。
