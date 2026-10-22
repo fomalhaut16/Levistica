@@ -94,6 +94,10 @@ private struct BrowserCommands: Commands {
                 Button("実際のサイズ") { session.page?.resetZoom() }.keyboardShortcut("0")
                     .disabled(session.page == nil)
                 Divider()
+                Button(session.activeTab.isKept ? "タブの保持を解除" : "このタブを保持") { session.toggleKeep(session.selectedID) }
+                Button("このタブを休眠…") { session.requestSelectedTabSleep() }
+                    .disabled(session.page == nil || session.isRequestingSleep)
+                Divider()
                 Button("次のタブ") { session.selectAdjacent(1) }
                     .keyboardShortcut("]", modifiers: [.command, .shift])
                 Button("前のタブ") { session.selectAdjacent(-1) }

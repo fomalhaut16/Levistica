@@ -3,6 +3,173 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testManualSleepKeepsCancelStateAndRestoresOnlyByReloading() throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/sleep-state", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Sleep loads: 1"].waitForExistence(timeout: 10))
+        app.webViews.buttons["Change page marker"].click()
+        pageMenu("このタブを保持", in: app)
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.staticTexts["保持する設定のタブです。休眠するには保持を解除してください。"].waitForExistence(timeout: 5))
+        pageMenu("タブの保持を解除", in: app)
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.sheets.buttons["状態を破棄して休眠"].waitForExistence(timeout: 5))
+        attachWindowImage(app, name: "tab-sleep-confirmation")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(app.sheets.buttons["状態を破棄して休眠"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.webViews.staticTexts["Transient marker"].exists)
+        XCTAssertTrue(app.webViews.staticTexts["Sleep loads: 1"].exists)
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.sheets.buttons["状態を破棄して休眠"].waitForExistence(timeout: 5))
+        app.sheets.buttons["状態を破棄して休眠"].click()
+        XCTAssertTrue(app.buttons["resumeSleepingTabButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].exists)
+        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/sleep-state")
+        XCTAssertFalse(app.webViews.firstMatch.exists)
+        attachWindowImage(app, name: "tab-sleep-placeholder")
+        app.buttons["resumeSleepingTabButton"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Sleep loads: 2"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.webViews.staticTexts["Fresh page"].exists)
+        XCTAssertFalse(app.buttons["backButton"].isEnabled)
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.sheets.buttons["状態を破棄して休眠"].waitForExistence(timeout: 5))
+        app.sheets.buttons["状態を破棄して休眠"].click()
+        XCTAssertTrue(app.buttons["resumeSleepingTabButton"].waitForExistence(timeout: 5))
+        app.typeKey("t", modifierFlags: .command)
+        app.typeKey("[", modifierFlags: [.command, .shift])
+        XCTAssertTrue(app.webViews.staticTexts["Sleep loads: 3"].waitForExistence(timeout: 10))
+        app.terminate()
+    }
+
+    @MainActor
+    func testSleepingAndKeptStateSurviveRestartWithoutLoading() throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launch()
+        app.activate()
+        submit(base + "/sleep-state", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Sleep loads: 1"].waitForExistence(timeout: 10))
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.sheets.buttons["状態を破棄して休眠"].waitForExistence(timeout: 5))
+        app.sheets.buttons["状態を破棄して休眠"].click()
+        XCTAssertTrue(app.buttons["resumeSleepingTabButton"].waitForExistence(timeout: 5))
+        pageMenu("このタブを保持", in: app)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 5))
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.buttons["resumeSleepingTabButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].exists)
+        pageMenu("タブの保持を解除", in: app)
+        app.buttons["resumeSleepingTabButton"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Sleep fixture"].waitForExistence(timeout: 10))
+        app.terminate()
+    }
+
+    @MainActor
+    func testManualSleepRejectsEditedInputAndPostResponse() throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/tab-state", in: app)
+        let draft = app.webViews.textFields["Draft"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        draft.click()
+        waitForInputIndicator(in: app)
+        draft.typeText("synthetic sleep draft")
+        XCTAssertTrue(app.images.matching(identifier: "入力操作あり").firstMatch.waitForExistence(timeout: 5))
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.staticTexts["入力操作のあったタブは休眠しません。保存・送信後にページを開き直してください。"].waitForExistence(timeout: 5))
+        XCTAssertEqual(draft.value as? String, "synthetic sleep draft")
+        app.typeKey("t", modifierFlags: .command)
+        submit(base + "/post-form", in: app)
+        XCTAssertTrue(app.webViews.buttons["Submit fixture"].waitForExistence(timeout: 10))
+        app.webViews.buttons["Submit fixture"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Submission received"].waitForExistence(timeout: 10))
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.staticTexts["URLから安全に読み込み直せることを確認できないため、休眠しません。"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.webViews.staticTexts["Submission received"].exists)
+        XCTAssertFalse(app.sheets.buttons["状態を破棄して休眠"].exists)
+        app.terminate()
+    }
+
+    @MainActor
+    func testUnsubmittedAddressBlocksSleepUntilEscapeRestoresThePageURL() throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/sleep-state", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Sleep loads: 1"].waitForExistence(timeout: 10))
+        let address = app.textFields["addressField"]
+        address.click()
+        address.typeKey("a", modifierFlags: .command)
+        address.typeText("https://example.invalid/unfinished-address")
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.staticTexts["URL欄を編集中です。ページに戻ってから操作してください。"].waitForExistence(timeout: 5))
+        XCTAssertEqual(address.value as? String, "https://example.invalid/unfinished-address")
+        XCTAssertTrue(app.webViews.staticTexts["Sleep loads: 1"].exists)
+        address.click()
+        address.typeKey(.escape, modifierFlags: [])
+        XCTAssertEqual(address.value as? String, base + "/sleep-state")
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.sheets.buttons["状態を破棄して休眠"].waitForExistence(timeout: 5))
+        app.sheets.buttons["ページに戻る"].click()
+        app.terminate()
+    }
+
+    @MainActor
+    func testSleepRejectsMediaAndRechecksPlaybackAfterConfirmation() throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/sleep-media", in: app)
+        XCTAssertTrue(app.webViews.buttons["Play muted media"].waitForExistence(timeout: 10))
+        app.webViews.buttons["Play muted media"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Muted media playing"].waitForExistence(timeout: 20))
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.staticTexts["ページの状態を確認できないか、メディアや保護対象があります。休眠を取り消しました。"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["resumeSleepingTabButton"].exists)
+        submit(base + "/sleep-state", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Sleep loads: 1"].waitForExistence(timeout: 10))
+        // A fresh document initially has no media; its timer starts while the
+        // native sheet is open, so the final probe must refuse the discard.
+        submit(base + "/sleep-media", in: app)
+        XCTAssertTrue(app.webViews.buttons["Schedule muted media"].waitForExistence(timeout: 10))
+        app.webViews.buttons["Schedule muted media"].click()
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.sheets.buttons["状態を破棄して休眠"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.webViews.staticTexts["Muted media playing"].waitForExistence(timeout: 20))
+        app.sheets.buttons["状態を破棄して休眠"].click()
+        XCTAssertTrue(app.staticTexts["ページの状態が変わったため、休眠を取り消しました。"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["resumeSleepingTabButton"].exists)
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].exists)
+        app.terminate()
+    }
+
+    @MainActor
+    private func pageMenu(_ title: String, in app: XCUIApplication) {
+        app.menuBars.menuBarItems["ページ"].click()
+        app.menuBars.menuItems[title].click()
+    }
+
+    @MainActor
     func testSiteDataSettingsConfirmDomainAndClearWithoutReloadingTheDraft() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180
@@ -891,6 +1058,8 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(save.waitForExistence(timeout: 10))
         save.click()
         XCTAssertTrue(app.staticTexts["ダウンロード中"].waitForExistence(timeout: 10))
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.staticTexts["ダウンロード中のタブは休眠しません。完了するか、転送を取り消してください。"].waitForExistence(timeout: 5))
         app.typeKey("q", modifierFlags: .command)
         let quit = try nativeDialogButton("転送を取り消して終了", in: app)
         quit.click()

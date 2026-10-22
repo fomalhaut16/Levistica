@@ -6,6 +6,9 @@ import Observation
 final class BrowserTab: Identifiable {
     let id: UUID
     var isLocalPDF = false
+    var isKept = false
+    var isSleeping = false
+    var sleepNotice: String?
     var pendingURL: URL?
     var mayRestoreAutomatically = true
     var storedTitle = ""
@@ -14,6 +17,7 @@ final class BrowserTab: Identifiable {
 
     init(id: UUID = UUID()) { self.id = id }
     var addressDraft = ""
+    var hasEditedAddress = false
     var inputError: String?
     var restorationNotice: String?
     var isFindBarVisible = false

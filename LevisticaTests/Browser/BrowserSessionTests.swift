@@ -5,6 +5,34 @@ import WebKit
 
 @MainActor
 struct BrowserSessionTests {
+    @Test func rejectedNavigationPreservesTheAddressDraftAndSuccessfulSubmissionClearsItsEditFlag() {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let tab = session.activeTab
+        tab.addressDraft = "synthetic unfinished address"
+        tab.hasEditedAddress = true
+        #expect(session.navigate("javascript:alert(1)") == false)
+        #expect(tab.hasEditedAddress)
+        #expect(tab.addressDraft == "synthetic unfinished address")
+        #expect(session.navigate("http://127.0.0.1:54321/submitted-address"))
+        #expect(tab.hasEditedAddress == false)
+        session.closeTab(tab.id)
+    }
+
+    @Test func keepStatePreventsSleepAndSurvivesClosingAndReopening() {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let tab = session.activeTab
+        session.toggleKeep(tab.id)
+        #expect(tab.isKept)
+        session.requestSelectedTabSleep()
+        #expect(session.isRequestingSleep == false)
+        #expect(tab.sleepNotice?.contains("保持") == true)
+        session.closeTab(tab.id)
+        session.reopenClosedTab()
+        #expect(session.activeTab.isKept)
+        #expect(session.activeTab.isSleeping == false)
+        #expect(session.loadedPageCount == 0)
+    }
+
     @Test func departureConfirmationDistinguishesSendingAndSameDocumentLinks() throws {
         let current = try #require(URL(string: "https://example.com/draft?q=1"))
         let fragment = try #require(URL(string: "https://example.com/draft?q=1#section"))

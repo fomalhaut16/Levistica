@@ -35,6 +35,13 @@ struct BrowserRootView: View {
                     Button("閉じる") { session.externalOpenNotice = nil }
                 }.padding(8)
             }
+            if let notice = tab.sleepNotice {
+                HStack {
+                    Text(notice).accessibilityIdentifier("tabSleepNotice")
+                    Spacer()
+                    Button("閉じる") { tab.sleepNotice = nil }
+                }.padding(8)
+            }
             if tab.isLocalPDF {
                 HStack {
                     Text(tab.page == nil ? "PDFを選び直してください。" : "ローカルPDFの閲覧中です。入力・注釈は保存しません。")
@@ -116,6 +123,15 @@ struct BrowserRootView: View {
                             ProgressView(value: page.progress).progressViewStyle(.linear)
                         }
                     }
+            } else if tab.isSleeping {
+                VStack(spacing: 12) {
+                    Image(systemName: "moon.zzz").font(.largeTitle)
+                    Text("タブは休眠中です").font(.headline).accessibilityIdentifier("sleepingTabPlaceholder")
+                    Text("再開するとURLから読み込み直します。前のページの入力や再生位置は復元されません。")
+                        .foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("ページを再開") { session.resumeSleepingTab() }
+                        .accessibilityIdentifier("resumeSleepingTabButton")
+                }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView("Levistica", systemImage: "globe",
                                        description: Text("URLを入力してページを開きます。"))

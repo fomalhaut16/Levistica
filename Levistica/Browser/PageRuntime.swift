@@ -39,6 +39,8 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     @ObservationIgnored private var committedRequest: URLRequest?
     @ObservationIgnored private var activeNavigation: WKNavigation?
     @ObservationIgnored private var documentGeneration = 0
+    var documentRevision: Int { documentGeneration }
+    var isChoosingFile: Bool { filePanel != nil }
 
     convenience init(dataStore: WKWebsiteDataStore = .default()) {
         let configuration = WKWebViewConfiguration()

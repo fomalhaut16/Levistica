@@ -17,6 +17,9 @@ final class BrowserSession {
     private(set) var storageFailure: String?
     var externalOpenNotice: String?
     var discardUnsavedChangesOnQuit = false
+    private var sleepRequestID: UUID?
+    @ObservationIgnored private var sleepProbeID: UUID?
+    @ObservationIgnored private weak var sleepTargetTab: BrowserTab?
     private var closedTabs: [ClosedTab] = []
     @ObservationIgnored private var inputConfirmationInProgress = false
     let downloads = DownloadManager()
@@ -36,6 +39,7 @@ final class BrowserSession {
         let url: URL?
         let draft: String
         let mayReload: Bool
+        let isKept: Bool
         let index: Int
     }
 
@@ -53,6 +57,8 @@ final class BrowserSession {
                     tabs = saved.tabs.map { record in
                         let restored = BrowserTab(id: record.id)
                         restored.isLocalPDF = record.kind == .localPDF
+                        restored.isKept = record.isKept
+                        restored.isSleeping = record.isSleeping
                         if restored.isLocalPDF { restored.restorationNotice = "ローカルPDFは保存していません。ファイルを選び直してください。" }
                         restored.pendingURL = record.url
                         restored.addressDraft = record.url?.absoluteString ?? ""
@@ -143,7 +149,7 @@ final class BrowserSession {
 
     private func activatePendingTab() {
         let tab = activeTab
-        guard let url = tab.pendingURL, tab.mayRestoreAutomatically else { return }
+        guard !tab.isSleeping, let url = tab.pendingURL, tab.mayRestoreAutomatically else { return }
         _ = navigate(url.absoluteString)
     }
 
@@ -196,7 +202,7 @@ final class BrowserSession {
             SavedTab(id: tab.id, title: tab.isLocalPDF ? "ローカルPDF" : tab.displayTitle,
                      url: tab.isLocalPDF ? nil : (tab.page?.url ?? tab.pendingURL),
                      mayReload: tab.isLocalPDF ? false : (tab.page?.canRetry ?? tab.mayRestoreAutomatically),
-                     kind: tab.isLocalPDF ? .localPDF : .web)
+                     kind: tab.isLocalPDF ? .localPDF : .web, isKept: tab.isKept, isSleeping: tab.isSleeping)
         }, selectedID: selectedID, wasRunning: wasRunning)
     }
 
@@ -223,7 +229,124 @@ final class BrowserSession {
     func select(_ id: UUID) {
         guard tabs.contains(where: { $0.id == id }) else { return }
         selectedID = id
+        activeTab.isSleeping = false
         resumeSelectedTab()
+        persistSession()
+    }
+
+    func toggleKeep(_ id: UUID) {
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        tab.isKept.toggle()
+        persistSession()
+    }
+
+    var isRequestingSleep: Bool { sleepRequestID != nil }
+
+    func sleepBlockReason(_ tab: BrowserTab) -> String? {
+        if isDeletingSiteData { return "サイトデータを削除中です。完了してから操作してください。" }
+        if tab.isKept { return "保持する設定のタブです。休眠するには保持を解除してください。" }
+        guard let page = tab.page else { return "このタブはまだ読み込まれていません。" }
+        if page.inputGuard.hasEditedInput { return "入力操作のあったタブは休眠しません。保存・送信後にページを開き直してください。" }
+        if downloads.hasActive(tabID: tab.id) { return "ダウンロード中のタブは休眠しません。完了するか、転送を取り消してください。" }
+        if page.webView.fullscreenState != .notInFullscreen { return "全画面表示を終了してから休眠してください。" }
+        if page.isChoosingFile { return "ファイルを選択中のタブは休眠しません。" }
+        if page.isLoading || page.webView.isLoading { return "読み込み中のタブは休眠しません。" }
+        if tab.isLocalPDF || page.isPDF { return "PDFの表示・入力状態を保護するため、このタブは休眠しません。" }
+        if tab.openerID != nil || tab.openerOrigin != nil || tabs.contains(where: { $0.openerID == tab.id }) {
+            return "別タブと連携するページは休眠しません。"
+        }
+        if tab.hasEditedAddress && tab.addressDraft != page.url?.absoluteString { return "URL欄を編集中です。ページに戻ってから操作してください。" }
+        if page.failure != nil || !page.canRetry || SessionStore.persistableURL(page.url) == nil {
+            return "URLから安全に読み込み直せることを確認できないため、休眠しません。"
+        }
+        if page.webView.cameraCaptureState != .none || page.webView.microphoneCaptureState != .none {
+            return "カメラ・マイクを使用するタブは休眠しません。"
+        }
+        return nil
+    }
+
+    func requestSelectedTabSleep() {
+        let tab = activeTab
+        guard sleepRequestID == nil else { return }
+        if let reason = sleepBlockReason(tab) { tab.sleepNotice = reason; return }
+        guard let page = tab.page, let url = page.url else { return }
+        tab.sleepNotice = nil
+        sleepTargetTab = tab
+        let revision = page.documentRevision
+        let request = UUID()
+        sleepRequestID = request
+        let isCurrent: @MainActor () -> Bool = { [weak self, weak tab, weak page] in
+            guard let self, let tab, let page else { return false }
+            return self.sleepRequestID == request && self.selectedID == tab.id
+                && self.tabs.contains(where: { $0 === tab }) && tab.page === page
+                && page.documentRevision == revision && page.url == url && page.webView.url == url
+                && self.sleepBlockReason(tab) == nil
+        }
+        probeSleepMedia(page, request: request) { [weak self, weak tab, weak page] state in
+            guard let self else { return }
+            guard let tab, let page else { self.finishSleepRequest(request); return }
+            guard state == WKMediaPlaybackState.none, isCurrent() else {
+                self.finishSleepRequest(request, notice: "ページの状態を確認できないか、メディアや保護対象があります。休眠を取り消しました。")
+                return
+            }
+            page.dialogs.confirmSleep(window: page.webView.window) { [weak self, weak tab, weak page] allowed in
+                guard let self else { return }
+                guard let tab, let page else { self.finishSleepRequest(request); return }
+                guard allowed, isCurrent() else { self.finishSleepRequest(request); return }
+                // Recheck after the sheet: navigation, input, transfers, or playback
+                // may have changed while the user was deciding.
+                self.probeSleepMedia(page, request: request) { [weak self, weak tab, weak page] state in
+                    guard let self else { return }
+                    guard let tab, let page else { self.finishSleepRequest(request); return }
+                    guard state == WKMediaPlaybackState.none, isCurrent() else {
+                        self.finishSleepRequest(request, notice: "ページの状態が変わったため、休眠を取り消しました。")
+                        return
+                    }
+                    tab.pendingURL = url
+                    tab.storedTitle = tab.displayTitle
+                    tab.mayRestoreAutomatically = true
+                    tab.isSleeping = true
+                    tab.isFindBarVisible = false
+                    page.stop()
+                    page.cancelFileSelection()
+                    page.webView.removeFromSuperview()
+                    tab.page = nil
+                    self.finishSleepRequest(request)
+                    self.persistSession()
+                }
+            }
+        }
+    }
+
+    private func probeSleepMedia(_ page: PageRuntime, request: UUID,
+                                 completion: @escaping @MainActor (WKMediaPlaybackState?) -> Void) {
+        let probe = UUID()
+        sleepProbeID = probe
+        page.webView.requestMediaPlaybackState { [weak self] state in
+            guard let self, self.sleepRequestID == request, self.sleepProbeID == probe else { return }
+            self.sleepProbeID = nil
+            completion(state)
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard let self, self.sleepRequestID == request, self.sleepProbeID == probe else { return }
+            self.sleepProbeID = nil
+            completion(nil)
+        }
+    }
+
+    private func finishSleepRequest(_ request: UUID, notice: String? = nil) {
+        guard sleepRequestID == request else { return }
+        sleepRequestID = nil
+        sleepProbeID = nil
+        if let notice { sleepTargetTab?.sleepNotice = notice }
+        sleepTargetTab = nil
+    }
+
+    func resumeSleepingTab() {
+        guard activeTab.isSleeping else { return }
+        activeTab.isSleeping = false
+        activatePendingTab()
         persistSession()
     }
 
@@ -317,7 +440,7 @@ final class BrowserSession {
         tab.page?.dialogs.cancel()
         tab.page?.cancelFileSelection()
         closedTabs.append(ClosedTab(isLocalPDF: tab.isLocalPDF, url: tab.isLocalPDF ? nil : (tab.page?.url ?? tab.pendingURL), draft: tab.isLocalPDF ? "" : tab.addressDraft,
-                                    mayReload: tab.page?.canRetry ?? tab.mayRestoreAutomatically, index: index))
+                                    mayReload: tab.page?.canRetry ?? tab.mayRestoreAutomatically, isKept: tab.isKept, index: index))
         if closedTabs.count > 20 { closedTabs.removeFirst() }
         tab.page?.stop()
         tab.page = nil
@@ -339,6 +462,7 @@ final class BrowserSession {
         guard let closed = closedTabs.popLast() else { return }
         let tab = BrowserTab()
         tab.isLocalPDF = closed.isLocalPDF
+        tab.isKept = closed.isKept
         if closed.isLocalPDF {
             tab.storedTitle = "ローカルPDF"
             tab.restorationNotice = "ローカルPDFは保存していません。ファイルを選び直してください。"
@@ -488,6 +612,7 @@ final class BrowserSession {
             let url = try AddressResolver.resolve(input)
             let tab = activeTab
             tab.inputError = nil
+            tab.isSleeping = false
             tab.restorationNotice = nil
             tab.pendingURL = nil
             if tab.isLocalPDF {
@@ -496,12 +621,16 @@ final class BrowserSession {
                 tab.isLocalPDF = false
             }
             tab.addressDraft = url.absoluteString
+            tab.hasEditedAddress = false
             if tab.page == nil {
                 let runtime = PageRuntime(dataStore: websiteDataStore())
                 connect(runtime, to: tab)
                 tab.page = runtime
             }
             tab.page?.load(url)
+            // A protected document still owns its committed URL until the user
+            // allows departure. Do not display the submitted destination early.
+            tab.addressDraft = tab.page?.url?.absoluteString ?? url.absoluteString
             persistSession()
             return true
         } catch {

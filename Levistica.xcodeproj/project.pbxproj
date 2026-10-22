@@ -328,7 +328,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				ENABLE_HARDENED_RUNTIME = "YES";
 				COMBINE_HIDPI_IMAGES = "YES";
-				PRODUCT_BUNDLE_IDENTIFIER = "dev.fomalhaut16.Levistica";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.fomalhaut16.Levistica.debug";
 			};
 			name = "Debug";
 		};
