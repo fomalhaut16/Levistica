@@ -43,11 +43,13 @@ CONFIGURATION=Release ./script/build_and_run.sh --verify
 ./script/test.sh --ui               # 隔離データとloopbackページでXCUITest
 ```
 
+Allocations等の診断は、承認済みの専用ビルドを使います。`CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=1 ./script/build_and_run.sh --verify` で、通常版と異なるbundle ID・生成先に起動します。デバッガー接続を許す権限を含むため配布せず、通常のメモリ比較にも使いません。投入上限と操作条件はPLAN.mdの個別診断計画に従います。
+
 Runボタンは同じ `script/build_and_run.sh` を呼びます。アプリと検証ログはGit対象外の `.local/` に置きます。テストは通常のログインデータを使いません。UI試験は画面を操作し、全画面への切替も行います。全画面の状態・寸法・解除後の復帰を検査し、表示の修正時には保存画像も確認します。URL欄はHTTP/HTTPS、ホスト名、検索語を扱い、検索は入力確定後にDuckDuckGoへ送信します。ダウンロードとサイトの添付用ファイル選択を追加しました。入力操作を検知したタブでは、タブを閉じるときとアプリ終了時に確認を出します。サイトの権限許可や送信中の添付の保護はまだ揃っておらず、日常利用の受入前です。認証用の別タブを作る経路は追加しましたが、実サービスでの認証の成立は確認が残っています。
 
 このMacではルート直下の `research-reference` から調査資料を参照できます。元資料は変更しません。このリンクは他プロジェクトへの絶対パスを指すためGit対象外で、別のMacへは引き継がれません。
 
-GitHub Actionsはmacos-26／Xcode 26.6でReleaseビルド、単体試験、計測パーサーの試験を実行します。UI試験は実機で確認し、CIの合格と区別します。ローカルのXcode 27.1とCIの版は別に記録し、環境更新を製品仕様の変更と混同しません。
+GitHub Actionsはmacos-26／Xcode 26.6で通常Releaseと診断用のビルド、単体試験、計測ツールの試験を実行します。UI試験は実機で確認し、CIの合格と区別します。ローカルのXcode 27.1とCIの版は別に記録し、環境更新を製品仕様の変更と混同しません。
 
 メモリの取得経路は次で確認できます。Releaseを起動し、表示状態を整えてから実行します。`--loaded-pages` は読み込み済みのページ数です。タブ一覧の総数も `--total-tabs` で指定し、未読込タブと分けて記録します。
 

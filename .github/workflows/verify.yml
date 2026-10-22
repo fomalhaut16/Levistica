@@ -44,6 +44,8 @@ jobs:
           bash -n script/build_and_run.sh script/test.sh
       - name: Build Release app
         run: CONFIGURATION=Release ./script/build_and_run.sh --build
+      - name: Build isolated profiling app
+        run: CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=1 ./script/build_and_run.sh --build
       - name: Run unit tests
         run: ./script/test.sh --unit
       - name: Keep failure evidence

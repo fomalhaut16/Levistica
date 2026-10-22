@@ -81,6 +81,9 @@ final class BrowserSession {
     }
 
     static func applicationSession() -> BrowserSession {
+        #if LEVISTICA_PROFILE
+        return BrowserSession()
+        #else
         let environment = ProcessInfo.processInfo.environment
         #if DEBUG
         let testID = environment["LEVISTICA_SESSION_TEST_ID"].flatMap(UUID.init(uuidString:))
@@ -103,6 +106,7 @@ final class BrowserSession {
             session.storageFailure = "タブ一覧の保存先を開けませんでした。この起動ではタブ一覧を保存しません。"
             return session
         }
+        #endif
     }
 
     var canAddBookmark: Bool {
@@ -556,8 +560,12 @@ final class BrowserSession {
 
     private func websiteDataStore() -> WKWebsiteDataStore {
         if let dataStore { return dataStore }
+        #if LEVISTICA_PROFILE
+        let value = WKWebsiteDataStore.nonPersistent()
+        #else
         let isolated = ProcessInfo.processInfo.environment["LEVISTICA_EPHEMERAL"] == "1"
         let value: WKWebsiteDataStore = isolated ? .nonPersistent() : .default()
+        #endif
         dataStore = value
         return value
     }
