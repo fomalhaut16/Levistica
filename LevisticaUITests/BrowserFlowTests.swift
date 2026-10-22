@@ -2,6 +2,73 @@ import XCTest
 import AppKit
 
 final class BrowserFlowTests: XCTestCase {
+    // Opt-in only: attach to the canonical entrypoint's already running Profile app.
+    @MainActor
+    func testProfileSleepWorkload() throws {
+        guard let path = ProcessInfo.processInfo.environment["LEVISTICA_PROFILE_WORKLOAD"],
+              !path.isEmpty, !path.hasPrefix("$(") else {
+            throw XCTSkip("Run script/test.sh --profile-ui for this diagnostic workload.")
+        }
+        continueAfterFailure = false
+        executionTimeAllowance = 240
+        struct Workload: Decodable { let pid: Int32; let executable: String; let urls: [String: String] }
+        let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        XCTAssertEqual(workload.urls.count, 5)
+        for number in 1...5 {
+            let url = try XCTUnwrap(URL(string: try XCTUnwrap(workload.urls[String(number)])))
+            XCTAssertEqual(url.scheme, "http")
+            XCTAssertEqual(url.host, "document-\(number).localhost")
+            XCTAssertEqual(url.path, "/document/\(number)")
+            XCTAssertNotNil(url.port)
+            XCTAssertNil(url.user)
+            XCTAssertNil(url.password)
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.fomalhaut16.Levistica.profile")
+        XCTAssertTrue(app.state == .runningForeground || app.state == .runningBackground)
+        let running = try XCTUnwrap(NSRunningApplication(processIdentifier: workload.pid))
+        func identityMatches() -> Bool {
+            let candidates = NSRunningApplication.runningApplications(withBundleIdentifier: "dev.fomalhaut16.Levistica.profile")
+            return !running.isTerminated && candidates.count == 1
+                && candidates.first?.processIdentifier == workload.pid
+                && running.executableURL?.path == workload.executable
+        }
+        XCTAssertTrue(identityMatches())
+        defer {
+            if identityMatches() && app.state != .notRunning { app.terminate() }
+        }
+        app.activate()
+        XCTAssertTrue(identityMatches())
+        for number in 1...5 {
+            if number > 1 { app.typeKey("t", modifierFlags: .command) }
+            submit(try XCTUnwrap(workload.urls[String(number)]), in: app)
+            XCTAssertTrue(app.webViews.staticTexts["Levistica documents \(number)"].waitForExistence(timeout: 10))
+        }
+        XCTAssertTrue(app.staticTexts["5タブ・読み込み済み5"].waitForExistence(timeout: 5))
+        for _ in 1...2 {
+            for _ in 1...4 { app.typeKey("[", modifierFlags: [.command, .shift]) }
+            for number in 1...4 {
+                XCTAssertTrue(identityMatches())
+                pageMenu("このタブを休眠…", in: app)
+                let confirm = app.sheets.buttons["状態を破棄して休眠"]
+                XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+                confirm.click()
+                XCTAssertTrue(app.buttons["resumeSleepingTabButton"].waitForExistence(timeout: 5))
+                XCTAssertTrue(app.staticTexts["5タブ・読み込み済み\(5 - number)"].exists)
+                app.typeKey("]", modifierFlags: [.command, .shift])
+            }
+            XCTAssertTrue(app.webViews.staticTexts["Levistica documents 5"].waitForExistence(timeout: 10))
+            for number in stride(from: 4, through: 1, by: -1) {
+                app.typeKey("[", modifierFlags: [.command, .shift])
+                XCTAssertTrue(app.webViews.staticTexts["Levistica documents \(number)"].waitForExistence(timeout: 10))
+            }
+            for _ in 1...4 { app.typeKey("]", modifierFlags: [.command, .shift]) }
+            XCTAssertTrue(app.staticTexts["5タブ・読み込み済み5"].waitForExistence(timeout: 5))
+        }
+        XCTAssertTrue(identityMatches())
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
     @MainActor
     func testManualSleepKeepsCancelStateAndRestoresOnlyByReloading() throws {
         continueAfterFailure = false
