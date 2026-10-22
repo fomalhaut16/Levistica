@@ -12,9 +12,13 @@ case "${LEVISTICA_MALLOC_STACKS:-0}" in 0|1) ;; *) echo 'LEVISTICA_MALLOC_STACKS
 if [[ "${LEVISTICA_MALLOC_STACKS:-0}" == 1 && "$MODE" != --profile-ui ]]; then
     echo 'MALLOC_STACKS requires --profile-ui' >&2; exit 2
 fi
+case "${LEVISTICA_ALLOCATOR_RELIEF:-0}" in 0|1) ;; *) echo 'LEVISTICA_ALLOCATOR_RELIEF must be 0 or 1' >&2; exit 2;; esac
+if [[ "${LEVISTICA_ALLOCATOR_RELIEF:-0}" == 1 && ( "$MODE" != --profile-ui || "${LEVISTICA_MALLOC_STACKS:-0}" != 0 ) ]]; then
+    echo 'ALLOCATOR_RELIEF requires --profile-ui without malloc stack logging' >&2; exit 2
+fi
 unset LEVISTICA_PROFILE_WORKLOAD
 # Reuse the canonical entrypoint to stop this checkout's verified development apps first.
-LEVISTICA_MALLOC_STACKS=0 "$ROOT_DIR/script/build_and_run.sh" --build
+LEVISTICA_MALLOC_STACKS=0 LEVISTICA_ALLOCATOR_RELIEF=0 "$ROOT_DIR/script/build_and_run.sh" --build
 python3 "$ROOT_DIR/script/check-app-processes.py" --only Debug
 mkdir -p "$ROOT_DIR/.local/artifacts"
 RUN_DIR="$(mktemp -d "$ROOT_DIR/.local/artifacts/tests.XXXXXX")"
@@ -54,7 +58,7 @@ elif [[ "$MODE" == --profile-ui ]]; then
     done
     CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=1 "$ROOT_DIR/script/build_and_run.sh" --verify
     python3 "$ROOT_DIR/script/profile-workload.py" prepare "$RUN_DIR/lifecycle.json" "$RUN_DIR/workload.json"
-    if [[ "${LEVISTICA_MALLOC_STACKS:-0}" == 1 ]]; then
+    if [[ "${LEVISTICA_MALLOC_STACKS:-0}" == 1 || "${LEVISTICA_ALLOCATOR_RELIEF:-0}" == 1 ]]; then
         python3 "$ROOT_DIR/script/profile-workload.py" serve "$RUN_DIR/lifecycle.json" "$RUN_DIR/workload.json" >"$RUN_DIR/collector.log" 2>&1 &
         COLLECTOR_PID=$!
         for ((attempt=0; attempt<100; attempt++)); do

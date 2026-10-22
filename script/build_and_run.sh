@@ -6,6 +6,7 @@ MODE="${1:-run}"
 CONFIGURATION="${CONFIGURATION:-Debug}"
 PROFILE="${LEVISTICA_PROFILE:-0}"
 MALLOC_STACKS="${LEVISTICA_MALLOC_STACKS:-0}"
+ALLOCATOR_RELIEF="${LEVISTICA_ALLOCATOR_RELIEF:-0}"
 case "$MODE" in run|--build|--verify|--debug|--logs|--telemetry) ;; *) echo "usage: $0 [--build|--verify|--debug|--logs|--telemetry]" >&2; exit 2;; esac
 case "$CONFIGURATION" in Debug|Release) ;; *) echo 'CONFIGURATION must be Debug or Release' >&2; exit 2;; esac
 case "$PROFILE" in 0|1) ;; *) echo 'LEVISTICA_PROFILE must be 0 or 1' >&2; exit 2;; esac
@@ -16,6 +17,10 @@ fi
 case "$MALLOC_STACKS" in 0|1) ;; *) echo 'LEVISTICA_MALLOC_STACKS must be 0 or 1' >&2; exit 2;; esac
 if [[ "$MALLOC_STACKS" == 1 && "$PROFILE" != 1 ]]; then
     echo 'MALLOC_STACKS requires the isolated Profile build' >&2; exit 2
+fi
+case "$ALLOCATOR_RELIEF" in 0|1) ;; *) echo 'LEVISTICA_ALLOCATOR_RELIEF must be 0 or 1' >&2; exit 2;; esac
+if [[ "$ALLOCATOR_RELIEF" == 1 && ( "$PROFILE" != 1 || "$MALLOC_STACKS" != 0 ) ]]; then
+    echo 'ALLOCATOR_RELIEF requires isolated Profile without malloc stack logging' >&2; exit 2
 fi
 # Persistent manual tests must opt into both a Debug build and isolated data.
 if [[ -n "${LEVISTICA_SESSION_TEST_ID:-}" ]]; then
@@ -97,6 +102,9 @@ case "$MODE" in
 esac
 if [[ "${LEVISTICA_EPHEMERAL:-0}" == 1 ]]; then
     LEVISTICA_OPEN_ARGS=(-n --env LEVISTICA_EPHEMERAL=1)
+    if [[ "$ALLOCATOR_RELIEF" == 1 ]]; then
+        LEVISTICA_OPEN_ARGS+=(--env LEVISTICA_ALLOCATOR_RELIEF=1)
+    fi
     if [[ "$MALLOC_STACKS" == 1 ]]; then
         LEVISTICA_OPEN_ARGS+=(--env MallocStackLogging=lite)
     fi

@@ -139,3 +139,38 @@ class CollectorBoundaryTests(unittest.TestCase):
             server.shutdown()
             worker.join(timeout=5)
             server.server_close()
+
+
+class AllocatorReliefModeTests(unittest.TestCase):
+    def test_relief_requires_four_vmmap_snapshots_without_stack_logs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            for stage in module.RELIEF_STAGES:
+                (root / f'{stage}-vmmap.txt').write_text('synthetic vmmap output')
+            self.assertEqual(len(module.validate_snapshots(root, pressure_relief=True)), 4)
+            with self.assertRaises(FileNotFoundError):
+                module.validate_snapshots(root)
+
+    def test_relief_collector_never_starts_malloc_history(self):
+        import http.client
+        import threading
+        calls = []
+        server = module.create_collector(1234, lambda: None,
+                                         lambda stage, tool, args: calls.append((stage, tool, args)) or {'bytes': 1},
+                                         pressure_relief=True)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=5)
+        try:
+            for stage in module.RELIEF_STAGES:
+                connection.request('POST', '/snapshot/' + stage, headers={'X-Levistica-Diagnostic': server.token})
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                response.read()
+            self.assertEqual(len(calls), 4)
+            self.assertTrue(all(tool == 'vmmap' and args == ['-summary', '1234'] for _, tool, args in calls))
+        finally:
+            connection.close()
+            server.shutdown()
+            worker.join(timeout=5)
+            server.server_close()

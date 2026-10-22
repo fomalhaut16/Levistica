@@ -16,6 +16,7 @@ final class BrowserFlowTests: XCTestCase {
             let executable: String
             let urls: [String: String]
             let mallocStacks: Bool
+            let allocatorRelief: Bool
             struct Collector: Decodable { let url: URL; let token: String }
             let collector: Collector?
         }
@@ -41,7 +42,7 @@ final class BrowserFlowTests: XCTestCase {
         }
         XCTAssertTrue(identityMatches())
         func capture(_ stage: String) async throws {
-            guard workload.mallocStacks else { return }
+            guard workload.mallocStacks || workload.allocatorRelief else { return }
             XCTAssertTrue(identityMatches())
             let collector = try XCTUnwrap(workload.collector)
             XCTAssertEqual(collector.url.scheme, "http")
@@ -85,6 +86,20 @@ final class BrowserFlowTests: XCTestCase {
             }
             XCTAssertTrue(app.webViews.staticTexts["Levistica documents 5"].waitForExistence(timeout: 10))
             try await capture("sleep-\(cycle)")
+            if cycle == 2 && workload.allocatorRelief {
+                app.menuBars.menuBarItems["診断"].click()
+                app.menuBars.menuItems["解放可能な領域を返却"].click()
+                app.menuBars.menuBarItems["診断"].click()
+                let summary = app.menuBars.menuItems.matching(NSPredicate(format: "label BEGINSWITH %@", "解放要求:")).firstMatch
+                XCTAssertTrue(summary.waitForExistence(timeout: 5))
+                XCTAssertFalse(app.menuBars.menuItems["解放可能な領域を返却"].isEnabled)
+                let attachment = XCTAttachment(string: summary.label)
+                attachment.name = "allocator-relief-result"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+                app.typeKey(.escape, modifierFlags: [])
+                try await capture("after-relief")
+            }
             for number in stride(from: 4, through: 1, by: -1) {
                 app.typeKey("[", modifierFlags: [.command, .shift])
                 XCTAssertTrue(app.webViews.staticTexts["Levistica documents \(number)"].waitForExistence(timeout: 10))
@@ -92,7 +107,7 @@ final class BrowserFlowTests: XCTestCase {
             for _ in 1...4 { app.typeKey("]", modifierFlags: [.command, .shift]) }
             XCTAssertTrue(app.staticTexts["5タブ・読み込み済み5"].waitForExistence(timeout: 5))
         }
-        try await capture("resumed-two")
+        if !workload.allocatorRelief { try await capture("resumed-two") }
         XCTAssertTrue(identityMatches())
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))

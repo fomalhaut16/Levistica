@@ -1,4 +1,7 @@
 import SwiftUI
+#if LEVISTICA_PROFILE
+import Darwin
+#endif
 
 @main
 struct LevisticaApp: App {
@@ -50,6 +53,10 @@ private extension FocusedValues {
 
 private struct BrowserCommands: Commands {
     @FocusedValue(\.browserSession) private var session
+    #if LEVISTICA_PROFILE
+    @State private var allocatorReliefSummary = "未実行"
+    @State private var allocatorReliefDidRun = false
+    #endif
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             OpenBrowserWindowButton()
@@ -70,6 +77,21 @@ private struct BrowserCommands: Commands {
                 Button("ウィンドウを閉じる") { NSApplication.shared.keyWindow?.performClose(nil) }.keyboardShortcut("w")
             }
         }
+        #if LEVISTICA_PROFILE
+        if ProcessInfo.processInfo.environment["LEVISTICA_ALLOCATOR_RELIEF"] == "1" {
+            CommandMenu("診断") {
+                Button("解放可能な領域を返却") {
+                    guard !allocatorReliefDidRun else { return }
+                    allocatorReliefDidRun = true
+                    let started = DispatchTime.now().uptimeNanoseconds
+                    let bytes = malloc_zone_pressure_relief(nil, 0)
+                    let elapsed = DispatchTime.now().uptimeNanoseconds - started
+                    allocatorReliefSummary = "解放要求: \(bytes) bytes / \(elapsed) ns"
+                }.disabled(allocatorReliefDidRun)
+                Text(allocatorReliefSummary)
+            }
+        }
+        #endif
         CommandMenu("ブックマーク") {
             if let session {
                 Button("現在のページを追加") { session.addCurrentBookmark() }.keyboardShortcut("d")
