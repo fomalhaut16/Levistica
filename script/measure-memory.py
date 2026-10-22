@@ -8,6 +8,8 @@ Raw launchctl output can contain environment values and is never saved or printe
 import argparse
 import datetime
 import hashlib
+import functools
+import importlib.util
 import json
 import os
 import pathlib
@@ -189,8 +191,19 @@ def attribution_change(before, after):
     return stable, change
 
 
+@functools.cache
+def sleep_contract():
+    spec = importlib.util.spec_from_file_location('sleep_contract', pathlib.Path(__file__).with_name('sleep-state.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def check_fixture(current, original=None, now=None):
     """Refuse stale/paused video while retaining the fixed-document contract."""
+    if current.get('kind') == 'manual-sleep':
+        sleep_contract().check(current, original, check_fixture, now=now)
+        return
     if current.get('kind') in ('documents', 'cross-site-documents'):
         now = time.monotonic() if now is None else now
         docs = current.get('documents', {})
@@ -266,6 +279,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ready-file", type=pathlib.Path, help="Optional synthetic fixture readiness state")
     parser.add_argument("--ready-delay", type=float, default=60, help="Minimum seconds after readiness (default: 60)")
+    parser.add_argument('--sleep-baseline', type=pathlib.Path, help='Validated five-page lifecycle checkpoint')
+    parser.add_argument('--sleeping-documents', default='', help='Empty or 1,2,3,4; requires sleep-baseline')
     parser.add_argument("--browser", choices=["levistica", "chrome"], default="levistica")
     parser.add_argument("--chrome-profile", type=pathlib.Path)
     parser.add_argument("--label", required=True, help="Non-private state label, never a URL")
@@ -284,6 +299,26 @@ def main():
         parser.error("samples must be 1..10; interval must be 0..60 seconds")
     if not 0 <= args.ready_delay <= 600 or (not args.ready_file and args.ready_delay != 60):
         parser.error("ready-delay must be 0..600 seconds and requires ready-file")
+    if args.sleeping_documents and not args.sleep_baseline:
+        parser.error('sleeping-documents requires sleep-baseline')
+    sleeping = args.sleeping_documents.split(',') if args.sleeping_documents else []
+    checkpoint = None
+    if args.sleep_baseline:
+        if (not args.ready_file or args.browser != 'levistica' or args.total_tabs != 5
+                or sleeping not in ([], ['1', '2', '3', '4'])
+                or args.loaded_pages != 5 - len(sleeping) or args.ready_delay != 120):
+            parser.error('Manual sleep requires Levistica, five total tabs, matching loaded count, and ready-delay 120')
+        checkpoint = json.loads(args.sleep_baseline.read_text())
+    phase_started = time.monotonic()
+
+    def read_fixture():
+        state = json.loads(args.ready_file.read_text())
+        if checkpoint is None:
+            return state
+        pressure = int(run(['/usr/sbin/sysctl', '-n', 'kern.memorystatus_vm_pressure_level']).strip())
+        return {'kind': 'manual-sleep', 'ready_monotonic': phase_started,
+                'sleep_checkpoint': checkpoint, 'sleeping_documents': sleeping,
+                'memory_pressure_level': pressure, 'workload': state}
     app, binary, profile = APP, BINARY, None
     if args.browser == "chrome":
         if not args.chrome_profile:
@@ -296,8 +331,10 @@ def main():
     elif args.chrome_profile:
         parser.error("--chrome-profile requires --browser chrome")
     fixture = None
+    sleep_guard_file = None
+    sleep_observations = []
     if args.ready_file:
-        fixture = json.loads(args.ready_file.read_text())
+        fixture = read_fixture()
         ready = fixture.get("ready_monotonic")
         try:
             check_fixture(fixture)
@@ -306,14 +343,32 @@ def main():
         remaining = ready + args.ready_delay - time.monotonic()
         if remaining > 0:
             print(f"Waiting {remaining:.1f}s after fixture readiness", flush=True)
+            if checkpoint is not None:
+                parent = ROOT / '.local/artifacts/memory'
+                parent.mkdir(parents=True, exist_ok=True)
+                sleep_guard_file = pathlib.Path(tempfile.mkdtemp(prefix=args.label + '.guard.', dir=parent)) / 'guard.json'
+                print(f'Sleep phase guard: {sleep_guard_file}', flush=True)
             while (remaining := ready + args.ready_delay - time.monotonic()) > 0:
-                time.sleep(min(remaining, 30))
+                if checkpoint is not None:
+                    observed = read_fixture()
+                    observation = {'monotonic': time.monotonic(), 'state': observed, 'valid': False}
+                    try:
+                        check_fixture(observed, fixture)
+                        observation['valid'] = True
+                    except ValueError as error:
+                        observation['error'] = str(error)
+                        raise
+                    finally:
+                        sleep_observations.append(observation)
+                        sleep_guard_file.write_text(json.dumps(sleep_observations, indent=2) + '\n')
+                time.sleep(min(remaining, 5 if checkpoint is not None else 30))
     pid = find_app(binary, profile)
     output_parent = ROOT / ".local/artifacts/memory"
     output_parent.mkdir(parents=True, exist_ok=True)
     output = pathlib.Path(tempfile.mkdtemp(prefix=args.label + ".", dir=output_parent))
     record = {
         "schema": 2, "label": args.label, "fixture": fixture, "ready_delay_seconds": args.ready_delay if fixture else None,
+        "sleep_guard_file": str(sleep_guard_file) if sleep_guard_file else None,
         "loaded_pages": args.loaded_pages, "total_tabs": args.total_tabs,
         "browser": args.browser, "pid": pid, "source_head_at_sampling": run(["git", "rev-parse", "HEAD"]).strip(),
         "measurement_script_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
@@ -346,7 +401,7 @@ def main():
             sample["seconds_after_ready"] = time.monotonic() - fixture["ready_monotonic"]
         try:
             if args.ready_file:
-                sample['fixture_before'] = json.loads(args.ready_file.read_text())
+                sample['fixture_before'] = read_fixture()
                 check_fixture(sample['fixture_before'], fixture)
             before = snapshot(pid, app, binary, profile)
             sample["attribution_before"] = before
@@ -359,7 +414,7 @@ def main():
             after = snapshot(pid, app, binary, profile)
             sample["attribution_after"] = after
             if args.ready_file:
-                sample['fixture_after'] = json.loads(args.ready_file.read_text())
+                sample['fixture_after'] = read_fixture()
                 check_fixture(sample['fixture_after'], fixture)
             sample["exited_descendant_pids"] = before["exited_descendant_pids"]
             sample["identity_stable"], sample["attribution_change"] = attribution_change(before, after)

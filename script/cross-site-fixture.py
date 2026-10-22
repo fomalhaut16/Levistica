@@ -26,7 +26,7 @@ def hosts(count):
     return {str(i): f'document-{i}.localhost' for i in range(1, count + 1)}
 
 
-def document(number):
+def document(number, lifecycle=False):
     # Reuse the fixed content, not the old same-origin reporting script.
     path = pathlib.Path(__file__).with_name('document-set-fixture.py')
     spec = importlib.util.spec_from_file_location('fixed_documents', path)
@@ -47,10 +47,16 @@ const events=new EventSource('/events/'+id);
 const status=document.createElement('p');document.querySelector('h1').after(status);
 events.onmessage=event=>{pulse=Number(event.data);status.textContent='Pulse '+pulse+' on '+location.hostname;report();};
 </script>'''.replace('__DOCUMENT_ID__', json.dumps(str(number)))
+    if lifecycle:
+        script = script.replace('let seenVisible=false,', 'let firstVisibleReadyMS=null; let seenVisible=false,')
+        script = script.replace('body:JSON.stringify({instance,pulse,seenVisible,',
+                                'body:JSON.stringify({instance,pulse,seenVisible,firstVisibleReadyMS,')
+        script = script.replace('seenVisible=true;report();',
+                                'if(firstVisibleReadyMS===null)firstVisibleReadyMS=performance.now();seenVisible=true;report();')
     return (content + script).encode()
 
 
-def validated_report(data):
+def validated_report(data, lifecycle=False):
     if not isinstance(data, dict):
         raise ValueError('Invalid report')
     uuid.UUID(data['instance'])
@@ -65,19 +71,32 @@ def validated_report(data):
             or type(data['sections']) is not int or data['sections'] != 240
             or data['visibility'] not in ('visible', 'hidden')):
         raise ValueError('Invalid document state')
-    return {key: data[key] for key in ('instance', 'pulse', 'seenVisible', 'width', 'height',
-                                      'dpr', 'visibility', 'sections', 'complete')}
+    fields = ('instance', 'pulse', 'seenVisible', 'width', 'height',
+              'dpr', 'visibility', 'sections', 'complete')
+    if lifecycle:
+        value = data.get('firstVisibleReadyMS')
+        if ((value is not None and (type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 600000))
+                or (data['seenVisible'] and value is None)):
+            raise ValueError('Invalid visible readiness time')
+        fields += ('firstVisibleReadyMS',)
+    return {key: data[key] for key in fields}
 
 
-def create_server(state_path, count=5):
+def create_server(state_path, count=5, lifecycle=False):
+    if lifecycle and count != 5:
+        raise ValueError('Lifecycle measurement is limited to five documents')
     assigned_hosts = hosts(count)
     state_path = pathlib.Path(state_path)
-    bodies = {key: document(key) for key in assigned_hosts}
+    bodies = {key: document(key, lifecycle=lifecycle) for key in assigned_hosts}
     lock = threading.Lock()
     state = {'kind': 'cross-site-documents', 'transport': 'same-origin-sse-v1',
              'run_id': str(uuid.uuid4()), 'expected_tabs': count, 'loads': 0,
              'document_hashes': {key: hashlib.sha256(body).hexdigest() for key, body in bodies.items()},
              'documents': {}, 'stream_connections': {key: 0 for key in assigned_hosts}}
+    if lifecycle:
+        state.update(kind='sleep-documents', transport='same-origin-sse-lifecycle-v1',
+                     document_loads={key: 0 for key in assigned_hosts},
+                     active_streams={key: 0 for key in assigned_hosts})
 
     def save():
         temporary = state_path.with_suffix('.tmp')
@@ -98,6 +117,8 @@ def create_server(state_path, count=5):
             if key:
                 with lock:
                     state['loads'] += 1
+                    if lifecycle:
+                        state['document_loads'][key] += 1
                     save()
                 body = bodies[key]
                 self.send_response(200)
@@ -113,7 +134,9 @@ def create_server(state_path, count=5):
                 return
             with lock:
                 state['stream_connections'][key] += 1
-                duplicate = state['stream_connections'][key] > 1
+                duplicate = state['stream_connections'][key] > 1 and not lifecycle
+                if lifecycle:
+                    state['active_streams'][key] += 1
                 save()
             if duplicate:
                 self.send_error(409)
@@ -133,6 +156,11 @@ def create_server(state_path, count=5):
                         break
             except (BrokenPipeError, ConnectionResetError):
                 pass
+            finally:
+                if lifecycle:
+                    with lock:
+                        state['active_streams'][key] -= 1
+                        save()
 
         def do_POST(self):
             key = self.route('/report')
@@ -143,15 +171,15 @@ def create_server(state_path, count=5):
                 length = int(self.headers.get('Content-Length', '0'))
                 if self.headers.get('Content-Type') != 'application/json' or not 0 < length <= 2048:
                     raise ValueError('Invalid content')
-                data = validated_report(json.loads(self.rfile.read(length)))
+                data = validated_report(json.loads(self.rfile.read(length)), lifecycle=lifecycle)
             except (ValueError, TypeError, KeyError, AttributeError):
                 self.send_error(400)
                 return
             with lock:
                 old = state['documents'].get(key)
-                if old and old['instance'] != data['instance']:
+                if old and old['instance'] != data['instance'] and not lifecycle:
                     state['invalid_reason'] = 'Document instance changed'
-                if old and old['pulse'] > data['pulse']:
+                if old and old['instance'] == data['instance'] and old['pulse'] > data['pulse']:
                     state['invalid_reason'] = 'Document pulse moved backwards'
                 data['origin'] = state['origins'][key]
                 data['reported_monotonic'] = time.monotonic()
@@ -181,8 +209,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state', type=pathlib.Path, required=True)
     parser.add_argument('--count', type=int, choices=COUNTS, default=5)
+    parser.add_argument('--lifecycle', action='store_true', help='Five-document manual sleep measurement only')
     args = parser.parse_args()
-    server = create_server(args.state, args.count)
+    server = create_server(args.state, args.count, lifecycle=args.lifecycle)
     print(args.state, flush=True)
     try:
         server.serve_forever()
