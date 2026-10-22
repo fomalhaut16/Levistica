@@ -942,3 +942,26 @@ UI自動試験の環境確認では `DevToolsSecurity -status` がdisabledだっ
 固定ソース `29f54a1` の診断用アプリを1回起動したが、CUAのgetAppが返るまで約828.86秒かかった。操作環境の応答低下を停止条件として、この診断はAllocationsの開始前に中断した。UI接続操作にかかった時間として記録し、アプリ自身の停止原因や表示不良は未確認とする。CUA接続後も同じPID・開始時刻・専用実行パス・EPHEMERALを確認し、アプリと専用fixtureを停止した。後片付けの確認まで約15分4秒で、1起動・20分の上限内だった。fixtureの文書は未読込、記録の試行は0回である。
 
 証拠は `.local/artifacts/profile-allocations-t91fxv7z/` のmanifest・接続前後の識別・aborted・cleanupに保存した。通常版のデータやmacOS全体の設定は変更していない。診断用のビルド・署名・権限の分離と、実際のAllocations取得は別に扱い、約13MiBの割当元・寿命も未特定のまま残す。今回の中断を理由に追加起動や記録を繰り返さない。次の操作試験や診断の前に、UI接続の遅延とXCTestの開始失敗を、ツール・画面状態・アプリの問題へ分けて調べる。設定の追加認可が必要なら具体的な要求をユーザーへ示す。
+
+### 2026-10-22 UI試験の認証要求を保存済みログで確認
+
+`.local/artifacts/tests.1BDhip/Results.xcresult` のdiagnosticsを書き出し、試験時のtestmanagerdとrunnerのログに対象を絞って確認した。20:52:43に `Writer daemon requires authentication to enable automation mode.` と、理由 `Enable UI Automation` を指定したLocalAuthenticationの要求が記録されていた。その後、20:53:43にrunnerが `Timed out while enabling automation mode.` で初期化に失敗している。自動操作モードへの認証要求があり、試験開始までに完了しなかったことを確認した。アプリの操作失敗として扱わず、DevToolsSecurityのdisabledだけを原因とした推測からも区別する。
+
+ユーザーへは、既存のUI試験を1件だけ実行したときにMac上の認証画面を本人操作で許可できるか確認した。対応できる返答を待ってから `TEST_ONLY=LevisticaUITests/BrowserFlowTests/testManualSleepKeepsCancelStateAndRestoresOnlyByReloading ./script/test.sh --ui` を実行する。パスワードや認証コードをチャットへ送らず、認証操作を代理しない。全体の開発者設定や認証DBの変更で回避しない。初回は1試行・準備と終了確認を含め5分までとし、同じ開始失敗なら診断を残して停止する。認証できた場合も、この1件の結果と以前に開始できなかった他の4経路・全UI試験の成否を分ける。
+
+読み取り時のIOConsoleLockedはfalse、Levisticaのprocessは0件だった。CUAのgetStateはアプリを起動せず約3.01秒で返ったが、前回約828.86秒かかったgetAppとは別の操作であり、接続遅延の解消や共通原因を確認した結果ではない。前回のCUA遅延の原因と、診断用アプリでのAllocations取得は引き続き未確認。診断資料は `.local/ui-startup-diagnostics/` と `.local/ui-automation-failure.log` に保存し、全体ログ・個人情報をGitへ入れない。
+
+本人が認証画面へ対応できると返答した後、上記の1件を実行した。今回は自動操作モードを開始でき、試験本体約39.24秒、ビルド等を含む入口全体約55.41秒で成功した。結果は `.local/artifacts/tests.5ibBZe/Results.xcresult`、制御記録は `.local/ui-auth-smoke/` に保存した。休眠確認と休眠後の2枚のウィンドウ画像を確認し、アプリの終了も確認した。こちらから認証操作や設定変更は行っていない。認証要求が解決された仕組みや、CUAのgetAppの遅延まで同じ原因だったとは断定しない。
+
+開始条件の変化が確認できたので、以前に未実行だった残り4経路を続けて確認する。対象は入力・POSTの休眠拒否、関連ページの独立入力とscript close、PDFから通常ページへの移動、全画面の寸法と復帰。各経路を既存の正式なUI試験入口で1回ずつ実行し、追加の認証要求・開始失敗・試験失敗なら停止する。全体10分、各経路3分までとし、通常の閲覧データは使わない。今回の対象5件と全46件の合格は区別する。
+
+2026-10-23、残り4件もすべて成功し、対象5件の未実行を解消した。4件の入口全体は約145.42秒で、10分の上限内だった。結果は次の各bundleと `.local/ui-auth-followups/verified-summary.json` に保存した。
+
+- `testManualSleepRejectsEditedInputAndPostResponse`: `.local/artifacts/tests.tUqbeu/Results.xcresult`
+- `testRelatedPageKeepsIndependentInputAndItsScriptCloseStillCompletes`: `.local/artifacts/tests.iTgdIr/Results.xcresult`
+- `testAddressNavigationFromLocalPDFReplacesTheDisplayedPage`: `.local/artifacts/tests.OGk3x8/Results.xcresult`
+- `testFullscreenCanEnterAndExit`: `.local/artifacts/tests.UzKfbN/Results.xcresult`
+
+全画面の開始前・全画面中・解除後・ブックマークを閉じた後の4画像と、PDFから通常ページへ移動した後の画像も確認した。試験の寸法検査と表示の両方で対象経路を確認できた。Levisticaの終了を確認し、DevToolsSecurityは引き続きdisabledだった。アプリ本体・試験コード・macOS全体の設定は変更していない。全UI46件の再実行、実サイトの受入、CUA接続遅延の原因、Allocationsによる約13MiBの割当元は未確認のまま残す。
+
+次は診断用アプリへのCUA接続を確認し、速やかに応答する場合だけ既存計画のAllocationsへ進む。前項の1起動・20分、記録1回・3分以内、固定5文書・2サイクル以内・256MiB以内を維持する。CUA接続は短いtimeoutを明示し、応答低下や帰属・可視条件の不成立なら記録せず停止する。XCTestの開始成功をCUAやInstrumentsの成功へ置き換えない。
