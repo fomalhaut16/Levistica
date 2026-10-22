@@ -77,16 +77,19 @@ def check(current, original, checker, now=None):
             raise ValueError('Invalid stream or document counters')
     for key, doc in docs.items():
         prior = baseline['documents'][key]
+        # Disposal of a foreground page need not deliver a final hidden report.
+        # Its last visibility is historical; closed streams and silence are required.
+        asleep = key in sleeping
         if (any(doc.get(k) != prior.get(k) for k in ('instance', 'origin', 'width', 'height', 'dpr', 'firstVisibleReadyMS'))
                 or doc.get('seenVisible') is not True or doc.get('complete') is not True
                 or type(doc.get('sections')) is not int or doc['sections'] != 240
                 or type(doc.get('pulse')) is not int or doc['pulse'] < prior['pulse']
-                or doc.get('visibility') != ('visible' if key == '5' else 'hidden')):
+                or (asleep and doc.get('visibility') not in ('visible', 'hidden'))
+                or (not asleep and doc.get('visibility') != ('visible' if key == '5' else 'hidden'))):
             raise ValueError('Document instance, selection, or viewport changed')
         reported = doc.get('reported_monotonic')
         if type(reported) not in (int, float) or not math.isfinite(reported) or not captured - 15 <= reported <= now:
             raise ValueError('Invalid document report time')
-        asleep = key in sleeping
         if (state['document_loads'][key] != 1 or state['stream_connections'][key] != 1
                 or state['active_streams'][key] != (0 if asleep else 1)):
             raise ValueError('Document reloaded, reconnected, or stream state mismatches sleep')

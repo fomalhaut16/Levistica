@@ -63,6 +63,16 @@ class SleepContractTests(unittest.TestCase):
         later['workload']['documents']['5'].update(reported_monotonic=124, pulse=23)
         measure.check_fixture(later, asleep, now=125)
 
+    def test_disposed_selected_page_can_retain_last_visible_report_but_cannot_report_again(self):
+        asleep = self.sleeping()
+        for key in asleep['sleeping_documents']:
+            asleep['workload']['documents'][key]['visibility'] = 'visible'
+        measure.check_fixture(asleep, now=120)
+        changed = copy.deepcopy(asleep)
+        changed['workload']['documents']['1']['visibility'] = 'hidden'
+        with self.assertRaises(ValueError):
+            measure.check_fixture(changed, asleep, now=120)
+
     def test_rejects_wrong_sleep_set_pressure_and_phase_time(self):
         for field, value in [('sleeping_documents', ['1']), ('sleeping_documents', ['1', '2', '3', '5']),
                              ('memory_pressure_level', True), ('memory_pressure_level', 2),
@@ -74,7 +84,7 @@ class SleepContractTests(unittest.TestCase):
         asleep = self.sleeping()
         for key, field, value in [('5', 'reported_monotonic', 100), ('1', 'reported_monotonic', 115),
                                   ('1', 'instance', str(uuid.uuid4())), ('5', 'width', 800),
-                                  ('5', 'visibility', 'hidden'), ('2', 'visibility', 'visible'),
+                                  ('5', 'visibility', 'hidden'), ('2', 'visibility', 'unknown'),
                                   ('5', 'pulse', 0), ('1', 'reported_monotonic', float('nan'))]:
             changed = copy.deepcopy(asleep)
             changed['workload']['documents'][key][field] = value
