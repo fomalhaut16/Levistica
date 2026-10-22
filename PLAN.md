@@ -965,3 +965,19 @@ UI自動試験の環境確認では `DevToolsSecurity -status` がdisabledだっ
 全画面の開始前・全画面中・解除後・ブックマークを閉じた後の4画像と、PDFから通常ページへ移動した後の画像も確認した。試験の寸法検査と表示の両方で対象経路を確認できた。Levisticaの終了を確認し、DevToolsSecurityは引き続きdisabledだった。アプリ本体・試験コード・macOS全体の設定は変更していない。全UI46件の再実行、実サイトの受入、CUA接続遅延の原因、Allocationsによる約13MiBの割当元は未確認のまま残す。
 
 次は診断用アプリへのCUA接続を確認し、速やかに応答する場合だけ既存計画のAllocationsへ進む。前項の1起動・20分、記録1回・3分以内、固定5文書・2サイクル以内・256MiB以内を維持する。CUA接続は短いtimeoutを明示し、応答低下や帰属・可視条件の不成立なら記録せず停止する。XCTestの開始成功をCUAやInstrumentsの成功へ置き換えない。
+
+### 2026-10-23 診断用Allocationsの部分記録とプロセス帰属の不一致
+
+測定ソース `98e8846` の診断用アプリを正式入口から1回起動した。CUAのgetAppは約3.18秒で返り、接続前後に同じPID 22532・開始時刻・専用実行パス・EPHEMERALを確認した。圧迫値は1だった。記録前の文書幅は779pxで、指定の799pxと一致しなかった。サイドバーのsplitterを320から300へ変更し、既存5文書を順に選択して、799×683・DPR 2・instance維持・読込累計5を確認してから記録した。幅が不一致だった最初のcheckpointも別名で保存し、試験条件を満たす標本としては扱わない。
+
+Allocationsの開始案内が出て、RunIssuesにattach失敗がないことを確認した。直後のCUA操作では対象のタブ行が見つからず、次の状態取得もtimeoutReachedとなったため中断した。休眠や再開は実行できていない。記録コマンドは約57.29秒で終了コード0、trace上の期間は07:26:13〜07:27:04の約51.16秒だった。観測したサイズの最大値は約98.05MiB、保存後は約27.40MiBで、256MiB以内だった。診断用アプリ・fixture・recorderは準備開始から約4分13秒で終了を確認した。初期5文書の部分記録として残し、2サイクルの診断や通常のRAM比較へ使わない。
+
+保存済みtraceのTOCは約2.36秒で書き出せた。Instrumentsでも開いたが、All Allocationsの一覧で確認できた行は1.00KiB・時刻0で、Backtraceは `<Call stack limit reached>` と `<unknown>` だった。約13MiBの割当元・寿命を特定できたとは扱わない。コマンドの成功と解析可能な割当履歴の取得を区別する。Instruments初回接続にも約178.40秒かかったが、アプリの速度の測定結果ではない。元のtraceを保持し、解析時の表示条件の変更は保存しなかった。
+
+後片付けの確認では、`pgrep -x Instruments` が返したPID 22969に対し、psとカーネルのproc_pidpathは通常ReleaseのLevisticaの実行パスを返し、launchctlのoriginatorとcreatorも通常Release・Levisticaに一致した。通常版とInstrumentsのディスク上のbundle IDはそれぞれ正しい値だった。このPIDにはEPHEMERALが確認できず、開始時刻07:26:24と同時刻に通常版のsession.sqlite3が更新されていた。通常データが変更されていないとは表記しない。ファイルの更新時刻とサイズだけを読み、DB内容・Cookie・認証情報は読んでいない。起動元と、UIが示したInstrumentsとの食い違いは未特定であり、CUAまたはInstrumentsのどちらかが原因とは断定しない。
+
+このプロセスは停止せず、ユーザーへ通常版を使用中か確認した。使用していない場合も停止の返答を得てから、同じPID・開始時刻・実行パスを再照合する。保存データを削除・巻き戻ししない。今回の記録と帰属の不一致は `.local/artifacts/profile-allocations-tjqzf83j/` のmanifest・preflight・checkpoint・recorder・TOC・analysis-summary・process identity・DBのメタデータに保存した。TOCには環境変数も含まれていたため、確認用コピーからenvironmentを除去した。元のtrace・TOCは非公開のローカル資料として扱い、全体を出力・Git追加・外部送信しない。
+
+原因が分かるまで、Instruments記録中のLevisticaをCUAで操作する経路は使用しない。対象PIDが隔離状態で存続している確認だけでは、別の通常版の起動を排除できないことを今回の確認に反映する。以後の準備では、process名だけを使わず実行パスで全候補を検出し、操作前後に通常版の新規processが増えていないか確認する。別processが出た場合は操作を止め、所有者を確認する。
+
+次の診断の前に、帰属の不一致を調べ、正式なXCTest経路で専用bundle IDと隔離フラグを固定した負荷操作へ分けられるか設計する。今回の部分記録を理由に追加起動や追加記録は行わない。別案として、手元の `man malloc` はMallocStackLoggingのliteを存続中の割当のスタック記録、`man malloc_history` はサイズを絞った呼出元の取得と説明している。ただし、まだ設定・起動・計測はしていない。代替方法を使う場合も問い・投入上限・取得条件を先に決め、通常版へ診断設定を追加しない。約13MiBの原因未特定とM3の受入未完了は維持する。
