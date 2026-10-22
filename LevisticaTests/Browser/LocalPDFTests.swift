@@ -83,4 +83,33 @@ struct LocalPDFTests {
         #expect(session.activeTab.addressDraft.isEmpty)
         #expect(session.activeTab.restorationNotice != nil)
     }
+
+    @Test func navigatingFromLocalPDFReleasesItsDocumentAndRuntime() throws {
+        let url = try fixture()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let session = BrowserSession(dataStore: .nonPersistent())
+        weak var document: LocalPDF?
+        weak var runtime: PageRuntime?
+        weak var view: WKWebView?
+        try autoreleasepool {
+            try session.openLocalPDF(selectedURL: url)
+            let original = try #require(session.page)
+            let tabID = session.selectedID
+            let originalDocument: LocalPDF = try #require(original.localPDF)
+            document = originalDocument
+            runtime = original
+            view = original.webView
+            #expect(session.navigate("http://127.0.0.1:54321/after-local-pdf"))
+            #expect(session.selectedID == tabID)
+            #expect(session.tabs.count == 1 && session.loadedPageCount == 1)
+            #expect(session.activeTab.isLocalPDF == false)
+            #expect(session.page?.localPDF == nil)
+            #expect(session.page !== original)
+            #expect(session.page?.webView.configuration.defaultWebpagePreferences.allowsContentJavaScript == true)
+        }
+        #expect(document == nil)
+        #expect(runtime == nil)
+        #expect(view == nil)
+        session.closeTab(session.selectedID)
+    }
 }
