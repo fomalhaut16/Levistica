@@ -204,6 +204,9 @@ def check_fixture(current, original=None, now=None):
     if current.get('kind') == 'manual-sleep':
         sleep_contract().check(current, original, check_fixture, now=now)
         return
+    if current.get('kind') == 'manual-sleep-cycle':
+        sleep_contract().check_cycle(current, original, check_fixture, now=now)
+        return
     if current.get('kind') in ('documents', 'cross-site-documents'):
         now = time.monotonic() if now is None else now
         docs = current.get('documents', {})
@@ -280,6 +283,7 @@ def main():
     parser.add_argument("--ready-file", type=pathlib.Path, help="Optional synthetic fixture readiness state")
     parser.add_argument("--ready-delay", type=float, default=60, help="Minimum seconds after readiness (default: 60)")
     parser.add_argument('--sleep-baseline', type=pathlib.Path, help='Validated five-page lifecycle checkpoint')
+    parser.add_argument('--sleep-cycle-checkpoint', type=pathlib.Path, help='Validated all-loaded history for sleep cycle 1..5')
     parser.add_argument('--sleeping-documents', default='', help='Empty or 1,2,3,4; requires sleep-baseline')
     parser.add_argument("--browser", choices=["levistica", "chrome"], default="levistica")
     parser.add_argument("--chrome-profile", type=pathlib.Path)
@@ -303,6 +307,12 @@ def main():
         parser.error('sleeping-documents requires sleep-baseline')
     sleeping = args.sleeping_documents.split(',') if args.sleeping_documents else []
     checkpoint = None
+    if args.sleep_cycle_checkpoint:
+        if (args.sleep_baseline or args.sleeping_documents or not args.ready_file
+                or args.browser != 'levistica' or args.total_tabs != 5 or args.loaded_pages != 1
+                or args.ready_delay != 120):
+            parser.error('Sleep cycles require only a cycle checkpoint, Levistica, five tabs, one loaded page, and ready-delay 120')
+        checkpoint = json.loads(args.sleep_cycle_checkpoint.read_text())
     if args.sleep_baseline:
         if (not args.ready_file or args.browser != 'levistica' or args.total_tabs != 5
                 or sleeping not in ([], ['1', '2', '3', '4'])
@@ -316,6 +326,9 @@ def main():
         if checkpoint is None:
             return state
         pressure = int(run(['/usr/sbin/sysctl', '-n', 'kern.memorystatus_vm_pressure_level']).strip())
+        if args.sleep_cycle_checkpoint:
+            return {'kind': 'manual-sleep-cycle', 'ready_monotonic': phase_started,
+                    'cycle_checkpoint': checkpoint, 'memory_pressure_level': pressure, 'workload': state}
         return {'kind': 'manual-sleep', 'ready_monotonic': phase_started,
                 'sleep_checkpoint': checkpoint, 'sleeping_documents': sleeping,
                 'memory_pressure_level': pressure, 'workload': state}
