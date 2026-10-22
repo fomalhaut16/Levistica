@@ -73,7 +73,7 @@ Debug版とRelease版は別のbundle IDと保存先を使います。Debug版へ
 
 ## タブと保存の現在の挙動
 
-「ページ」メニューからタブを保持する設定と、選択中のタブの手動休眠を選べます。休眠時は確認を経てページを解放します。再開はURLからの新規読み込みです。ページ内の履歴・入力・スクロール・再生位置は復元しません。保持中、入力を検知したページ、転送・メディア等の保護対象は休眠を拒否します。自動休眠は行いません。保持と休眠の設定は再起動後も残り、選択中でも休眠中のページは自動で読み込みません。RAM削減量は未測定です。
+「ページ」メニューからタブを保持する設定と、選択中のタブの手動休眠を選べます。休眠時は確認を経てページを解放します。再開はURLからの新規読み込みです。ページ内の履歴・入力・スクロール・再生位置は復元しません。保持中、入力を検知したページ、転送・メディア等の保護対象は休眠を拒否します。自動休眠は行いません。保持と休眠の設定は再起動後も残り、選択中でも休眠中のページは自動で読み込みません。固定5文書での予備計測はPLAN.mdに記録しています。実サイトでの削減量は未確認です。
 
 Cmd-Tで追加、Cmd-Wで閉じ、Cmd-Shift-Tで直前に閉じたタブを読み込み直せます。最後のタブを閉じると空タブを残します。ページ内検索はCmd-F、ズームはCmd-+/−/0です。閉じたタブは同じ起動中の直近20件までで、フォーム値やページの内部状態を保存しません。POST後のページは勝手に再送せず、URLの確認を案内します。
 
@@ -134,3 +134,18 @@ python3 script/media-fixture.py --state .local/artifacts/video-comparison/state.
 比較用Chromeは既存のstartコマンドに `--tabs 5 --ready-file .local/artifacts/five-documents/state.json` を加えます。専用user-data-dirを指定した起動引数で1件ずつ前面表示し、各タブの報告を待ちます。通常利用のChromeへキー操作を送りません。試行ごとに比較対象だけを終了し、fixtureの同じloopback originへPOST `/reset` を送って報告を初期化します。
 
 計測時は `--loaded-pages 5 --total-tabs 5 --samples 1 --ready-file .local/artifacts/five-documents/state.json --ready-delay 120` を指定します。全タブを一度表示し、各タブの本文・固有instance・報告の新しさを照合できた標本だけが有効です。前面タブからのBroadcastChannelにも各タブが応答するため、純粋な待機状態とは区別します。タブ数だけの比較や、異なるoriginのSNS5件の結果には広げません。
+
+### 手動休眠の前後を測る
+
+5件限定のlifecycleモードは、全件を読み込んだ状態と、1〜4番を休眠して5番を残した状態を比較します。通常の5件・20件比較とは別の文書hash・条件です。通常プロファイルを使わず、隔離Releaseで各URLを順に表示し、799×683・DPR 2と「5タブ・読み込み済み5」を確認します。
+
+```sh
+python3 script/cross-site-fixture.py --lifecycle --state .local/sleep/state.json
+# state.jsonのurlsを順に開き、5番を選択した状態で別のターミナルから実行
+python3 script/sleep-state.py --state .local/sleep/state.json --output .local/sleep/checkpoint.json
+python3 script/measure-memory.py --label sleep-before --loaded-pages 5 --total-tabs 5 --samples 1 --ready-delay 120 --ready-file .local/sleep/state.json --sleep-baseline .local/sleep/checkpoint.json
+# 1〜4番を確認付きで休眠し、5番へ戻す。接続終了と報告停止を10秒以上確認してから実行
+python3 script/measure-memory.py --label sleep-after --loaded-pages 1 --total-tabs 5 --samples 1 --ready-delay 120 --ready-file .local/sleep/state.json --sleep-baseline .local/sleep/checkpoint.json --sleeping-documents 1,2,3,4
+```
+
+各状態で120秒待ち、5秒ごとに文書・接続・圧迫条件を確認します。報告停止だけでは休眠と判断せず、UIのタブ数と読み込み済み数も別に記録してください。休眠前だけの標本や不成立の回は前後比較へ加えません。計測後はfixtureをCtrl-Cで終了します。結果と条件の限界はPLAN.mdに記録します。
