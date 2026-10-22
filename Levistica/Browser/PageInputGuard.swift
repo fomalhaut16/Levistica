@@ -6,6 +6,7 @@ import WebKit
 final class PageInputGuard: NSObject, WKScriptMessageHandler {
     private(set) var hasEditedInput = false
     @ObservationIgnored private weak var webView: WKWebView?
+    @ObservationIgnored private let contentController: WKUserContentController
     @MainActor private final class InputRelay: NSObject, WKScriptMessageHandler {
         weak var owner: PageInputGuard?
         init(owner: PageInputGuard) { self.owner = owner }
@@ -37,10 +38,11 @@ final class PageInputGuard: NSObject, WKScriptMessageHandler {
     """
 
     init(configuration: WKWebViewConfiguration) {
+        let controller = WKUserContentController()
+        contentController = controller
         super.init()
         // Related pages may inherit the opener's controller. Own this view's
         // handler without retaining its runtime or duplicating the input script.
-        let controller = WKUserContentController()
         for script in configuration.userContentController.userScripts where script.source != Self.source {
             controller.addUserScript(script)
         }
@@ -48,6 +50,12 @@ final class PageInputGuard: NSObject, WKScriptMessageHandler {
         controller.addUserScript(WKUserScript(source: Self.source, injectionTime: .atDocumentStart,
                                              forMainFrameOnly: false, in: Self.world))
         configuration.userContentController = controller
+    }
+
+    isolated deinit {
+        // WebKit can retain a controller while its handler remains registered,
+        // even after the WebView and weak relay owner have gone away.
+        contentController.removeScriptMessageHandler(forName: Self.handlerName, contentWorld: Self.world)
     }
 
     func bind(to webView: WKWebView) { self.webView = webView }

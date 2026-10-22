@@ -33,4 +33,18 @@ struct PageInputGuardTests {
         #expect(view == nil)
         #expect(observer == nil)
     }
+
+    @Test func endingTheRuntimeReleasesItsInputController() async throws {
+        weak var controller: WKUserContentController?
+        autoreleasepool {
+            let runtime = PageRuntime(dataStore: .nonPersistent())
+            controller = runtime.webView.configuration.userContentController
+            #expect(controller != nil)
+        }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while controller != nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(controller == nil)
+    }
 }

@@ -850,3 +850,28 @@ UI、WebContent、Network、GPU、帰属するhelperと全体合計の5点を記
 取得方法だけを調べたheapの事前確認は3.6秒で成功し、PageRuntime・WKWebView・PageInputGuard・PageDialogControllerが各5個、WebPageContainerが1個と型別に識別できた。これは表示条件未成立の準備記録であり、休眠後の解放やメモリ増加の判定には使わない。プロセス識別と隔離フラグをCUA選択の前後で照合し、オブジェクト内容を出力しなかった。追加の権限やツール導入は不要だった。証拠は `.local/artifacts/runtime-lifetime-5776cwyp/` のmanifest・preflight・aborted・cleanupへ保存した。隔離アプリと専用fixtureは停止済み。
 
 画面を必要としない所有の検証として、ローカルPDFからWebへの切替後に旧PageRuntime・WKWebView・LocalPDFの弱参照がnilになる単体試験を追加した。同じタブIDと総数・読み込み済み数を保ち、通常Web用のJavaScript設定に戻ることも確認する。最初のビルドはweak変数への代入時のマクロ型推論で失敗し、requireの戻り値の型を明示した後、単体86件が `tests.y8TfWL` で成功した。これはSessionの所有境界の検証で、SwiftUIの描画が所有する場合や実画面での休眠反復を代替しない。アプリ本体は変更していない。次の反復診断は画面の準備を確認してから、同じ3サイクル・20分以内の範囲で新たに計画する。
+
+### 2026-10-22 入力検知の登録とページの寿命
+
+次の診断では、隔離Releaseの前面化と文書のvisible報告を確認できた。同じ計画で1起動・3サイクルを実施し、空タブへ戻した後の取得と後片付けまで約14分44秒で完了した。測定版は `f293321`、作業ツリーはcleanだった。8点それぞれで30秒以上落ち着くのを待ち、heapの取得前後で読込・接続・instanceが変わらないことを確認した。4件の休眠と再開を各3回行い、最終の累計読込は17回、1〜4番が各4回、5番が1回だった。5番のinstanceは全点で同じで、再開した4件は毎回新しくなった。
+
+| 状態 | PageRuntime / WKWebView 各個数 | 描画コンテナ | 入力検知の中継 | WKUserContentController / WKUserScript 各個数 |
+|---|---:|---:|---:|---:|
+| 初期5件 | 5 | 1 | 5 | 5 |
+| 休眠1 | 1 | 1 | 5 | 5 |
+| 再開1 | 5 | 1 | 9 | 9 |
+| 休眠2 | 1 | 1 | 9 | 9 |
+| 再開2 | 5 | 1 | 13 | 13 |
+| 休眠3 | 1 | 1 | 13 | 13 |
+| 再開3 | 5 | 1 | 17 | 17 |
+| 全件閉鎖・空タブ | 0 | 0 | 17 | 17 |
+
+PageInputGuardとPageDialogControllerもPageRuntimeと同じ個数へ戻った。一方、弱参照でownerへ通知するInputRelayと、その登録先・スクリプトが残った。中継17個の浅い割当サイズは合計272bytesで、これだけで以前の全体約21MiBの増加を説明したとは扱わない。heapの全mallocブロックの合計も、複数processのphysical footprintや専有RAMと同一ではない。証拠は `.local/artifacts/runtime-lifetime-vd4fxey4/` のmanifest・8点のUI照合・heap・文書状態・型別集計・validation・cleanupに保存した。通常プロファイルは使わず、隔離アプリとfixtureは停止済み。
+
+修正ではPageInputGuardが登録したcontrollerを保持し、そのguardの寿命が終わるときだけ[removeScriptMessageHandler(forName:contentWorld:)](https://developer.apple.com/documentation/webkit/wkusercontentcontroller/removescriptmessagehandler(forname:contentworld:))で自分の名前・content worldの登録を解除する。通常の読み込み停止では解除せず、別のハンドラーやスクリプトを一括削除しない。MainActor上のWebKitへアクセスするため[Swift SE-0371](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0371-isolated-synchronous-deinit.md)のisolated deinitを使う。手元のSwift 6.4、言語モード6、strict complete、既定nonisolatedとmacOS 26の対象を確認した。SDK・言語モード・最低OSは変更しない。
+
+登録先の弱参照がnilになることを最大2秒まで条件付きで待つ単体試験を追加した。旧実装の `tests.QZR0oe` で失敗し、修正後の `tests.fJTH18` で成功した。最初の修正確認 `tests.YIhZnl` はactor上の解放を待たない即時判定で失敗したため、その実行を合格には数えない。修正後の全単体87件は `tests.czh9Xx` で成功した。
+
+操作試験とRelease検証の後、修正版も1起動・20分以内で同じ3サイクルと空タブの8点を取得する。問いは入力検知の中継と登録先が読み込み済み数へ戻るかであり、RAM削減率の比較ではない。前の120秒待機のfootprint比較とは混ぜない。前提が崩れた場合は中断し、成功するまで取り直さない。型数が戻っても、WebKit内部・別process・長時間利用を含む漏れなしやM3合格とは判断しない。
+
+修正後の対象UI試験 `tests.1BDhip` は、自動操作モードの初期化が約60秒でタイムアウトし、試験本体が開始しなかった。ロック解除や許可画面の有無をユーザーへ確認している。操作合格には数えず、残る4経路も開始していない。UI試験とは分けて、正式入口のReleaseビルド後に予定した型別診断を進める。隔離起動の対象確認と文書の可視条件が成立しない場合は、こちらも中断する。UI試験の不足は診断結果で代替しない。
