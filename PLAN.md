@@ -938,3 +938,7 @@ UI自動試験の環境確認では `DevToolsSecurity -status` がdisabledだっ
 次のAllocationsは別の診断として、準備・後片付けを含め1起動・20分、記録1回・3分以内、固定5文書・2サイクル以内・256MiB以内で行う。記録前に作業ツリーとソース版を固定する。exec後のrecorder識別を確認し、attach失敗を監視して中断する。開始案内とRunIssuesにattach失敗がないことを確認してから休眠・再開へ進み、最終データで取得成否を判定する。取得不能なら原因と未取得を残し、再試行を重ねない。
 
 診断用と通常Releaseの実ビルド・strict署名検証が成功した。診断用はRelease最適化と専用コンパイル条件を確認し、entitlementsは通常版の3権限にGet task allowだけを足した内容と一致した。通常Releaseは従来の3権限だけで、bundle IDと生成先も別だった。証拠は `.local/profile-build-verification.json` と `.local/profile-separation-verification.json` に残した。ツール試験54件、通常の単体試験87件が成功した。最初のツール試験はsandbox内のlocalhost bind制限で15件が開始できず、通常の権限手続きによる実行で54件が通過した。単体試験の結果は `.local/artifacts/tests.JdVcxk/Results.xcresult` に保存した。診断用アプリの起動とAllocationsの再確認は、この時点では未実施。
+
+固定ソース `29f54a1` の診断用アプリを1回起動したが、CUAのgetAppが返るまで約828.86秒かかった。操作環境の応答低下を停止条件として、この診断はAllocationsの開始前に中断した。UI接続操作にかかった時間として記録し、アプリ自身の停止原因や表示不良は未確認とする。CUA接続後も同じPID・開始時刻・専用実行パス・EPHEMERALを確認し、アプリと専用fixtureを停止した。後片付けの確認まで約15分4秒で、1起動・20分の上限内だった。fixtureの文書は未読込、記録の試行は0回である。
+
+証拠は `.local/artifacts/profile-allocations-t91fxv7z/` のmanifest・接続前後の識別・aborted・cleanupに保存した。通常版のデータやmacOS全体の設定は変更していない。診断用のビルド・署名・権限の分離と、実際のAllocations取得は別に扱い、約13MiBの割当元・寿命も未特定のまま残す。今回の中断を理由に追加起動や記録を繰り返さない。次の操作試験や診断の前に、UI接続の遅延とXCTestの開始失敗を、ツール・画面状態・アプリの問題へ分けて調べる。設定の追加認可が必要なら具体的な要求をユーザーへ示す。
