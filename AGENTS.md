@@ -24,6 +24,8 @@
 
 CUAのgetAppは、対象アプリが終了していると通常起動する。XCTestの実行中や終了と重なる時点には呼ばない。手動確認は試験終了後、正式入口で `LEVISTICA_EPHEMERAL=1` を明示して起動し、対象プロセスと隔離画面を確認してから既存bindingで行う。終了後の状態確認でgetAppを呼び直してアプリを再起動しない。 Debug版のbundle IDは `dev.fomalhaut16.Levistica.debug`、Release版は `dev.fomalhaut16.Levistica` と分ける。getAppのパス指定だけで正しいprocessへ操作が届くとは扱わず、呼出し直後にも実行パス・PID・隔離用フラグを照合してから操作する。照合で環境変数を確認する場合は試験用フラグだけを抽出し、環境変数全体を表示・保存しない。操作試験と手動操作は同時に走らせない。
 
+2026-10-22にユーザーは診断専用ビルドへのGet task allow追加を承認した。診断用は `CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=1 ./script/build_and_run.sh --verify` で起動し、bundle ID `dev.fomalhaut16.Levistica.profile`、生成先 `.local/ProfileDerivedData/` を使う。通常版や配布物へこの権限を追加しない。アプリ内でも診断用のコンパイル条件でセッション・履歴・ブックマーク・WebKitを非永続に固定する。通常のfootprint比較へ混ぜず、個別の診断計画の上限を守る。getAppの前後では診断用の実行パス・PID・開始時刻・隔離フラグを照合する。macOS全体の開発者設定の変更や追加認可を、この承認に含めない。
+
 通常プロファイル、Cookie、認証情報、フォーム値、個人の閲覧記録をGitやログへ出さない。検証は隔離データで行い、ユーザーのChromeプロファイルを取り込まない。入力、音声、通話、認証、転送をメモリ削減のために黙って中断しない。独立実験は `PLAN.md` の投入上限と採用・破棄条件を先に決める。
 
 ## スキルの使い分け
