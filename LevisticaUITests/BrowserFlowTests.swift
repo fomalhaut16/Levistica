@@ -499,6 +499,45 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testAddressNavigationFromLocalPDFReplacesTheDisplayedPage() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let (app, folder) = try fileTestApplication()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let document = folder.appendingPathComponent("replacement-synthetic.pdf")
+        try writeSyntheticPDF(to: document)
+        app.launch()
+        app.activate()
+        app.typeKey("o", modifierFlags: .command)
+        let open = app.sheets.buttons["開く"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(document.path)
+        app.typeKey(.return, modifierFlags: [])
+        open.click()
+        XCTAssertTrue(app.staticTexts["localPDFNotice"].waitForExistence(timeout: 10))
+        app.typeKey("f", modifierFlags: .command)
+        let find = app.textFields["pageFindField"]
+        XCTAssertTrue(find.waitForExistence(timeout: 5))
+        waitForInputIndicator(in: app)
+        find.typeText("nebula")
+        waitForInputIndicator(in: app)
+        find.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.staticTexts["見つかりました"].waitForExistence(timeout: 10))
+        app.buttons["closeFindButton"].click()
+        attachWindowImage(app, name: "pdf-before-web-navigation")
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].exists)
+        submit(base + "/two", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["localPDFNotice"].exists)
+        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/two")
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].exists)
+        attachWindowImage(app, name: "web-after-local-pdf-navigation")
+        app.terminate()
+    }
+
+    @MainActor
     func testSelectedLocalPDFOpensWithoutReplacingTheCurrentPage() throws {
         continueAfterFailure = false
         executionTimeAllowance = 120

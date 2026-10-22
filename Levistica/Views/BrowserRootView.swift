@@ -116,8 +116,10 @@ struct BrowserRootView: View {
             }
             Divider()
             if let page = tab.page {
-                // Each runtime supplies its own existing NSView; rendering never starts a load.
-                WebPageView(page: page).id(tab.id).accessibilityIdentifier("pageView")
+                // A tab can replace its runtime (for example, local PDF to web).
+                // The container owns one WebView, so its lifetime follows that runtime.
+                // Rendering still only attaches the existing view; it never starts a load.
+                WebPageView(page: page).id(ObjectIdentifier(page)).accessibilityIdentifier("pageView")
                     .overlay(alignment: .top) {
                         if page.isLoading {
                             ProgressView(value: page.progress).progressViewStyle(.linear)
