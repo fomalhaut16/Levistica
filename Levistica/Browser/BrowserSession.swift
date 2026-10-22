@@ -17,7 +17,7 @@ final class BrowserSession {
     private(set) var storageFailure: String?
     var externalOpenNotice: String?
     var discardUnsavedChangesOnQuit = false
-    @ObservationIgnored private var sleepRequestID: UUID?
+    private var sleepRequestID: UUID?
     @ObservationIgnored private var sleepProbeID: UUID?
     @ObservationIgnored private weak var sleepTargetTab: BrowserTab?
     private var closedTabs: [ClosedTab] = []
@@ -255,7 +255,7 @@ final class BrowserSession {
         if tab.openerID != nil || tab.openerOrigin != nil || tabs.contains(where: { $0.openerID == tab.id }) {
             return "別タブと連携するページは休眠しません。"
         }
-        if tab.addressDraft != page.url?.absoluteString { return "URL欄を編集中です。ページに戻ってから操作してください。" }
+        if tab.hasEditedAddress && tab.addressDraft != page.url?.absoluteString { return "URL欄を編集中です。ページに戻ってから操作してください。" }
         if page.failure != nil || !page.canRetry || SessionStore.persistableURL(page.url) == nil {
             return "URLから安全に読み込み直せることを確認できないため、休眠しません。"
         }
@@ -621,12 +621,16 @@ final class BrowserSession {
                 tab.isLocalPDF = false
             }
             tab.addressDraft = url.absoluteString
+            tab.hasEditedAddress = false
             if tab.page == nil {
                 let runtime = PageRuntime(dataStore: websiteDataStore())
                 connect(runtime, to: tab)
                 tab.page = runtime
             }
             tab.page?.load(url)
+            // A protected document still owns its committed URL until the user
+            // allows departure. Do not display the submitted destination early.
+            tab.addressDraft = tab.page?.url?.absoluteString ?? url.absoluteString
             persistSession()
             return true
         } catch {

@@ -105,6 +105,33 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testUnsubmittedAddressBlocksSleepUntilEscapeRestoresThePageURL() throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/sleep-state", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Sleep loads: 1"].waitForExistence(timeout: 10))
+        let address = app.textFields["addressField"]
+        address.click()
+        address.typeKey("a", modifierFlags: .command)
+        address.typeText("https://example.invalid/unfinished-address")
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.staticTexts["URL欄を編集中です。ページに戻ってから操作してください。"].waitForExistence(timeout: 5))
+        XCTAssertEqual(address.value as? String, "https://example.invalid/unfinished-address")
+        XCTAssertTrue(app.webViews.staticTexts["Sleep loads: 1"].exists)
+        address.click()
+        address.typeKey(.escape, modifierFlags: [])
+        XCTAssertEqual(address.value as? String, base + "/sleep-state")
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.sheets.buttons["状態を破棄して休眠"].waitForExistence(timeout: 5))
+        app.sheets.buttons["ページに戻る"].click()
+        app.terminate()
+    }
+
+    @MainActor
     func testSleepRejectsMediaAndRechecksPlaybackAfterConfirmation() throws {
         continueAfterFailure = false
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])

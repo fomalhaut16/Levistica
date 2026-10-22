@@ -5,6 +5,19 @@ import WebKit
 
 @MainActor
 struct BrowserSessionTests {
+    @Test func rejectedNavigationPreservesTheAddressDraftAndSuccessfulSubmissionClearsItsEditFlag() {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let tab = session.activeTab
+        tab.addressDraft = "synthetic unfinished address"
+        tab.hasEditedAddress = true
+        #expect(session.navigate("javascript:alert(1)") == false)
+        #expect(tab.hasEditedAddress)
+        #expect(tab.addressDraft == "synthetic unfinished address")
+        #expect(session.navigate("http://127.0.0.1:54321/submitted-address"))
+        #expect(tab.hasEditedAddress == false)
+        session.closeTab(tab.id)
+    }
+
     @Test func keepStatePreventsSleepAndSurvivesClosingAndReopening() {
         let session = BrowserSession(dataStore: .nonPersistent())
         let tab = session.activeTab

@@ -17,6 +17,7 @@ final class BrowserTab: Identifiable {
 
     init(id: UUID = UUID()) { self.id = id }
     var addressDraft = ""
+    var hasEditedAddress = false
     var inputError: String?
     var restorationNotice: String?
     var isFindBarVisible = false

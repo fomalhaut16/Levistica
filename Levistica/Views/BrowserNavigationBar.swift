@@ -15,7 +15,14 @@ struct BrowserNavigationBar: View {
                 .disabled(tab.page?.canGoBack != true).accessibilityIdentifier("backButton")
             Button("進む", systemImage: "chevron.right") { tab.page?.forward() }
                 .disabled(tab.page?.canGoForward != true).accessibilityIdentifier("forwardButton")
-            TextField("URLまたは検索語を入力", text: $tab.addressDraft)
+            TextField("URLまたは検索語を入力", text: Binding(
+                get: { tab.addressDraft },
+                set: {
+                    guard $0 != tab.addressDraft else { return }
+                    tab.hasEditedAddress = true
+                    tab.addressDraft = $0
+                }
+            ))
                 .textFieldStyle(.roundedBorder).focused($addressFocused)
                 .accessibilityIdentifier("addressField")
                 .onSubmit {
@@ -23,6 +30,7 @@ struct BrowserNavigationBar: View {
                 }
                 .onExitCommand {
                     tab.addressDraft = (tab.page?.url ?? tab.pendingURL)?.absoluteString ?? ""
+                    tab.hasEditedAddress = false
                     addressFocused = false
                 }
             if tab.page?.isLoading == true {
@@ -35,15 +43,16 @@ struct BrowserNavigationBar: View {
         }
         .labelStyle(.iconOnly).padding(10)
         .onAppear {
-            if let url = tab.page?.url { tab.addressDraft = url.absoluteString }
+            if !tab.hasEditedAddress, let url = tab.page?.url { tab.addressDraft = url.absoluteString }
             addressFocused = tab.page == nil && !tab.isSleeping
         }
         .onChange(of: session.addressFocusRequest) { addressFocused = true }
         .onChange(of: tab.page?.url) { _, url in
-            if !addressFocused { tab.addressDraft = (url ?? tab.pendingURL)?.absoluteString ?? "" }
+            tab.addressDraft = (url ?? tab.pendingURL)?.absoluteString ?? ""
+            tab.hasEditedAddress = false
         }
         .onChange(of: addressFocused) { _, focused in
-            if !focused, tab.inputError == nil, let url = tab.page?.url { tab.addressDraft = url.absoluteString }
+            if !focused, !tab.hasEditedAddress, tab.inputError == nil, let url = tab.page?.url { tab.addressDraft = url.absoluteString }
         }
     }
 }
