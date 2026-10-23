@@ -15,6 +15,7 @@ final class BrowserSession {
     private var initialSelectionActivated = false
     private(set) var recoveryRequired = false
     private(set) var storageFailure: String?
+    private(set) var backupFailure: String?
     var externalOpenNotice: String?
     var discardUnsavedChangesOnQuit = false
     private var sleepRequestID: UUID?
@@ -189,6 +190,13 @@ final class BrowserSession {
         do {
             try store.save(snapshot(wasRunning: false))
             storageFailure = nil
+            do {
+                try store.writeCleanBackup()
+                backupFailure = nil
+            } catch {
+                // The primary save succeeded. Keep the previous backup and allow quit.
+                backupFailure = "タブ一覧を保存しました。復旧用のバックアップは更新できませんでした。"
+            }
             dismissPageDialogs()
             return true
         } catch {

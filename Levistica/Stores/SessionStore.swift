@@ -26,10 +26,13 @@ struct SavedSession: Equatable {
 final class SessionStore {
     enum Failure: Error { case unavailable, invalidData, newerVersion }
     private var database: OpaquePointer?
+    private let fileURL: URL
+    var backupURL: URL { fileURL.appendingPathExtension("backup") }
     private var lastSaved: SavedSession?
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     init(fileURL: URL) throws {
+        self.fileURL = fileURL
         let manager = FileManager.default
         try manager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
                                     attributes: [.posixPermissions: 0o700])
@@ -166,6 +169,60 @@ final class SessionStore {
         } catch {
             try? execute("ROLLBACK")
             throw error
+        }
+    }
+
+    // One validated snapshot of the last clean exit. Failed copies never replace it.
+    func writeCleanBackup() throws {
+        guard let saved = try load(), !saved.wasRunning else { throw Failure.invalidData }
+        let manager = FileManager.default
+        if manager.fileExists(atPath: backupURL.path) {
+            guard try manager.attributesOfItem(atPath: backupURL.path)[.type] as? FileAttributeType == .typeRegular else {
+                throw Failure.unavailable
+            }
+        }
+        let temporary = fileURL.deletingLastPathComponent()
+            .appendingPathComponent(".session-backup-" + UUID().uuidString + ".sqlite3")
+        guard manager.createFile(atPath: temporary.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
+            throw Failure.unavailable
+        }
+        defer {
+            for suffix in ["", "-journal", "-wal", "-shm"] {
+                try? manager.removeItem(atPath: temporary.path + suffix)
+            }
+        }
+        try copyDatabase(to: temporary)
+        guard try Self.checkedSnapshot(at: temporary) == saved else { throw Failure.invalidData }
+        if manager.fileExists(atPath: backupURL.path) {
+            _ = try manager.replaceItemAt(backupURL, withItemAt: temporary, options: .usingNewMetadataOnly)
+        } else {
+            try manager.moveItem(at: temporary, to: backupURL)
+        }
+    }
+
+    private func copyDatabase(to destinationURL: URL) throws {
+        guard let database else { throw Failure.unavailable }
+        var destination: OpaquePointer?
+        guard sqlite3_open_v2(destinationURL.path, &destination, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
+              let destination else {
+            if let destination { sqlite3_close(destination) }
+            throw Failure.unavailable
+        }
+        defer { sqlite3_close(destination) }
+        guard let backup = sqlite3_backup_init(destination, "main", database, "main") else { throw Failure.unavailable }
+        let step = sqlite3_backup_step(backup, -1)
+        let finish = sqlite3_backup_finish(backup)
+        guard step == SQLITE_DONE, finish == SQLITE_OK else { throw Failure.unavailable }
+    }
+
+    private static func checkedSnapshot(at url: URL) throws -> SavedSession? {
+        let copy = try SessionStore(fileURL: url)
+        return try withExtendedLifetime(copy) {
+            let check = try copy.statement("PRAGMA quick_check")
+            defer { sqlite3_finalize(check) }
+            guard sqlite3_step(check) == SQLITE_ROW, copy.text(check, 0) == "ok",
+                  sqlite3_step(check) == SQLITE_DONE else { throw Failure.invalidData }
+            return try copy.load()
         }
     }
 
