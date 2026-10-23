@@ -1,4 +1,5 @@
 import AppKit
+import WebKit
 
 @MainActor
 final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
@@ -11,14 +12,63 @@ final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
 
     private var deliveryTask: Task<Void, Never>?
 
+    private var isMeasurementCleanup: Bool {
+        #if LEVISTICA_MEASUREMENT
+        return ProcessInfo.processInfo.environment[MeasurementWebsiteStorage.cleanupKey] != nil
+        #else
+        return false
+        #endif
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        #if LEVISTICA_MEASUREMENT
+        guard isMeasurementCleanup else { return }
+        NSApp.setActivationPolicy(.prohibited)
+        let configuration: MeasurementWebsiteStorage.Configuration
+        do {
+            configuration = try MeasurementWebsiteStorage.configuration(
+                environment: ProcessInfo.processInfo.environment, bundleIdentifier: Bundle.main.bundleIdentifier)
+        } catch { preconditionFailure("Invalid isolated cleanup configuration") }
+        guard let identifier = configuration.storeID, let request = configuration.cleanupRequest else {
+            preconditionFailure("Cleanup requires a store and request identifier")
+        }
+        func finish(success: Bool, existed: Bool, unchanged: Bool) {
+            let receipt: [String: Any] = ["version": 1, "storeID": identifier.uuidString,
+                "requestID": request.uuidString, "success": success, "storeExisted": existed,
+                "otherIdentifiersUnchanged": unchanged]
+            if let data = try? JSONSerialization.data(withJSONObject: receipt, options: .sortedKeys) {
+                FileHandle.standardOutput.write(data)
+                FileHandle.standardOutput.write(Data([10]))
+            }
+            NSApp.terminate(nil)
+        }
+        WKWebsiteDataStore.fetchAllDataStoreIdentifiers { identifiers in
+            let before = Set(identifiers)
+            guard before.contains(identifier) else {
+                finish(success: true, existed: false, unchanged: true)
+                return
+            }
+            WKWebsiteDataStore.remove(forIdentifier: identifier) { error in
+                WKWebsiteDataStore.fetchAllDataStoreIdentifiers { remaining in
+                    let after = Set(remaining)
+                    let unchanged = before.subtracting([identifier]) == after
+                    finish(success: error == nil && !after.contains(identifier) && unchanged,
+                           existed: true, unchanged: unchanged)
+                }
+            }
+        }
+        #endif
+    }
+
     func connect(session: BrowserSession, openWindow: @escaping () -> Void) {
+        guard !isMeasurementCleanup else { return }
         self.session = session
         openBrowserWindow = openWindow
         scheduleDelivery()
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        guard !urls.isEmpty else { return }
+        guard !isMeasurementCleanup, !urls.isEmpty else { return }
         let capacity = max(0, 1000 - pendingURLs.count)
         pendingURLs.append(contentsOf: urls.prefix(capacity))
         droppedPendingURLs = droppedPendingURLs || urls.count > capacity
@@ -60,6 +110,7 @@ final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if isMeasurementCleanup { return .terminateNow }
         guard !checkingTermination, !flushingHistory else { return .terminateCancel }
         checkingTermination = true
         defer { checkingTermination = false }

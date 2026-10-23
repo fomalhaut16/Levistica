@@ -7,7 +7,8 @@ CONFIGURATION="${CONFIGURATION:-Debug}"
 PROFILE="${LEVISTICA_PROFILE:-0}"
 MEASUREMENT="${LEVISTICA_MEASUREMENT:-0}"
 MALLOC_STACKS="${LEVISTICA_MALLOC_STACKS:-0}"
-case "$MODE" in run|--build|--verify|--debug|--logs|--telemetry) ;; *) echo "usage: $0 [--build|--verify|--debug|--logs|--telemetry]" >&2; exit 2;; esac
+STORE_ID="${LEVISTICA_MEASUREMENT_STORE_ID:-}"
+case "$MODE" in run|--build|--verify|--debug|--logs|--telemetry|--cleanup-store) ;; *) echo "usage: $0 [--build|--verify|--debug|--logs|--telemetry|--cleanup-store]" >&2; exit 2;; esac
 case "$CONFIGURATION" in Debug|Release) ;; *) echo 'CONFIGURATION must be Debug or Release' >&2; exit 2;; esac
 case "$PROFILE" in 0|1) ;; *) echo 'LEVISTICA_PROFILE must be 0 or 1' >&2; exit 2;; esac
 if [[ "$PROFILE" == 1 && ( "$CONFIGURATION" != Release || "${LEVISTICA_EPHEMERAL:-0}" != 1 || -n "${LEVISTICA_SESSION_TEST_ID:-}" ) ]]; then
@@ -22,6 +23,26 @@ fi
 case "$MALLOC_STACKS" in 0|1) ;; *) echo 'LEVISTICA_MALLOC_STACKS must be 0 or 1' >&2; exit 2;; esac
 if [[ "$MALLOC_STACKS" == 1 && "$PROFILE" != 1 ]]; then
     echo 'MALLOC_STACKS requires the isolated Profile build' >&2; exit 2
+fi
+if [[ "${LEVISTICA_MEASUREMENT_CLEANUP_REQUEST+x}" == x ]]; then
+    echo 'CLEANUP_REQUEST is generated only by the cleanup helper' >&2; exit 2
+fi
+if [[ "${LEVISTICA_MEASUREMENT_STORE_ID+x}" == x && -z "$STORE_ID" ]]; then
+    echo 'MEASUREMENT_STORE_ID must be a nonzero owned UUID' >&2; exit 2
+fi
+if [[ -n "$STORE_ID" ]]; then
+    if [[ "$MODE" == --debug ]]; then
+        echo 'Persistent measurement does not support --debug' >&2; exit 2
+    fi
+    if [[ "$MEASUREMENT" != 1 ]]; then
+        echo 'MEASUREMENT_STORE_ID requires the isolated Measurement build' >&2; exit 2
+    fi
+    STORE_CHECK_ARGS=(validate "$STORE_ID")
+    [[ "$MODE" != --cleanup-store ]] || STORE_CHECK_ARGS+=(--require-inactive)
+    if ! python3 "$ROOT_DIR/script/measurement-store.py" "${STORE_CHECK_ARGS[@]}"; then exit 2; fi
+fi
+if [[ "$MODE" == --cleanup-store && ( "$MEASUREMENT" != 1 || -z "$STORE_ID" ) ]]; then
+    echo 'cleanup-store requires Measurement and an owned store ID' >&2; exit 2
 fi
 # Persistent manual tests must opt into both a Debug build and isolated data.
 if [[ -n "${LEVISTICA_SESSION_TEST_ID:-}" ]]; then
@@ -50,7 +71,11 @@ BUILD_ARGS=(-project "$ROOT_DIR/Levistica.xcodeproj" -scheme Levistica
     -configuration "$CONFIGURATION" -destination 'platform=macOS' -derivedDataPath "$DERIVED_DATA")
 LOG_DIR="$ROOT_DIR/.local/artifacts"
 # Discover by executable path first. A renamed process must not bypass the stop checks.
-python3 "$ROOT_DIR/script/check-app-processes.py"
+if [[ "$MEASUREMENT" == 1 ]]; then
+    python3 "$ROOT_DIR/script/check-app-processes.py" --only Measurement
+else
+    python3 "$ROOT_DIR/script/check-app-processes.py"
+fi
 mkdir -p "$LOG_DIR"
 if [[ "$PROFILE" == 1 ]]; then
     PROFILE_ENTITLEMENTS="$LOG_DIR/profile.entitlements"
@@ -111,10 +136,14 @@ fi
 echo "Built $APP_BUNDLE"
 case "$MODE" in
     --build) exit 0 ;;
+    --cleanup-store) exec python3 "$ROOT_DIR/script/measurement-store.py" cleanup "$STORE_ID" ;;
     --debug) exec /usr/bin/xcrun lldb -- "$APP_BINARY" ;;
 esac
 if [[ "${LEVISTICA_EPHEMERAL:-0}" == 1 ]]; then
     LEVISTICA_OPEN_ARGS=(-n --env LEVISTICA_EPHEMERAL=1)
+    if [[ -n "$STORE_ID" ]]; then
+        LEVISTICA_OPEN_ARGS+=(--env "LEVISTICA_MEASUREMENT_STORE_ID=$STORE_ID")
+    fi
     if [[ "$MALLOC_STACKS" == 1 ]]; then
         LEVISTICA_OPEN_ARGS+=(--env MallocStackLogging=lite)
     fi
