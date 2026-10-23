@@ -46,6 +46,7 @@ struct BrowserSessionTests {
     }
 
     @Test func namedMeasurementStoreIsPersistentAndRemovableWithoutWebViews() async throws {
+        MeasurementWebsiteStorage.initializeManagement()
         let id = UUID()
         var store: WKWebsiteDataStore? = autoreleasepool {
             MeasurementWebsiteStorage.dataStore(configuration: .init(storeID: id, cleanupRequest: nil))

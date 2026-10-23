@@ -51,6 +51,7 @@ final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
             }
             NSApp.terminate(nil)
         }
+        MeasurementWebsiteStorage.initializeManagement()
         WKWebsiteDataStore.fetchAllDataStoreIdentifiers { identifiers in
             let before = Set(identifiers)
             guard before.contains(identifier) else {

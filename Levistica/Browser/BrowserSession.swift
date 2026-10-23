@@ -30,6 +30,16 @@ enum MeasurementWebsiteStorage {
         return try Configuration(storeID: uuid(rawStore), cleanupRequest: rawRequest.map(uuid))
     }
 
+    @MainActor static func initializeManagement() {
+        // The cold management process has not initialized WebKit through a view.
+        // Use no URL and no persistent/default store; release the view before enumeration.
+        autoreleasepool {
+            let configuration = WKWebViewConfiguration()
+            configuration.websiteDataStore = .nonPersistent()
+            _ = WKWebView(frame: .zero, configuration: configuration)
+        }
+    }
+
     @MainActor static func dataStore(configuration: Configuration) -> WKWebsiteDataStore {
         if let identifier = configuration.storeID { return WKWebsiteDataStore(forIdentifier: identifier) }
         return .nonPersistent()
