@@ -16,6 +16,7 @@ import uuid
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BASE = ROOT / '.local/artifacts/measurement-stores'
 APP = ROOT / '.local/MeasurementDerivedData/Build/Products/Release/Levistica.app'
+RECEIPTS = pathlib.Path.home() / 'Library/Containers/dev.fomalhaut16.Levistica.measurement/Data/Library/Application Support/LevisticaMeasurementReceipts'
 STORE_KEY = 'LEVISTICA_MEASUREMENT_STORE_ID'
 REQUEST_KEY = 'LEVISTICA_MEASUREMENT_CLEANUP_REQUEST'
 spec = importlib.util.spec_from_file_location('app_processes', ROOT / 'script/check-app-processes.py')
@@ -98,11 +99,13 @@ def cleanup(value):
     directory = pathlib.Path(tempfile.mkdtemp(prefix='cleanup.', dir=BASE))
     request = str(uuid.uuid4())
     receipt_path = directory / 'receipt.json'
+    app_receipt = RECEIPTS / (request + '.json')
+    if app_receipt.exists() or app_receipt.is_symlink():
+        raise ValueError('Cleanup request already has a receipt')
     stderr_path = directory / 'app-stderr.log'
     for path in [receipt_path, stderr_path]:
         path.touch(mode=0o600)
-    command = ['/usr/bin/open', '-n', '-g', '-j', '-W', '--stdout', str(receipt_path),
-               '--stderr', str(stderr_path), '--env', 'LEVISTICA_EPHEMERAL=1',
+    command = ['/usr/bin/open', '-n', '-g', '-j', '-W', '--stderr', str(stderr_path), '--env', 'LEVISTICA_EPHEMERAL=1',
                '--env', STORE_KEY + '=' + value, '--env', REQUEST_KEY + '=' + request, str(APP)]
     try:
         subprocess.run(command, check=True, capture_output=True, timeout=30)
@@ -120,8 +123,11 @@ def cleanup(value):
                                  guard.describe_process, os.getuid(), only='Measurement')
     if after:
         raise ValueError('Cleanup app did not exit')
-    receipt = json.loads(receipt_path.read_text())
+    if app_receipt.is_symlink():
+        raise ValueError('Cleanup receipt must not be a symbolic link')
+    receipt = json.loads(app_receipt.read_text())
     check_receipt(receipt, value, request)
+    receipt_path.write_text(json.dumps(receipt) + '\n')
     marker['removed'] = True
     marker['cleanupReceipt'] = str(receipt_path)
     marker['removedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()

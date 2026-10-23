@@ -84,12 +84,13 @@ class MeasurementStoreTests(unittest.TestCase):
             (app / 'Contents').mkdir(parents=True)
             with (app / 'Contents/Info.plist').open('wb') as file:
                 plistlib.dump({'CFBundleIdentifier': 'dev.fomalhaut16.Levistica.measurement'}, file)
-            with patch.object(store, 'BASE', base), patch.object(store, 'APP', app):
+            with patch.object(store, 'BASE', base), patch.object(store, 'APP', app), patch.object(store, 'RECEIPTS', base / 'receipts'):
                 value = store.allocate()
                 other = store.allocate()
                 def opened(command, **_):
-                    receipt_path = pathlib.Path(command[command.index('--stdout') + 1])
                     request = next(v.split('=', 1)[1] for v in command if v.startswith(store.REQUEST_KEY + '='))
+                    store.RECEIPTS.mkdir(exist_ok=True)
+                    receipt_path = store.RECEIPTS / (request + '.json')
                     receipt_path.write_text(json.dumps({'version': 1, 'storeID': value, 'requestID': request,
                         'success': True, 'otherIdentifiersUnchanged': True, 'storeExisted': True}))
                 with patch.object(store.guard, 'run_ps', return_value='synthetic'), \

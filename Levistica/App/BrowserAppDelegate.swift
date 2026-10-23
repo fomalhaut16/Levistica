@@ -37,8 +37,17 @@ final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
                 "requestID": request.uuidString, "success": success, "storeExisted": existed,
                 "otherIdentifiersUnchanged": unchanged]
             if let data = try? JSONSerialization.data(withJSONObject: receipt, options: .sortedKeys) {
-                FileHandle.standardOutput.write(data)
-                FileHandle.standardOutput.write(Data([10]))
+                do {
+                    let folder = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                        appropriateFor: nil, create: true).appendingPathComponent("LevisticaMeasurementReceipts", isDirectory: true)
+                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
+                                                           attributes: [.posixPermissions: 0o700])
+                    let file = folder.appendingPathComponent(request.uuidString.lowercased() + ".json")
+                    try data.write(to: file, options: .atomic)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+                } catch {
+                    // A missing receipt must remain a failure in the external controller.
+                }
             }
             NSApp.terminate(nil)
         }
