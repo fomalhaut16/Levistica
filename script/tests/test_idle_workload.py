@@ -2,6 +2,7 @@ import importlib.util
 import pathlib
 import tempfile
 import json
+import copy
 import os
 import subprocess
 import unittest
@@ -22,6 +23,37 @@ class IdleWorkloadTests(unittest.TestCase):
                 'stream_connections': {key: 1 if completed else 0 for key in keys},
                 'documents': {key: {'complete': True, 'seenVisible': True, 'sections': 240, 'pulse': 1}
                               for key in keys} if completed else {}}
+
+    def sample_result(self):
+        return {'browser': 'levistica-measurement', 'pid': 123, 'valid_sample_count': 1,
+                'loaded_pages': 20, 'total_tabs': 20,
+                'samples': [{'valid': True, 'identity_stable': True, 'missing_pids': [],
+                             'tool_errors': [], 'sum_attributed_physical_footprints_bytes': 12345}]}
+
+    def test_sample_result_rejects_wrong_target_counts_and_process_failure(self):
+        original = self.sample_result()
+        module.validate_sample_result(original, 123, 0)
+        for key, value in [('browser', 'levistica'), ('pid', 124), ('valid_sample_count', 0),
+                           ('loaded_pages', 19), ('total_tabs', 21), ('samples', []), ('samples', None)]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                module.validate_sample_result({**original, key: value}, 123, 0)
+        with self.assertRaises(ValueError):
+            module.validate_sample_result(original, 123, 1)
+
+    def test_success_count_cannot_override_invalid_or_incomplete_sample(self):
+        for key, value in [('valid', False), ('valid', 1), ('identity_stable', False),
+                           ('missing_pids', [124]), ('tool_errors', ['synthetic']),
+                           ('sum_attributed_physical_footprints_bytes', None),
+                           ('sum_attributed_physical_footprints_bytes', -1),
+                           ('sum_attributed_physical_footprints_bytes', True)]:
+            document = copy.deepcopy(self.sample_result())
+            document['samples'][0][key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                module.validate_sample_result(document, 123, 0)
+        document = self.sample_result()
+        document['samples'] = [None]
+        with self.assertRaises(ValueError):
+            module.validate_sample_result(document, 123, 0)
 
     def test_collector_timeout_terminates_only_its_new_process_group(self):
         process = Mock(pid=4321)

@@ -128,6 +128,22 @@ def run_capture(command):
         signal.signal(signal.SIGTERM, previous_handler)
 
 
+def validate_sample_result(document, pid, returncode):
+    samples = document.get('samples', [])
+    if (returncode != 0 or document.get('browser') != 'levistica-measurement'
+            or document.get('pid') != pid or document.get('valid_sample_count') != 1
+            or not isinstance(samples, list) or len(samples) != 1
+            or document.get('loaded_pages') != 20 or document.get('total_tabs') != 20):
+        raise ValueError('The single RAM sample is missing, invalid, or belongs to another app')
+    sample = samples[0]
+    if (not isinstance(sample, dict) or sample.get('valid') is not True
+            or sample.get('identity_stable') is not True
+            or sample.get('missing_pids') != [] or sample.get('tool_errors') != []
+            or type(sample.get('sum_attributed_physical_footprints_bytes')) is not int
+            or sample['sum_attributed_physical_footprints_bytes'] < 0):
+        raise ValueError('The RAM sample itself is incomplete or has unstable attribution')
+
+
 def capture_memory(state_path, workload_path):
     workload = json.loads(workload_path.read_text())
     if workload.get('variant') != 'Measurement':
@@ -176,11 +192,7 @@ def capture_memory(state_path, workload_path):
     verify_application(workload)
     pressure()
     measure.check_fixture(json.loads(state_path.read_text()), baseline)
-    if (returncode != 0 or document.get('browser') != 'levistica-measurement'
-            or document.get('pid') != workload['pid'] or document.get('valid_sample_count') != 1
-            or len(document.get('samples', [])) != 1 or document.get('loaded_pages') != 20
-            or document.get('total_tabs') != 20):
-        raise ValueError('The single RAM sample is missing, invalid, or belongs to another app')
+    validate_sample_result(document, workload['pid'], returncode)
     summary = {'result': str(result), 'pid': workload['pid'], 'minimumStableReadySeconds': 60,
                'secondsFromStableReadinessAtCompletion': time.monotonic() - ready_at,
                'comparisonAccepted': False, 'requiresSuccessfulUITrial': True}
