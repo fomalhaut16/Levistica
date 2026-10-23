@@ -11,7 +11,8 @@ struct LevisticaApp: App {
         }
         .defaultSize(width: 1100, height: 760)
         .commands { BrowserCommands() }
-        Settings { PrivacySettingsView(history: session.history, siteData: session.siteDataLibrary(), section: $session.settingsSection) }
+        Settings { PrivacySettingsView(preferences: session.preferences, history: session.history,
+                                       siteData: session.siteDataLibrary(), section: $session.settingsSection) }
     }
 }
 

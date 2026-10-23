@@ -5,6 +5,96 @@ import WebKit
 
 @MainActor
 struct BrowserSessionTests {
+    private func preferencesFile() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("browser-preferences.json")
+    }
+
+    @Test func newTabPageDefaultsToBlankWithoutCreatingASettingsFile() throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let preferences = BrowserPreferences(fileURL: file)
+        #expect(preferences.newTabURL == nil && preferences.canSave)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test func newTabURLAndBlankChoicePersistPrivately() throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let preferences = BrowserPreferences(fileURL: file)
+        #expect(preferences.saveNewTabPage("www.google.com"))
+        #expect(preferences.newTabURL?.absoluteString == "https://www.google.com")
+        #expect(BrowserPreferences(fileURL: file).newTabURL == preferences.newTabURL)
+        let permissions = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+        #expect(permissions?.intValue == 0o600)
+        #expect(preferences.saveNewTabPage(""))
+        #expect(BrowserPreferences(fileURL: file).newTabURL == nil)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path) == [file.lastPathComponent])
+    }
+
+    @Test(arguments: ["javascript:alert(1)", "file:///tmp/private.pdf", "https://user:password@example.com/",
+                      "https://example.com/?access_token=synthetic", "https://example.com:25/", "not a URL",
+                      "https://example.com/\nprivate", "https://example.com/" + String(repeating: "a", count: 4096)])
+    func invalidNewTabURLPreservesTheSavedChoice(_ input: String) throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let preferences = BrowserPreferences(fileURL: file)
+        #expect(preferences.saveNewTabPage("https://www.google.com/"))
+        let before = try Data(contentsOf: file)
+        #expect(!preferences.saveNewTabPage(input))
+        #expect(preferences.newTabURL?.absoluteString == "https://www.google.com/")
+        #expect(try Data(contentsOf: file) == before)
+    }
+
+    @Test(arguments: ["not JSON", "{\"version\":2}", "{\"version\":1,\"newTabURL\":\"file:///private\"}"])
+    func unreadableNewTabPreferencesRemainUntouched(_ contents: String) throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let data = Data(contents.utf8)
+        try data.write(to: file)
+        let preferences = BrowserPreferences(fileURL: file)
+        #expect(!preferences.canSave && preferences.notice != nil)
+        #expect(!preferences.saveNewTabPage("https://www.google.com/"))
+        #expect(try Data(contentsOf: file) == data)
+    }
+
+    @Test func linkedNewTabPreferencesCannotModifyTheTarget() throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let target = file.deletingLastPathComponent().appendingPathComponent("original")
+        let data = Data("private synthetic data".utf8)
+        try data.write(to: target)
+        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: target)
+        let preferences = BrowserPreferences(fileURL: file)
+        #expect(!preferences.canSave)
+        #expect(!preferences.saveNewTabPage(""))
+        #expect(try Data(contentsOf: target) == data)
+    }
+
+    @Test func failedSettingsSaveKeepsTheExistingNewTabChoice() throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let preferences = BrowserPreferences(fileURL: file)
+        #expect(preferences.saveNewTabPage("https://www.google.com/"))
+        let original = file.appendingPathExtension("previous")
+        try FileManager.default.moveItem(at: file, to: original)
+        let data = try Data(contentsOf: original)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        #expect(!preferences.saveNewTabPage(""))
+        #expect(preferences.newTabURL?.absoluteString == "https://www.google.com/")
+        #expect(try Data(contentsOf: original) == data)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: file.path).isEmpty)
+    }
+
+    @Test func inMemoryNewTabPreferencesDoNotChangeAnotherSession() {
+        let first = BrowserSession(dataStore: .nonPersistent())
+        #expect(first.preferences.saveNewTabPage("https://www.google.com/"))
+        let second = BrowserSession(dataStore: .nonPersistent())
+        #expect(second.preferences.newTabURL == nil)
+        #expect(first.loadedPageCount == 0 && second.loadedPageCount == 0)
+    }
+
     @Test func rejectedNavigationPreservesTheAddressDraftAndSuccessfulSubmissionClearsItsEditFlag() {
         let session = BrowserSession(dataStore: .nonPersistent())
         let tab = session.activeTab
