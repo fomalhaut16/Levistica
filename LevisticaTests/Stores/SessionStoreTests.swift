@@ -302,4 +302,225 @@ struct SessionStoreTests {
         try #require(sqlite3_exec(lock, "ROLLBACK", nil, nil, nil) == SQLITE_OK)
     }
 
+
+    private func recoveryFixture() throws -> (URL, SavedSession) {
+        let url = try temporaryURL()
+        let store = try SessionStore(fileURL: url)
+        let first = SavedTab(id: UUID(), title: "Recovered document", url: URL(string: "https://example.com/one"), mayReload: true)
+        let second = SavedTab(id: UUID(), title: "Kept sleeping", url: URL(string: "https://example.com/two"),
+                              mayReload: true, isKept: true, isSleeping: true)
+        let saved = SavedSession(tabs: [first, second], selectedID: first.id, wasRunning: false)
+        try store.save(saved)
+        try store.writeCleanBackup()
+        return (url, saved)
+    }
+
+    @MainActor @Test func corruptSessionRecoveryPreservesOriginalSidecarsAndWaitsToLoad() throws {
+        let (url, saved) = try recoveryFixture()
+        let folder = url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let original = Data("unreadable original".utf8)
+        try original.write(to: url, options: .atomic)
+        let backup = try Data(contentsOf: url.appendingPathExtension("backup"))
+        let session = BrowserSession.persistentSession(in: folder, dataStore: .nonPersistent())
+        try #require(session.canRestoreSessionBackup)
+        for suffix in ["-wal", "-shm", "-journal"] {
+            try Data("preserve sidecar".utf8).write(to: URL(fileURLWithPath: url.path + suffix))
+        }
+        #expect(session.recoveryBackupTabCount == 2)
+        #expect(session.recoveryBackupDate != nil)
+        #expect(session.restoreSessionBackup())
+        #expect(session.tabs.map(\.id) == saved.tabs.map(\.id))
+        #expect(session.selectedID == saved.selectedID)
+        #expect(session.tabs[1].isKept && session.tabs[1].isSleeping)
+        session.activateInitialSelection()
+        #expect(session.loadedPageCount == 0)
+        #expect(session.recoveryRequired)
+        #expect(session.canRestoreSessionBackup == false)
+        #expect(session.storageFailure == nil)
+        #expect(try Data(contentsOf: url) == original)
+        #expect(try Data(contentsOf: url.appendingPathExtension("backup")) == backup)
+        for suffix in ["-wal", "-shm", "-journal"] {
+            #expect(try Data(contentsOf: URL(fileURLWithPath: url.path + suffix)) == Data("preserve sidecar".utf8))
+        }
+        let current = try SessionStore.currentFileURL(in: folder)
+        #expect(current != url)
+        #expect(try SessionStore(fileURL: current).load()?.wasRunning == true)
+        #expect(try SessionStore.readCleanBackup(of: current) == saved)
+        let attributes = try FileManager.default.attributesOfItem(atPath: folder.appendingPathComponent("current-session.json").path)
+        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        let restarted = BrowserSession.persistentSession(in: folder, dataStore: .nonPersistent())
+        #expect(restarted.tabs.map(\.id) == saved.tabs.map(\.id))
+        #expect(restarted.recoveryRequired)
+        #expect(restarted.loadedPageCount == 0)
+    }
+
+    @MainActor @Test(arguments: [false, true])
+    func missingOrEmptyPrimaryOffersBackupWithoutReplacingOriginal(_ empty: Bool) throws {
+        let (url, _) = try recoveryFixture()
+        let folder = url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        if empty { try Data().write(to: url, options: .atomic) }
+        else { try FileManager.default.removeItem(at: url) }
+        let session = BrowserSession.persistentSession(in: folder, dataStore: .nonPersistent())
+        #expect(session.canRestoreSessionBackup)
+        #expect(session.restoreSessionBackup())
+        if empty { #expect(try Data(contentsOf: url).isEmpty) }
+        else { #expect(FileManager.default.fileExists(atPath: url.path) == false) }
+    }
+
+    @MainActor @Test(arguments: ["UPDATE session_tabs SET may_reload=2", "DELETE FROM session_tabs; DELETE FROM session_meta"])
+    func invalidOrEmptyTabDataDoesNotReplaceBackup(_ sql: String) throws {
+        let (url, _) = try recoveryFixture()
+        let folder = url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var database: OpaquePointer?
+        try #require(sqlite3_open(url.path, &database) == SQLITE_OK)
+        try #require(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(database)
+        let before = try Data(contentsOf: url)
+        let session = BrowserSession.persistentSession(in: folder, dataStore: .nonPersistent())
+        #expect(try Data(contentsOf: url) == before)
+        #expect(session.canRestoreSessionBackup)
+        #expect(session.restoreSessionBackup())
+        #expect(try Data(contentsOf: url) == before)
+    }
+
+    @MainActor @Test func newerOriginalAndCorruptBackupAreNeverRestored() throws {
+        let (url, _) = try recoveryFixture()
+        let folder = url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var database: OpaquePointer?
+        try #require(sqlite3_open(url.path, &database) == SQLITE_OK)
+        try #require(sqlite3_exec(database, "PRAGMA user_version=99", nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(database)
+        let before = try Data(contentsOf: url)
+        let newer = BrowserSession.persistentSession(in: folder, dataStore: .nonPersistent())
+        #expect(newer.canRestoreSessionBackup == false)
+        #expect(newer.restoreSessionBackup() == false)
+        #expect(try Data(contentsOf: url) == before)
+        #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("current-session.json").path) == false)
+        let bad = Data("corrupt".utf8)
+        try bad.write(to: url, options: .atomic)
+        try bad.write(to: url.appendingPathExtension("backup"), options: .atomic)
+        let noBackup = BrowserSession.persistentSession(in: folder, dataStore: .nonPersistent())
+        #expect(noBackup.canRestoreSessionBackup == false)
+        #expect(noBackup.restoreSessionBackup() == false)
+        #expect(try Data(contentsOf: url) == bad)
+        #expect(try Data(contentsOf: url.appendingPathExtension("backup")) == bad)
+    }
+
+    @MainActor @Test func recoveryCannotDiscardNewDraftOrTabs() throws {
+        let (url, _) = try recoveryFixture()
+        let folder = url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let original = Data("unreadable".utf8)
+        try original.write(to: url, options: .atomic)
+        let session = BrowserSession.persistentSession(in: folder, dataStore: .nonPersistent())
+        try #require(session.canRestoreSessionBackup)
+        session.activeTab.addressDraft = "unsent synthetic search"
+        #expect(session.canRestoreSessionBackup == false)
+        #expect(session.restoreSessionBackup() == false)
+        #expect(session.activeTab.addressDraft == "unsent synthetic search")
+        session.activeTab.addressDraft = ""
+        _ = session.newTab()
+        #expect(session.restoreSessionBackup() == false)
+        #expect(session.tabs.count == 2)
+        #expect(try Data(contentsOf: url) == original)
+    }
+
+    @MainActor @Test(arguments: ["../outside.sqlite3", "session.sqlite3", "/tmp/outside.sqlite3", "recovered-session-invalid.sqlite3"])
+    func unsafeLocationCannotOverwriteDefaultSession(_ name: String) throws {
+        let (url, _) = try recoveryFixture()
+        let folder = url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let before = try Data(contentsOf: url)
+        let pointer = folder.appendingPathComponent("current-session.json")
+        let data = try JSONSerialization.data(withJSONObject: ["version": 1, "fileName": name])
+        try data.write(to: pointer)
+        #expect(throws: (any Error).self) { _ = try SessionStore.currentFileURL(in: folder) }
+        let session = BrowserSession.persistentSession(in: folder, dataStore: .nonPersistent())
+        #expect(session.storageFailure != nil)
+        #expect(session.prepareToQuit())
+        #expect(try Data(contentsOf: url) == before)
+        #expect(try Data(contentsOf: pointer) == data)
+    }
+
+    @MainActor @Test func missingPointerCannotSilentlySelectAnOlderSession() throws {
+        let (url, _) = try recoveryFixture()
+        let folder = url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let before = try Data(contentsOf: url)
+        let recovered = folder.appendingPathComponent("recovered-session-" + UUID().uuidString + ".sqlite3")
+        try Data("preserve recovered copy".utf8).write(to: recovered)
+        let session = BrowserSession.persistentSession(in: folder, dataStore: .nonPersistent())
+        #expect(session.storageFailure != nil)
+        #expect(session.canRestoreSessionBackup == false)
+        #expect(session.prepareToQuit())
+        #expect(try Data(contentsOf: url) == before)
+        #expect(try Data(contentsOf: recovered) == Data("preserve recovered copy".utf8))
+    }
+
+    @Test func snapshotReadIsPrivateAndHandlesSpecialPathCharacters() throws {
+        let base = try temporaryURL().deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let url = base.appendingPathComponent("saved # with spaces?").appendingPathComponent("session.sqlite3")
+        let store = try SessionStore(fileURL: url)
+        let tab = SavedTab(id: UUID(), title: "Private", url: URL(string: "https://example.com/"), mayReload: true)
+        let saved = SavedSession(tabs: [tab], selectedID: tab.id, wasRunning: false)
+        try store.save(saved)
+        try store.writeCleanBackup()
+        let before = try Data(contentsOf: store.backupURL)
+        #expect(try SessionStore.readCleanBackup(of: url) == saved)
+        #expect(try Data(contentsOf: store.backupURL) == before)
+        #expect(FileManager.default.fileExists(atPath: store.backupURL.path + "-wal") == false)
+        #expect(FileManager.default.fileExists(atPath: store.backupURL.path + "-shm") == false)
+    }
+
+    @Test func locationRejectsDanglingPointerAndLinkedTarget() throws {
+        let url = try temporaryURL()
+        let folder = url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let manager = FileManager.default
+        let pointer = folder.appendingPathComponent("current-session.json")
+        try manager.createSymbolicLink(at: pointer, withDestinationURL: folder.appendingPathComponent("missing.json"))
+        #expect(throws: (any Error).self) { _ = try SessionStore.currentFileURL(in: folder) }
+        try manager.removeItem(at: pointer)
+        let name = "recovered-session-" + UUID().uuidString + ".sqlite3"
+        try Data("target".utf8).write(to: url)
+        try manager.createSymbolicLink(at: folder.appendingPathComponent(name), withDestinationURL: url)
+        try JSONSerialization.data(withJSONObject: ["version": 1, "fileName": name]).write(to: pointer)
+        #expect(throws: (any Error).self) { _ = try SessionStore.currentFileURL(in: folder) }
+    }
+
+
+    @MainActor @Test func futureLocationFormatDoesNotRewriteAnySession() throws {
+        let (url, _) = try recoveryFixture()
+        let folder = url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let before = try Data(contentsOf: url)
+        let pointer = folder.appendingPathComponent("current-session.json")
+        let data = try JSONSerialization.data(withJSONObject: ["version": 2, "fileName": "recovered-session-" + UUID().uuidString + ".sqlite3"])
+        try data.write(to: pointer)
+        let session = BrowserSession.persistentSession(in: folder, dataStore: .nonPersistent())
+        #expect(session.canRestoreSessionBackup == false)
+        #expect(session.storageFailure?.contains("新しい形式") == true)
+        #expect(session.prepareToQuit())
+        #expect(try Data(contentsOf: pointer) == data)
+        #expect(try Data(contentsOf: url) == before)
+    }
+
+    @MainActor @Test func healthySessionDoesNotOfferOrRunBackupRecovery() throws {
+        let (url, _) = try recoveryFixture()
+        let folder = url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = BrowserSession.persistentSession(in: folder, dataStore: .nonPersistent())
+        let before = try Data(contentsOf: url)
+        #expect(session.storageFailure == nil)
+        #expect(session.canRestoreSessionBackup == false)
+        #expect(session.restoreSessionBackup() == false)
+        #expect(try Data(contentsOf: url) == before)
+        #expect(try SessionStore.currentFileURL(in: folder) == url)
+    }
+
 }

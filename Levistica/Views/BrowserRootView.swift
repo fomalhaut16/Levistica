@@ -2,6 +2,7 @@ import SwiftUI
 
 struct BrowserRootView: View {
     @Bindable var session: BrowserSession
+    @State private var confirmingBackupRecovery = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -23,6 +24,13 @@ struct BrowserRootView: View {
             }
         }
         .frame(minWidth: (session.isBookmarkListVisible || session.history.isVisible) ? 1120 : 800, minHeight: 420)
+        .alert("バックアップから一覧を復旧しますか？", isPresented: $confirmingBackupRecovery) {
+            Button("一覧を復旧") { session.restoreSessionBackup() }
+                .accessibilityIdentifier("confirmRestoreSessionBackupButton")
+            Button("キャンセル", role: .cancel) { }
+        } message: {
+            Text("最後の正常終了時の一覧を戻します。元の保存ファイルを残し、ページを開くかは復旧後に選べます。")
+        }
     }
 
     private func tabContent(_ tab: BrowserTab) -> some View {
@@ -75,22 +83,39 @@ struct BrowserRootView: View {
                 }.padding(8)
             }
             if let message = session.storageFailure {
-                HStack {
+                VStack(alignment: .leading, spacing: 8) {
                     Text(message).accessibilityIdentifier("storageFailure")
-                    Spacer()
-                    Button("保存を再試行") { session.persistSession() }
-                    Button("保存せず終了") {
-                        session.discardUnsavedChangesOnQuit = true
-                        NSApplication.shared.terminate(nil)
+                    if let count = session.recoveryBackupTabCount {
+                        let date = session.recoveryBackupDate?.formatted(date: .numeric, time: .shortened) ?? "日時不明"
+                        Text("最後の正常終了: \(date)・\(count)タブ")
+                            .font(.caption).accessibilityIdentifier("sessionBackupInfo")
+                        Button("バックアップから復旧…") { confirmingBackupRecovery = true }
+                            .disabled(!session.canRestoreSessionBackup)
+                            .accessibilityIdentifier("restoreSessionBackupButton")
+                        if !session.canRestoreSessionBackup {
+                            Text("復旧は新しいページを開く前に行ってください。必要なら終了して起動し直してください。")
+                                .font(.caption)
+                        }
+                    } else if session.hasStorageRecoverySource {
+                        Text("利用できるバックアップが見つかりません。元の保存ファイルを残しています。")
+                            .font(.caption)
                     }
-                }.padding(8)
+                    HStack {
+                        Button("保存を再試行") { session.persistSession() }.disabled(!session.canRetryPersistence)
+                        Button("保存せず終了") {
+                            session.discardUnsavedChangesOnQuit = true
+                            NSApplication.shared.terminate(nil)
+                        }
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
             }
             if session.recoveryRequired {
                 HStack {
-                    Text("前回は正常に終了しませんでした。タブ一覧だけを復元しました。")
+                    Text(session.recoveryMessage)
                         .accessibilityIdentifier("sessionRecoveryNotice")
                     Spacer()
                     Button("選択中のページを開く") { session.resumeSelectedTab() }
+                        .disabled(tab.pendingURL == nil || !tab.mayRestoreAutomatically || tab.isSleeping)
                 }.padding(8)
             }
             if let message = tab.inputError ?? tab.page?.failure {
@@ -134,6 +159,10 @@ struct BrowserRootView: View {
                     Button("ページを再開") { session.resumeSleepingTab() }
                         .accessibilityIdentifier("resumeSleepingTabButton")
                 }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if session.recoveryRequired && tab.pendingURL != nil && tab.mayRestoreAutomatically {
+                ContentUnavailableView("ページはまだ読み込んでいません", systemImage: "globe",
+                                       description: Text("上の「選択中のページを開く」から表示できます。"))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView("Levistica", systemImage: "globe",
                                        description: Text("URLを入力してページを開きます。"))
