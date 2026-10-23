@@ -10,6 +10,18 @@ spec.loader.exec_module(measure)
 
 
 class AttributionTests(unittest.TestCase):
+    def test_measurement_requires_its_own_bundle_and_non_debuggable_sandbox_signing(self):
+        info = {'CFBundleIdentifier': 'dev.fomalhaut16.Levistica.measurement'}
+        entitlements = {'com.apple.security.app-sandbox': True}
+        measure.validate_measurement_signing(info, entitlements)
+        for changed in [{'com.apple.security.app-sandbox': False},
+                        {'com.apple.security.get-task-allow': True}]:
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                measure.validate_measurement_signing(info, {**entitlements, **changed})
+        for identifier in ['dev.fomalhaut16.Levistica', 'dev.fomalhaut16.Levistica.profile', None]:
+            with self.subTest(identifier=identifier), self.assertRaises(ValueError):
+                measure.validate_measurement_signing({'CFBundleIdentifier': identifier}, entitlements)
+
     def document_set(self):
         return {'kind': 'documents', 'expected_tabs': 5, 'loads': 5, 'ready_monotonic': 10,
                 'url': 'http://127.0.0.1:1/document', 'document_hashes': {'1': 'synthetic'},

@@ -1,9 +1,12 @@
 import importlib.util
 import pathlib
+import tempfile
+import json
+import copy
 import os
 import subprocess
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 path = pathlib.Path(__file__).resolve().parents[1] / 'idle-workload.py'
 spec = importlib.util.spec_from_file_location('idle_workload', path)
@@ -20,6 +23,88 @@ class IdleWorkloadTests(unittest.TestCase):
                 'stream_connections': {key: 1 if completed else 0 for key in keys},
                 'documents': {key: {'complete': True, 'seenVisible': True, 'sections': 240, 'pulse': 1}
                               for key in keys} if completed else {}}
+
+    def sample_result(self):
+        return {'browser': 'levistica-measurement', 'pid': 123, 'valid_sample_count': 1,
+                'loaded_pages': 20, 'total_tabs': 20,
+                'samples': [{'valid': True, 'identity_stable': True, 'missing_pids': [],
+                             'tool_errors': [], 'sum_attributed_physical_footprints_bytes': 12345}]}
+
+    def test_sample_result_rejects_wrong_target_counts_and_process_failure(self):
+        original = self.sample_result()
+        module.validate_sample_result(original, 123, 0)
+        for key, value in [('browser', 'levistica'), ('pid', 124), ('valid_sample_count', 0),
+                           ('loaded_pages', 19), ('total_tabs', 21), ('samples', []), ('samples', None)]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                module.validate_sample_result({**original, key: value}, 123, 0)
+        with self.assertRaises(ValueError):
+            module.validate_sample_result(original, 123, 1)
+
+    def test_success_count_cannot_override_invalid_or_incomplete_sample(self):
+        for key, value in [('valid', False), ('valid', 1), ('identity_stable', False),
+                           ('missing_pids', [124]), ('tool_errors', ['synthetic']),
+                           ('sum_attributed_physical_footprints_bytes', None),
+                           ('sum_attributed_physical_footprints_bytes', -1),
+                           ('sum_attributed_physical_footprints_bytes', True)]:
+            document = copy.deepcopy(self.sample_result())
+            document['samples'][0][key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                module.validate_sample_result(document, 123, 0)
+        document = self.sample_result()
+        document['samples'] = [None]
+        with self.assertRaises(ValueError):
+            module.validate_sample_result(document, 123, 0)
+
+    def test_collector_timeout_terminates_only_its_new_process_group(self):
+        process = Mock(pid=4321)
+        process.communicate.side_effect = subprocess.TimeoutExpired('synthetic', 45)
+        with patch.object(module.subprocess, 'Popen', return_value=process) as spawn, \
+                patch.object(module.os, 'killpg') as kill, \
+                patch.object(module.signal, 'signal', return_value='previous') as handler:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                module.run_capture(['synthetic-command'])
+            self.assertTrue(spawn.call_args.kwargs['start_new_session'])
+            kill.assert_called_once_with(4321, module.signal.SIGTERM)
+            process.wait.assert_called_once_with(timeout=5)
+            self.assertEqual(handler.call_args.args, (module.signal.SIGTERM, 'previous'))
+
+    def test_failed_collector_spawn_restores_handler_without_signalling(self):
+        with patch.object(module.subprocess, 'Popen', side_effect=OSError('synthetic')), \
+                patch.object(module.os, 'killpg') as kill, \
+                patch.object(module.signal, 'signal', return_value='previous') as handler:
+            with self.assertRaises(OSError):
+                module.run_capture(['synthetic-command'])
+            kill.assert_not_called()
+            self.assertEqual(handler.call_args.args, (module.signal.SIGTERM, 'previous'))
+
+    def test_result_path_must_be_unique_and_stay_in_local_memory_evidence(self):
+        path = module.ROOT / '.local/artifacts/memory/synthetic/result.json'
+        self.assertEqual(module.measurement_result(f'Local evidence: {path}\n'), path)
+        for output in ['', f'Local evidence: {path}\nLocal evidence: {path}\n',
+                       'Local evidence: /outside/result.json\n',
+                       f'Local evidence: {module.ROOT}/.local/artifacts/memory/other.json\n']:
+            with self.subTest(output=output), self.assertRaises(ValueError):
+                module.measurement_result(output)
+
+    def test_ram_capture_refuses_profile_and_normal_apps_before_inspecting_processes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = pathlib.Path(temporary) / 'workload.json'
+            for variant in ['Profile', 'Release', None]:
+                path.write_text(json.dumps({'variant': variant}))
+                with patch.object(module, 'verify_application') as verify:
+                    with self.subTest(variant=variant), self.assertRaises(ValueError):
+                        module.capture_memory(pathlib.Path(temporary) / 'absent-state.json', path)
+                    verify.assert_not_called()
+
+    def test_memory_mode_rejects_test_override_and_stack_logging_before_building(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        for settings in [{'TEST_ONLY': 'LevisticaTests'}, {'LEVISTICA_MALLOC_STACKS': '1'}]:
+            env = {key: value for key, value in os.environ.items()
+                   if not key.startswith('LEVISTICA_') and key not in ('CONFIGURATION', 'TEST_ONLY')}
+            result = subprocess.run(['bash', str(root / 'script/test.sh'), '--measure-idle-ui'],
+                                    env={**env, **settings}, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertNotIn('Built ', result.stdout)
 
     def test_preparation_requires_an_untouched_twenty_host_fixture(self):
         module.validate_state(self.state())
