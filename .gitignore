@@ -17,3 +17,18 @@ __pycache__/
 
 # Local read-only research reference (absolute symlink)
 /research-reference
+
+# Local agent/editor setup and development-only documentation
+/.agents/
+/.codex/
+/.claude/
+/.cursor/
+/.idea/
+/.vscode/
+/skills/
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+/PLAN.md
+/PRODUCT_SPEC.md
+/DEVELOPMENT.md
