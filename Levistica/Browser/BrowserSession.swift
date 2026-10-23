@@ -101,12 +101,16 @@ final class BrowserSession {
             if let testID { folder.append(path: "SessionTests/" + testID.uuidString, directoryHint: .isDirectory) }
             #if DEBUG
             if testID != nil && environment["LEVISTICA_EPHEMERAL"] == "1",
-               environment["LEVISTICA_RECOVERY_FIXTURE"] == "1",
-               let value = environment["LEVISTICA_RECOVERY_FIXTURE_BASE"],
+               let value = environment["LEVISTICA_SESSION_FIXTURE_BASE"],
                let base = URLComponents(string: value), base.scheme == "http", base.host == "127.0.0.1",
                base.port != nil, base.user == nil, base.password == nil, base.query == nil, base.fragment == nil,
                base.path.isEmpty || base.path == "/", let url = base.url {
-                try seedRecoveryFixture(in: folder, base: url)
+                if environment["LEVISTICA_RECOVERY_FIXTURE"] == "1" {
+                    try seedRecoveryFixture(in: folder, base: url)
+                } else if let rawCount = environment["LEVISTICA_LARGE_SESSION_FIXTURE"],
+                          ["50", "100"].contains(rawCount), let count = Int(rawCount) {
+                    try seedLargeSessionFixture(in: folder, base: url, count: count)
+                }
             }
             #endif
             return persistentSession(in: folder)
@@ -119,6 +123,23 @@ final class BrowserSession {
     }
 
     #if DEBUG
+    private static func seedLargeSessionFixture(in folder: URL, base: URL, count: Int) throws {
+        let manager = FileManager.default
+        if manager.fileExists(atPath: folder.path),
+           !(try manager.contentsOfDirectory(atPath: folder.path)).isEmpty { return }
+        guard [50, 100].contains(count) else { throw SessionStore.Failure.invalidData }
+        let tabs = try (1...count).map { number in
+            guard var location = URLComponents(url: base.appendingPathComponent(number == 1 ? "two" : "one"), resolvingAgainstBaseURL: false) else {
+                throw SessionStore.Failure.invalidData
+            }
+            location.fragment = "tab-\(number)"
+            return SavedTab(id: UUID(), title: String(format: "Scale tab %03d", number),
+                            url: location.url, mayReload: true)
+        }
+        let store = try SessionStore(fileURL: folder.appendingPathComponent("session.sqlite3"))
+        try store.save(SavedSession(tabs: tabs, selectedID: tabs[0].id, wasRunning: false))
+    }
+
     // Only fresh UUID-scoped, ephemeral Debug sessions may create this synthetic fixture.
     private static func seedRecoveryFixture(in folder: URL, base: URL) throws {
         let manager = FileManager.default

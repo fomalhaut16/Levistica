@@ -23,50 +23,67 @@ struct TabSidebar: View {
             TextField("タブを検索", text: $filter)
                 .textFieldStyle(.roundedBorder).padding(.horizontal, 10)
                 .accessibilityIdentifier("tabSearchField")
-            List(selection: Binding<UUID?>(
-                get: { session.selectedID },
-                set: { if let id = $0 { session.select(id) } }
-            )) {
-                ForEach(visibleTabs) { tab in
-                    HStack {
-                        Image(systemName: tab.isKept ? "pin.fill" : (tab.isSleeping ? "moon.zzz" : (tab.page == nil ? "doc" : "globe")))
-                            .accessibilityLabel(tab.isKept ? "保持するタブ" : (tab.isSleeping ? "休眠中" : "ページ"))
-                        Text(tab.displayTitle).lineLimit(1)
-                        if tab.page?.inputGuard.hasEditedInput == true {
-                            Image(systemName: "pencil").accessibilityLabel("入力操作あり")
-                                .help("入力操作を検知したタブです。閉じるときに確認します。")
-                                .accessibilityIdentifier("editedInput-\(tab.id)")
+            ScrollViewReader { proxy in
+                List(selection: Binding<UUID?>(
+                    get: { session.selectedID },
+                    set: {
+                        if let id = $0 {
+                            // A deferred page's title can change as soon as it loads.
+                            // Finish the search before selecting so its row stays available.
+                            filter = ""
+                            session.select(id)
                         }
-                        Spacer(minLength: 0)
-                        Button("タブを閉じる", systemImage: "xmark") { session.closeTab(tab.id) }
-                            .labelStyle(.iconOnly).buttonStyle(.borderless)
-                            .accessibilityIdentifier("closeTab-\(tab.id)")
                     }
-                    .tag(tab.id)
-                    .accessibilityIdentifier("tab-\(tab.id)")
-                    .contextMenu {
-                        Button(tab.isKept ? "タブの保持を解除" : "このタブを保持") { session.toggleKeep(tab.id) }
-                        if tab.id == session.selectedID {
-                            Button("このタブを休眠…") { session.requestSelectedTabSleep() }
-                                .disabled(tab.page == nil || session.isRequestingSleep)
+                )) {
+                    ForEach(visibleTabs) { tab in
+                        HStack {
+                            Image(systemName: tab.isKept ? "pin.fill" : (tab.isSleeping ? "moon.zzz" : (tab.page == nil ? "doc" : "globe")))
+                                .accessibilityLabel(tab.isKept ? "保持するタブ" : (tab.isSleeping ? "休眠中" : "ページ"))
+                            Text(tab.displayTitle).lineLimit(1)
+                            if tab.page?.inputGuard.hasEditedInput == true {
+                                Image(systemName: "pencil").accessibilityLabel("入力操作あり")
+                                    .help("入力操作を検知したタブです。閉じるときに確認します。")
+                                    .accessibilityIdentifier("editedInput-\(tab.id)")
+                            }
+                            Spacer(minLength: 0)
+                            Button("タブを閉じる", systemImage: "xmark") { session.closeTab(tab.id) }
+                                .labelStyle(.iconOnly).buttonStyle(.borderless)
+                                .accessibilityIdentifier("closeTab-\(tab.id)")
                         }
-                        Divider()
-                        Button("タブを閉じる") { session.closeTab(tab.id) }
-                        Divider()
-                        Button("前に移動") { session.moveTab(tab.id, by: -1) }
-                            .disabled(session.tabs.first?.id == tab.id)
-                        Button("後ろに移動") { session.moveTab(tab.id, by: 1) }
-                            .disabled(session.tabs.last?.id == tab.id)
+                        .tag(tab.id)
+                        .id(tab.id)
+                        .accessibilityIdentifier("tab-\(tab.id)")
+                        .contextMenu {
+                            Button(tab.isKept ? "タブの保持を解除" : "このタブを保持") { session.toggleKeep(tab.id) }
+                            if tab.id == session.selectedID {
+                                Button("このタブを休眠…") { session.requestSelectedTabSleep() }
+                                    .disabled(tab.page == nil || session.isRequestingSleep)
+                            }
+                            Divider()
+                            Button("タブを閉じる") { session.closeTab(tab.id) }
+                            Divider()
+                            Button("前に移動") { session.moveTab(tab.id, by: -1) }
+                                .disabled(session.tabs.first?.id == tab.id)
+                            Button("後ろに移動") { session.moveTab(tab.id, by: 1) }
+                                .disabled(session.tabs.last?.id == tab.id)
+                        }
+                        .moveDisabled(!filter.isEmpty)
                     }
-                    .moveDisabled(!filter.isEmpty)
+                    .onMove { source, destination in
+                        guard filter.isEmpty else { return }
+                        session.moveTabs(from: source, to: destination)
+                    }
                 }
-                .onMove { source, destination in
+                .listStyle(.sidebar)
+                .accessibilityIdentifier("tabList")
+                .task(id: filter.isEmpty ? session.selectedID : nil) {
                     guard filter.isEmpty else { return }
-                    session.moveTabs(from: source, to: destination)
+                    // Let the restored/filtered list lay out before locating its row.
+                    await Task.yield()
+                    guard !Task.isCancelled else { return }
+                    proxy.scrollTo(session.selectedID, anchor: .center)
                 }
             }
-            .listStyle(.sidebar)
-            .accessibilityIdentifier("tabList")
             Text("\(session.tabs.count)タブ・読み込み済み\(session.loadedPageCount)")
                 .font(.caption).foregroundStyle(.secondary)
                 .padding(.bottom, 8).accessibilityIdentifier("tabLoadSummary")
