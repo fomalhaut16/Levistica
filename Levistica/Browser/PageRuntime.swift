@@ -37,6 +37,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var lastRequest: URLRequest?
     @ObservationIgnored private var committedRequest: URLRequest?
+    @ObservationIgnored private var committedUserAgent: String?
     @ObservationIgnored private var activeNavigation: WKNavigation?
     @ObservationIgnored private var documentGeneration = 0
     var documentRevision: Int { documentGeneration }
@@ -196,7 +197,16 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         failure = nil
         activeNavigation = webView.reload()
     }
-    func stop() { dialogs.cancel(); webView.stopLoading() }
+    func stop() {
+        dialogs.cancel()
+        webView.stopLoading()
+        restoreDisplayedIdentity()
+    }
+
+    private func restoreDisplayedIdentity() {
+        // A provisional destination has not replaced the committed document.
+        webView.customUserAgent = committedUserAgent
+    }
     func dismissFailure() { failure = nil }
 
     func retry() {
@@ -446,6 +456,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         pdfTitle = pendingPDFTitle
         inputGuard.beginDocument()
         committedRequest = lastRequest
+        committedUserAgent = webView.customUserAgent
         invalidateFindResult()
         updateSnapshot()
     }
@@ -460,6 +471,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         let error = error as NSError
         if let failedURL = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL,
            let requestedURL = lastRequest?.url, failedURL != requestedURL { return }
+        restoreDisplayedIdentity()
         guard !(error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled) else { return }
         updateSnapshot()
         url = lastRequest?.url ?? url
