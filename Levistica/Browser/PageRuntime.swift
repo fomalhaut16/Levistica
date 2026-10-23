@@ -37,6 +37,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var lastRequest: URLRequest?
     @ObservationIgnored private var committedRequest: URLRequest?
+    @ObservationIgnored private var committedUserAgent: String?
     @ObservationIgnored private var activeNavigation: WKNavigation?
     @ObservationIgnored private var documentGeneration = 0
     var documentRevision: Int { documentGeneration }
@@ -204,7 +205,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     private func restoreDisplayedIdentity() {
         // A provisional destination has not replaced the committed document.
-        webView.customUserAgent = NavigationPolicy.userAgent(for: committedRequest?.url)
+        webView.customUserAgent = committedUserAgent
     }
     func dismissFailure() { failure = nil }
 
@@ -455,6 +456,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         pdfTitle = pendingPDFTitle
         inputGuard.beginDocument()
         committedRequest = lastRequest
+        committedUserAgent = webView.customUserAgent
         invalidateFindResult()
         updateSnapshot()
     }

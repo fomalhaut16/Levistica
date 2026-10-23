@@ -4,6 +4,29 @@ import WebKit
 
 @MainActor
 struct PageInputGuardTests {
+    @Test(arguments: [false, true])
+    func stoppingPreservesIdentityCapturedAtCommit(googleIdentity: Bool) async throws {
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        defer { runtime.stop() }
+        let initialURL = try #require(URL(string: googleIdentity ? "https://example.org/" : "https://www.google.com/"))
+        let finalURL = try #require(URL(string: googleIdentity ? "https://www.google.com/" : "https://example.org/"))
+        runtime.webView.loadSimulatedRequest(URLRequest(url: initialURL), responseHTML:
+            "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'\"><title>Commit identity fixture</title>")
+        let deadline = ContinuousClock.now + .seconds(10)
+        while runtime.webView.title != "Commit identity fixture", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(runtime.webView.title == "Commit identity fixture")
+        // Model the delegate's final-response selection and commit separately.
+        // loadSimulatedRequest itself does not reproduce a network redirect.
+        runtime.webView.customUserAgent = NavigationPolicy.userAgent(for: finalURL)
+        runtime.webView(runtime.webView, didCommit: nil)
+        let selectedAgent = runtime.webView.customUserAgent ?? ""
+        runtime.webView.customUserAgent = NavigationPolicy.userAgent(for: initialURL)
+        runtime.stop()
+        #expect((runtime.webView.customUserAgent ?? "") == selectedAgent)
+    }
+
     @Test(arguments: ["https://www.google.com/", "https://example.org/"], ["stop", "failure", "cancel"])
     func interruptedNavigationKeepsTheDisplayedDocumentIdentity(address: String, interruption: String) async throws {
         let runtime = PageRuntime(dataStore: .nonPersistent())
