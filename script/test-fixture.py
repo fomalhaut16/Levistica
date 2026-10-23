@@ -95,6 +95,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(page.encode())
             return
         pages = {
+            "/spa": '''<title>SPA start</title><h1>SPA fixture</h1>
+                <button onclick="history.pushState({},'', '/spa/second');document.title='SPA second';statusLine.textContent='Second route'">Push route</button>
+                <button onclick="history.replaceState({},'', '/spa/replaced');document.title='SPA replaced';statusLine.textContent='Replaced route'">Replace route</button>
+                <button onclick="history.pushState({},'', '/spa?token=synthetic');document.title='Excluded route';statusLine.textContent='Excluded route'">Sensitive route</button>
+                <button onclick="document.title='SPA renamed';statusLine.textContent='Renamed route'">Rename route</button>
+                <p id="statusLine">Start route</p>''',
             "/departure": '''<title>Departure fixture</title><h1>Departure fixture</h1>
                 <input aria-label="Departure draft"><a href="/two">Leave draft</a>
                 <a href="#section">Same document</a><p id="section">Same document section</p>

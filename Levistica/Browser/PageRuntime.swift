@@ -88,6 +88,19 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         canGoForward = webView.canGoForward
         progress = webView.estimatedProgress
         if previousURL != url || previousTitle != title { onMetadataChange?() }
+        // A completed document may change its URL without a new navigation.
+        // Require a committed GET and the current history item, so provisional
+        // destinations, POST documents and failed loads do not become visits.
+        if let visit = lastHistoryVisit, let current = webView.url,
+           current != visit.url, !isLoading, failure == nil, localPDF == nil,
+           committedRequest?.httpMethod == "GET", canRetry,
+           webView.backForwardList.currentItem?.url == current,
+           current.scheme == visit.url.scheme, current.host == visit.url.host,
+           current.port == visit.url.port, SessionStore.persistableURL(current) == current {
+            let visited = Date()
+            lastHistoryVisit = (current, visited)
+            onVisit?(current, title, visited)
+        }
         if previousTitle != title, let visit = lastHistoryVisit, visit.url == url {
             onVisitTitle?(visit.url, title, visit.time)
         }
