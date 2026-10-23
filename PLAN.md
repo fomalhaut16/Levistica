@@ -1038,7 +1038,7 @@ Allocationsの開始案内が出て、RunIssuesにattach失敗がないことを
 
 ### 2026-10-23 解放済み領域の返却要求の実験記録（終了・コード撤去）
 
-次の問いは、観測したempty領域が公開APIの `malloc_zone_pressure_relief(nil, 0)` で減るか。手元の公開SDK `usr/include/malloc/malloc.h` は、NULLで全zoneを調べ、goalが0なら可能な限りの解放を試み、返却したバイト数を返すと説明している。生存するオブジェクトを破棄する操作ではなく、UI processのアロケータ内の解放可能な領域への要求として使う。別processのWebContent・Network・GPUへの解放指示ではない。
+次の問いは、観測したempty領域が公開APIの `malloc_zone_pressure_relief(nil, 0)` で減るか。手元の公開SDK `usr/include/malloc/malloc.h` は、NULLで全zoneを調べ、goalが0なら可能な限りの解放を試み、返却したバイト数を返すと説明している。UI processのアロケータ内の解放可能な領域への要求として使い、WebContent・Network・GPUは別processとして評価する。
 
 専用Profileと `LEVISTICA_ALLOCATOR_RELIEF=1` の両方が揃った場合だけ、診断メニューに1回の返却操作を出す。通常Debug・Releaseにはコンパイルせず、通常Profileでも明示フラグがなければ表示しない。MallocStackLoggingとの同時指定は起動・停止前に拒否する。今回のアロケータは通常設定を使い、全履歴の記録や未公開環境変数によるキャッシュ設定の変更は行わない。swiftui-patternsの責務分担に従い既存のCommands内へ限定する。
 

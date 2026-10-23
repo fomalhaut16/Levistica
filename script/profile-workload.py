@@ -34,11 +34,10 @@ def validate_state(state, completed=False):
 
 
 
-def validate_snapshots(directory, pressure_relief=False):
+def validate_snapshots(directory):
     files = []
-    stages = RELIEF_STAGES if pressure_relief else STAGES
-    for stage in stages:
-        for tool in ('vmmap',) if pressure_relief else ('vmmap', 'malloc_history'):
+    for stage in ('loaded-five', 'sleep-1', 'sleep-2', 'resumed-two'):
+        for tool in ('vmmap', 'malloc_history'):
             path = directory / f'{stage}-{tool}.txt'
             size = path.stat().st_size
             if not 0 < size <= 8 * 1024 * 1024:
@@ -49,7 +48,6 @@ def validate_snapshots(directory, pressure_relief=False):
 
 
 STAGES = ('loaded-five', 'sleep-1', 'sleep-2', 'resumed-two')
-RELIEF_STAGES = ('loaded-five', 'sleep-1', 'sleep-2', 'after-relief')
 MAX_BYTES = 8 * 1024 * 1024
 
 
@@ -89,8 +87,7 @@ def request_is_valid(headers, host, token):
             and secrets.compare_digest(supplied, token))
 
 
-def create_collector(pid, verify, capture, pressure_relief=False):
-    stages = RELIEF_STAGES if pressure_relief else STAGES
+def create_collector(pid, verify, capture):
     token = secrets.token_urlsafe(32)
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -99,16 +96,14 @@ def create_collector(pid, verify, capture, pressure_relief=False):
                 self.send_error(403)
                 return
             index = len(self.server.records)
-            if index >= len(stages) or self.path != '/snapshot/' + stages[index]:
+            if index >= len(STAGES) or self.path != '/snapshot/' + STAGES[index]:
                 self.send_error(409)
                 return
-            stage = stages[index]
+            stage = STAGES[index]
             try:
                 results = []
-                tools = [('vmmap', ['-summary', str(pid)])]
-                if not pressure_relief:
-                    tools.append(('malloc_history', [str(pid), '-callTree', '.*[8m+]']))
-                for tool, arguments in tools:
+                for tool, arguments in [('vmmap', ['-summary', str(pid)]),
+                                        ('malloc_history', [str(pid), '-callTree', '.*[8m+]'])]:
                     verify()
                     results.append(capture(stage, tool, arguments))
                     verify()
@@ -143,9 +138,8 @@ def create_collector(pid, verify, capture, pressure_relief=False):
 
 def serve_collector(workload_path):
     workload = json.loads(workload_path.read_text())
-    relief = workload.get('allocatorRelief', False)
-    if bool(workload.get('mallocStacks')) == bool(relief):
-        raise ValueError('Collector requires exactly one diagnostic mode')
+    if not workload.get('mallocStacks'):
+        raise ValueError('Collector requires explicit Profile stack logging')
     pid = workload['pid']
     birth = processes.run_ps(['-p', str(pid), '-o', 'lstart='])
     if birth is None:
@@ -161,7 +155,7 @@ def serve_collector(workload_path):
 
     verify()
     directory = workload_path.parent
-    server = create_collector(pid, verify, lambda stage, tool, args: capture_tool(directory, stage, tool, args), pressure_relief=relief)
+    server = create_collector(pid, verify, lambda stage, tool, args: capture_tool(directory, stage, tool, args))
     workload['collector'] = {'url': f'http://127.0.0.1:{server.server_port}', 'token': server.token}
     temporary = workload_path.with_suffix('.tmp')
     temporary.write_text(json.dumps(workload, indent=2) + '\n')
@@ -204,12 +198,12 @@ def main():
         pids = processes.check_snapshot(snapshot, ROOT, processes.describe_process, os.getuid(), only='Profile')
         if len(pids) != 1:
             raise ValueError('Exactly one verified Profile process is required')
-        args.output.write_text(json.dumps({'pid': pids[0], 'executable': next(path for path, identifier in processes.known_apps(ROOT).items() if identifier.endswith('.profile')), 'urls': state['urls'], 'mallocStacks': os.environ.get('LEVISTICA_MALLOC_STACKS', '0') == '1', 'allocatorRelief': os.environ.get('LEVISTICA_ALLOCATOR_RELIEF', '0') == '1'}, indent=2) + '\n')
+        args.output.write_text(json.dumps({'pid': pids[0], 'executable': next(path for path, identifier in processes.known_apps(ROOT).items() if identifier.endswith('.profile')), 'urls': state['urls'], 'mallocStacks': os.environ.get('LEVISTICA_MALLOC_STACKS', '0') == '1'}, indent=2) + '\n')
         args.output.chmod(0o600)
         print('Profile workload prepared for one verified process.')
     else:
         workload = json.loads(args.state.with_name('workload.json').read_text())
-        snapshots = validate_snapshots(args.state.parent, pressure_relief=workload.get('allocatorRelief', False)) if workload.get('mallocStacks') or workload.get('allocatorRelief') else []
+        snapshots = validate_snapshots(args.state.parent) if workload.get('mallocStacks') else []
         print(json.dumps({'snapshots': snapshots, 'completed': True, 'cycles': 2, 'sleeps': 8, 'resumes': 8,
                           'loads': sum(counts.values()), 'document_loads': counts}))
 
