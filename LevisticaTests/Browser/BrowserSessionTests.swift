@@ -5,6 +5,45 @@ import WebKit
 
 @MainActor
 struct BrowserSessionTests {
+    @Test func measurementStorageDefaultsToNonPersistentWithoutAnIdentifier() throws {
+        let config = try MeasurementWebsiteStorage.configuration(environment: [:], bundleIdentifier: "dev.fomalhaut16.Levistica")
+        #expect(config.storeID == nil)
+        #expect(MeasurementWebsiteStorage.dataStore(configuration: config).isPersistent == false)
+    }
+
+    @Test(arguments: ["", "invalid", "00000000-0000-0000-0000-000000000000",
+                      "123456781234123412341234567890ab", " 12345678-1234-1234-1234-1234567890ab"])
+    func invalidMeasurementStoreIdentifiersAreRejected(_ value: String) {
+        #expect(throws: MeasurementWebsiteStorage.Failure.self) {
+            try MeasurementWebsiteStorage.configuration(environment: [MeasurementWebsiteStorage.storeKey: value],
+                bundleIdentifier: "dev.fomalhaut16.Levistica.measurement")
+        }
+    }
+
+    @Test(arguments: ["dev.fomalhaut16.Levistica", "dev.fomalhaut16.Levistica.debug", "dev.fomalhaut16.Levistica.profile"])
+    func persistentMeasurementCannotSelectAnotherBundle(_ bundle: String) {
+        #expect(throws: MeasurementWebsiteStorage.Failure.self) {
+            try MeasurementWebsiteStorage.configuration(
+                environment: [MeasurementWebsiteStorage.storeKey: UUID().uuidString], bundleIdentifier: bundle)
+        }
+    }
+
+    @Test func namedMeasurementStoreIsPersistentAndRemovableWithoutTargetWebViews() async throws {
+        let id = UUID()
+        var store: WKWebsiteDataStore? = autoreleasepool {
+            MeasurementWebsiteStorage.dataStore(configuration: .init(storeID: id))
+        }
+        #expect(store?.isPersistent == true)
+        #expect(store?.identifier == id)
+        let cookie = try #require(HTTPCookie(properties: [.domain: "measurement.invalid", .path: "/",
+            .name: "measurement-fixture", .value: "synthetic", .expires: Date().addingTimeInterval(600)]))
+        await store?.httpCookieStore.setCookie(cookie)
+        store = nil
+        try await WKWebsiteDataStore.remove(forIdentifier: id)
+        let identifiers = await WKWebsiteDataStore.allDataStoreIdentifiers
+        #expect(identifiers.contains(id) == false)
+    }
+
     private func preferencesFile() throws -> URL {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

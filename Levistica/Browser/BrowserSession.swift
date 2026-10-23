@@ -2,6 +2,39 @@ import Observation
 import WebKit
 import AppKit
 
+enum MeasurementWebsiteStorage {
+    static let storeKey = "LEVISTICA_MEASUREMENT_STORE_ID"
+    struct Configuration {
+        let storeID: UUID?
+    }
+    enum Failure: Error { case invalidConfiguration }
+
+    static func uuid(_ raw: String) throws -> UUID {
+        guard let value = UUID(uuidString: raw),
+              value.uuidString.lowercased() == raw.lowercased(),
+              value.uuidString != "00000000-0000-0000-0000-000000000000" else {
+            throw Failure.invalidConfiguration
+        }
+        return value
+    }
+
+    static func configuration(environment: [String: String], bundleIdentifier: String?) throws -> Configuration {
+        guard environment["LEVISTICA_MEASUREMENT_CLEANUP_REQUEST"] == nil else {
+            throw Failure.invalidConfiguration
+        }
+        guard let rawStore = environment[storeKey] else { return Configuration(storeID: nil) }
+        guard bundleIdentifier == "dev.fomalhaut16.Levistica.measurement" else {
+            throw Failure.invalidConfiguration
+        }
+        return try Configuration(storeID: uuid(rawStore))
+    }
+
+    @MainActor static func dataStore(configuration: Configuration) -> WKWebsiteDataStore {
+        if let identifier = configuration.storeID { return WKWebsiteDataStore(forIdentifier: identifier) }
+        return .nonPersistent()
+    }
+}
+
 @MainActor
 @Observable
 final class BrowserSession {
@@ -700,7 +733,14 @@ final class BrowserSession {
 
     private func websiteDataStore() -> WKWebsiteDataStore {
         if let dataStore { return dataStore }
-        #if LEVISTICA_PROFILE || LEVISTICA_MEASUREMENT
+        #if LEVISTICA_MEASUREMENT
+        let configuration: MeasurementWebsiteStorage.Configuration
+        do {
+            configuration = try MeasurementWebsiteStorage.configuration(
+                environment: ProcessInfo.processInfo.environment, bundleIdentifier: Bundle.main.bundleIdentifier)
+        } catch { preconditionFailure("Invalid isolated measurement store configuration") }
+        let value = MeasurementWebsiteStorage.dataStore(configuration: configuration)
+        #elseif LEVISTICA_PROFILE
         let value = WKWebsiteDataStore.nonPersistent()
         #else
         let isolated = ProcessInfo.processInfo.environment["LEVISTICA_EPHEMERAL"] == "1"
