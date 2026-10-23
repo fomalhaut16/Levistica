@@ -27,22 +27,45 @@ final class SessionStore {
     enum Failure: Error { case unavailable, invalidData, newerVersion }
     private var database: OpaquePointer?
     private let fileURL: URL
+    var dataFileURL: URL { fileURL }
     var backupURL: URL { fileURL.appendingPathExtension("backup") }
     private var lastSaved: SavedSession?
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-    init(fileURL: URL) throws {
+    convenience init(fileURL: URL) throws {
+        try self.init(fileURL: fileURL, readOnly: false)
+    }
+
+    private init(fileURL: URL, readOnly: Bool) throws {
         self.fileURL = fileURL
         let manager = FileManager.default
-        try manager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
-                                    attributes: [.posixPermissions: 0o700])
-        if !manager.fileExists(atPath: fileURL.path) {
-            guard manager.createFile(atPath: fileURL.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
-                throw Failure.unavailable
-            }
+        if let attributes = try? manager.attributesOfItem(atPath: fileURL.path) {
+            guard attributes[.type] as? FileAttributeType == .typeRegular else { throw Failure.invalidData }
+        } else if readOnly {
+            throw Failure.unavailable
         }
-        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-        guard sqlite3_open_v2(fileURL.path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil) == SQLITE_OK else {
+        if !readOnly {
+            try manager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                        attributes: [.posixPermissions: 0o700])
+            if !manager.fileExists(atPath: fileURL.path) {
+                guard manager.createFile(atPath: fileURL.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
+                    throw Failure.unavailable
+                }
+            }
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        }
+        // Verified snapshots are complete files replaced atomically, never edited in place.
+        // Immutable reads also handle a copied WAL-mode header without touching sidecars.
+        var filename = fileURL.path
+        var flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
+        if readOnly {
+            var components = URLComponents(url: fileURL, resolvingAgainstBaseURL: false)
+            components?.queryItems = [URLQueryItem(name: "immutable", value: "1")]
+            guard let uri = components?.string else { throw Failure.invalidData }
+            filename = uri
+            flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI
+        }
+        guard sqlite3_open_v2(filename, &database, flags, nil) == SQLITE_OK else {
             if let database { sqlite3_close(database) }
             database = nil
             throw Failure.unavailable
@@ -54,6 +77,10 @@ final class SessionStore {
             guard sqlite3_step(version) == SQLITE_ROW else { throw Failure.invalidData }
             let number = sqlite3_column_int(version, 0)
             guard number <= 3 else { throw Failure.newerVersion }
+            if readOnly {
+                guard number == 3 else { throw Failure.invalidData }
+                return
+            }
             if number == 0 {
                 try execute("BEGIN IMMEDIATE")
                 do {
@@ -216,7 +243,7 @@ final class SessionStore {
     }
 
     private static func checkedSnapshot(at url: URL) throws -> SavedSession? {
-        let copy = try SessionStore(fileURL: url)
+        let copy = try SessionStore(fileURL: url, readOnly: true)
         return try withExtendedLifetime(copy) {
             let check = try copy.statement("PRAGMA quick_check")
             defer { sqlite3_finalize(check) }
@@ -224,6 +251,86 @@ final class SessionStore {
                   sqlite3_step(check) == SQLITE_DONE else { throw Failure.invalidData }
             return try copy.load()
         }
+    }
+
+    private struct Location: Codable {
+        let version: Int
+        let fileName: String
+    }
+
+    static func currentFileURL(in directory: URL) throws -> URL {
+        let manager = FileManager.default
+        let pointer = directory.appendingPathComponent("current-session.json")
+        guard manager.fileExists(atPath: pointer.path) else {
+            if (try? manager.attributesOfItem(atPath: pointer.path)) != nil { throw Failure.invalidData }
+            if manager.fileExists(atPath: directory.path) {
+                let names = try manager.contentsOfDirectory(atPath: directory.path)
+                guard !names.contains(where: validRecoveryName), !names.contains("current-session.json") else {
+                    throw Failure.invalidData
+                }
+            }
+            return directory.appendingPathComponent("session.sqlite3")
+        }
+        let attributes = try manager.attributesOfItem(atPath: pointer.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular,
+              let size = attributes[.size] as? NSNumber, size.intValue > 0, size.intValue <= 4096 else {
+            throw Failure.invalidData
+        }
+        let location = try JSONDecoder().decode(Location.self, from: Data(contentsOf: pointer))
+        guard location.version <= 1 else { throw Failure.newerVersion }
+        guard location.version == 1, validRecoveryName(location.fileName) else { throw Failure.invalidData }
+        let target = directory.appendingPathComponent(location.fileName)
+        if let targetAttributes = try? manager.attributesOfItem(atPath: target.path) {
+            guard targetAttributes[.type] as? FileAttributeType == .typeRegular else { throw Failure.invalidData }
+        }
+        return target
+    }
+
+    private static func validRecoveryName(_ name: String) -> Bool {
+        let prefix = "recovered-session-"
+        let suffix = ".sqlite3"
+        guard name.hasPrefix(prefix), name.hasSuffix(suffix) else { return false }
+        let rawID = String(name.dropFirst(prefix.count).dropLast(suffix.count))
+        return UUID(uuidString: rawID)?.uuidString == rawID
+    }
+
+    static func readCleanBackup(of original: URL) throws -> SavedSession {
+        guard let saved = try checkedSnapshot(at: original.appendingPathExtension("backup")),
+              !saved.wasRunning else { throw Failure.invalidData }
+        return saved
+    }
+
+    // Recovery forks into a new DB; unreadable originals and their sidecars stay in place.
+    static func recoverCleanBackup(of original: URL) throws -> SessionStore {
+        let saved = try readCleanBackup(of: original)
+        let directory = original.deletingLastPathComponent()
+        let name = "recovered-session-" + UUID().uuidString + ".sqlite3"
+        let recovered = try SessionStore(fileURL: directory.appendingPathComponent(name))
+        try recovered.save(saved)
+        try recovered.writeCleanBackup()
+        try recovered.save(SavedSession(tabs: saved.tabs, selectedID: saved.selectedID, wasRunning: true))
+        let pointer = directory.appendingPathComponent("current-session.json")
+        let manager = FileManager.default
+        if manager.fileExists(atPath: pointer.path) {
+            guard try manager.attributesOfItem(atPath: pointer.path)[.type] as? FileAttributeType == .typeRegular else {
+                throw Failure.invalidData
+            }
+        }
+        let temporary = directory.appendingPathComponent(".session-location-" + UUID().uuidString + ".json")
+        defer { try? manager.removeItem(at: temporary) }
+        let data = try JSONEncoder().encode(Location(version: 1, fileName: name))
+        guard manager.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+            throw Failure.unavailable
+        }
+        let handle = try FileHandle(forWritingTo: temporary)
+        do { try handle.synchronize(); try handle.close() }
+        catch { try? handle.close(); throw error }
+        if manager.fileExists(atPath: pointer.path) {
+            _ = try manager.replaceItemAt(pointer, withItemAt: temporary, options: .usingNewMetadataOnly)
+        } else {
+            try manager.moveItem(at: temporary, to: pointer)
+        }
+        return recovered
     }
 
     static func persistableURL(_ url: URL?) -> URL? {

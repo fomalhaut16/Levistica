@@ -99,6 +99,56 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testBackupRecoveryKeepsCancelStateAndWaitsForPageSelection() throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launchEnvironment["LEVISTICA_RECOVERY_FIXTURE"] = "1"
+        app.launchEnvironment["LEVISTICA_RECOVERY_FIXTURE_BASE"] = base
+        app.launch()
+        app.activate()
+        let restore = app.buttons["restoreSessionBackupButton"]
+        XCTAssertTrue(restore.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["sessionBackupInfo"].exists)
+        XCTAssertEqual(app.webViews.count, 0)
+        attachWindowImage(app, name: "session-backup-offer")
+        restore.click()
+        let confirm = app.sheets.buttons["confirmRestoreSessionBackupButton"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        attachWindowImage(app, name: "session-backup-confirmation")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(restore.exists)
+        XCTAssertEqual(app.webViews.count, 0)
+        restore.click()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.click()
+        XCTAssertTrue(app.staticTexts["storageFailure"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["sessionRecoveryNotice"].exists)
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み0"].exists)
+        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/one")
+        XCTAssertEqual(app.webViews.count, 0)
+        XCTAssertTrue(app.staticTexts["ページはまだ読み込んでいません"].exists)
+        attachWindowImage(app, name: "session-backup-restored-list")
+        app.buttons["選択中のページを開く"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み1"].exists)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["storageFailure"].exists)
+        XCTAssertFalse(app.staticTexts["sessionRecoveryNotice"].exists)
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み1"].exists)
+        attachWindowImage(app, name: "session-backup-restart")
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
+    @MainActor
     func testManualSleepKeepsCancelStateAndRestoresOnlyByReloading() throws {
         continueAfterFailure = false
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])

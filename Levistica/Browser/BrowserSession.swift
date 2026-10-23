@@ -10,12 +10,25 @@ final class BrowserSession {
     var addressFocusRequest = 0
     var findFocusRequest = 0
     private var dataStore: WKWebsiteDataStore?
-    private let store: SessionStore?
+    private var store: SessionStore?
     private var persistenceDisabled = false
     private var initialSelectionActivated = false
     private(set) var recoveryRequired = false
+    private(set) var recoveryMessage = "前回は正常に終了しませんでした。タブ一覧だけを復元しました。"
     private(set) var storageFailure: String?
     private(set) var backupFailure: String?
+    private(set) var recoveryBackupDate: Date?
+    private(set) var recoveryBackupTabCount: Int?
+    private var recoveryFileURL: URL?
+    private var recoveryBlankTabID: UUID?
+    var hasStorageRecoverySource: Bool { recoveryFileURL != nil }
+    var canRetryPersistence: Bool { store != nil && !persistenceDisabled }
+    var canRestoreSessionBackup: Bool {
+        recoveryFileURL != nil && recoveryBackupTabCount != nil && tabs.count == 1
+            && selectedID == recoveryBlankTabID && activeTab.page == nil && activeTab.pendingURL == nil
+            && activeTab.addressDraft.isEmpty && closedTabs.isEmpty
+            && !downloads.hasActive && !isDeletingSiteData
+    }
     var externalOpenNotice: String?
     var discardUnsavedChangesOnQuit = false
     private var sleepRequestID: UUID?
@@ -55,28 +68,17 @@ final class BrowserSession {
         if let store {
             do {
                 if let saved = try store.load() {
-                    tabs = saved.tabs.map { record in
-                        let restored = BrowserTab(id: record.id)
-                        restored.isLocalPDF = record.kind == .localPDF
-                        restored.isKept = record.isKept
-                        restored.isSleeping = record.isSleeping
-                        if restored.isLocalPDF { restored.restorationNotice = "ローカルPDFは保存していません。ファイルを選び直してください。" }
-                        restored.pendingURL = record.url
-                        restored.addressDraft = record.url?.absoluteString ?? ""
-                        restored.storedTitle = record.title
-                        restored.mayRestoreAutomatically = record.mayReload
-                        if record.url != nil && !record.mayReload {
-                            restored.restorationNotice = "送信後のページです。URLを確認してから開いてください。"
-                        }
-                        return restored
-                    }
-                    selectedID = saved.selectedID
-                    recoveryRequired = saved.wasRunning
+                    install(saved, requireConfirmation: saved.wasRunning)
+                } else if FileManager.default.fileExists(atPath: store.backupURL.path)
+                            || store.dataFileURL.lastPathComponent.hasPrefix("recovered-session-") {
+                    throw SessionStore.Failure.invalidData
                 }
                 persistSession()
             } catch {
                 persistenceDisabled = true
                 storageFailure = "前回のタブ一覧を読み込めませんでした。保存データを残して起動しています。この起動では保存しません。"
+                self.store = nil
+                configureRecovery(from: store.dataFileURL, error: error)
             }
         }
     }
@@ -92,22 +94,125 @@ final class BrowserSession {
         let testID: UUID? = nil
         #endif
         if environment["LEVISTICA_EPHEMERAL"] == "1" && testID == nil { return BrowserSession() }
-        var bookmarkURL: URL?
-        var historyURL: URL?
         do {
             var folder = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                                       appropriateFor: nil, create: true)
                 .appendingPathComponent("Levistica", isDirectory: true)
             if let testID { folder.append(path: "SessionTests/" + testID.uuidString, directoryHint: .isDirectory) }
-            bookmarkURL = folder.appendingPathComponent("bookmarks.sqlite3")
-            historyURL = folder.appendingPathComponent("history.sqlite3")
-            return BrowserSession(store: try SessionStore(fileURL: folder.appendingPathComponent("session.sqlite3")), bookmarkFileURL: bookmarkURL, historyFileURL: historyURL)
+            #if DEBUG
+            if testID != nil && environment["LEVISTICA_EPHEMERAL"] == "1",
+               environment["LEVISTICA_RECOVERY_FIXTURE"] == "1",
+               let value = environment["LEVISTICA_RECOVERY_FIXTURE_BASE"],
+               let base = URLComponents(string: value), base.scheme == "http", base.host == "127.0.0.1",
+               base.port != nil, base.user == nil, base.password == nil, base.query == nil, base.fragment == nil,
+               base.path.isEmpty || base.path == "/", let url = base.url {
+                try seedRecoveryFixture(in: folder, base: url)
+            }
+            #endif
+            return persistentSession(in: folder)
         } catch {
-            let session = BrowserSession(bookmarkFileURL: bookmarkURL, historyFileURL: historyURL)
+            let session = BrowserSession()
             session.storageFailure = "タブ一覧の保存先を開けませんでした。この起動ではタブ一覧を保存しません。"
             return session
         }
         #endif
+    }
+
+    #if DEBUG
+    // Only fresh UUID-scoped, ephemeral Debug sessions may create this synthetic fixture.
+    private static func seedRecoveryFixture(in folder: URL, base: URL) throws {
+        let manager = FileManager.default
+        if manager.fileExists(atPath: folder.path),
+           !(try manager.contentsOfDirectory(atPath: folder.path)).isEmpty { return }
+        let file = folder.appendingPathComponent("session.sqlite3")
+        let first = SavedTab(id: UUID(), title: "Fixture one", url: base.appendingPathComponent("one"), mayReload: true)
+        let second = SavedTab(id: UUID(), title: "Fixture two", url: base.appendingPathComponent("two"),
+                              mayReload: true, isKept: true, isSleeping: true)
+        let store = try SessionStore(fileURL: file)
+        try store.save(SavedSession(tabs: [first, second], selectedID: first.id, wasRunning: false))
+        try store.writeCleanBackup()
+        try Data("isolated unreadable session fixture".utf8).write(to: file, options: .atomic)
+    }
+    #endif
+
+    static func persistentSession(in folder: URL, dataStore: WKWebsiteDataStore? = nil) -> BrowserSession {
+        let bookmarkURL = folder.appendingPathComponent("bookmarks.sqlite3")
+        let historyURL = folder.appendingPathComponent("history.sqlite3")
+        var resolved: URL?
+        do {
+            let file = try SessionStore.currentFileURL(in: folder)
+            resolved = file
+            let manager = FileManager.default
+            let exists = manager.fileExists(atPath: file.path)
+            let size = (try? manager.attributesOfItem(atPath: file.path)[.size]) as? NSNumber
+            if (!exists || size?.intValue == 0),
+               (file.lastPathComponent != "session.sqlite3" || manager.fileExists(atPath: file.path + ".backup")) {
+                throw SessionStore.Failure.invalidData
+            }
+            return BrowserSession(dataStore: dataStore, store: try SessionStore(fileURL: file),
+                                  bookmarkFileURL: bookmarkURL, historyFileURL: historyURL)
+        } catch {
+            let session = BrowserSession(dataStore: dataStore, bookmarkFileURL: bookmarkURL, historyFileURL: historyURL)
+            session.storageFailure = "タブ一覧の保存先を開けませんでした。この起動ではタブ一覧を保存しません。"
+            session.configureRecovery(from: resolved, error: error)
+            return session
+        }
+    }
+
+    private func install(_ saved: SavedSession, requireConfirmation: Bool) {
+        tabs = saved.tabs.map { record in
+            let restored = BrowserTab(id: record.id)
+            restored.isLocalPDF = record.kind == .localPDF
+            restored.isKept = record.isKept
+            restored.isSleeping = record.isSleeping
+            if restored.isLocalPDF { restored.restorationNotice = "ローカルPDFは保存していません。ファイルを選び直してください。" }
+            restored.pendingURL = record.url
+            restored.addressDraft = record.url?.absoluteString ?? ""
+            restored.storedTitle = record.title
+            restored.mayRestoreAutomatically = record.mayReload
+            if record.url != nil && !record.mayReload {
+                restored.restorationNotice = "送信後のページです。URLを確認してから開いてください。"
+            }
+            return restored
+        }
+        selectedID = saved.selectedID
+        recoveryRequired = requireConfirmation
+    }
+
+    private func configureRecovery(from file: URL?, error: Error) {
+        if let failure = error as? SessionStore.Failure, case .newerVersion = failure {
+            storageFailure = "このアプリより新しい形式のタブ一覧です。保存ファイルを残しています。この起動では一覧を保存しません。"
+            return
+        }
+        guard let file else { return }
+        recoveryFileURL = file
+        recoveryBlankTabID = selectedID
+        guard let saved = try? SessionStore.readCleanBackup(of: file) else { return }
+        recoveryBackupTabCount = saved.tabs.count
+        recoveryBackupDate = (try? FileManager.default.attributesOfItem(atPath: file.path + ".backup")[.modificationDate]) as? Date
+    }
+
+    @discardableResult
+    func restoreSessionBackup() -> Bool {
+        guard canRestoreSessionBackup, let file = recoveryFileURL else { return false }
+        do {
+            let recovered = try SessionStore.recoverCleanBackup(of: file)
+            guard let saved = try recovered.load() else { throw SessionStore.Failure.invalidData }
+            store = recovered
+            persistenceDisabled = false
+            install(saved, requireConfirmation: true)
+            recoveryMessage = "バックアップからタブ一覧を復旧しました。ページを開くか選べます。"
+            recoveryFileURL = nil
+            recoveryBlankTabID = nil
+            recoveryBackupDate = nil
+            recoveryBackupTabCount = nil
+            storageFailure = nil
+            backupFailure = nil
+            return true
+        } catch {
+            storageFailure = "バックアップから一覧を復旧できませんでした。元の保存ファイルを残しています。"
+            return false
+        }
     }
 
     var canAddBookmark: Bool {
