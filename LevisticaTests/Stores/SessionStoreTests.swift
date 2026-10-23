@@ -175,4 +175,131 @@ struct SessionStoreTests {
         #expect(session.prepareToQuit())
         #expect(try store.load()?.wasRunning == false)
     }
+
+    @Test func cleanBackupPreservesStateAndRefreshesPrivately() throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url)
+        let sleeping = SavedTab(id: UUID(), title: "Sleeping", url: URL(string: "https://example.com/document"),
+                                mayReload: true, isKept: true, isSleeping: true)
+        let post = SavedTab(id: UUID(), title: "POST result", url: URL(string: "https://example.com/submitted"), mayReload: false)
+        let saved = SavedSession(tabs: [sleeping, post], selectedID: post.id, wasRunning: false)
+        try store.save(saved)
+        try store.writeCleanBackup()
+        #expect(try SessionStore(fileURL: store.backupURL).load() == saved)
+        let changed = SavedSession(tabs: [post], selectedID: post.id, wasRunning: false)
+        try store.save(changed)
+        try store.writeCleanBackup()
+        #expect(try SessionStore(fileURL: store.backupURL).load() == changed)
+        let attributes = try FileManager.default.attributesOfItem(atPath: store.backupURL.path)
+        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        let files = try FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path)
+        #expect(files.contains(where: { $0.hasPrefix(".session-backup-") }) == false)
+    }
+
+    @Test func backupIncludesCommittedWALPages() throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url)
+        var connection: OpaquePointer?
+        try #require(sqlite3_open(url.path, &connection) == SQLITE_OK)
+        defer { sqlite3_close(connection) }
+        try #require(sqlite3_exec(connection, "PRAGMA journal_mode=WAL", nil, nil, nil) == SQLITE_OK)
+        let tab = SavedTab(id: UUID(), title: "Committed in WAL", url: URL(string: "https://example.com/wal"), mayReload: true)
+        let saved = SavedSession(tabs: [tab], selectedID: tab.id, wasRunning: false)
+        try store.save(saved)
+        #expect(FileManager.default.fileExists(atPath: url.path + "-wal"))
+        try store.writeCleanBackup()
+        #expect(try SessionStore(fileURL: store.backupURL).load() == saved)
+    }
+
+    @Test func runningOrInvalidSessionCannotReplaceGoodBackup() throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url)
+        let tab = SavedTab(id: UUID(), title: "Known good", url: nil, mayReload: false)
+        try store.save(SavedSession(tabs: [tab], selectedID: tab.id, wasRunning: false))
+        try store.writeCleanBackup()
+        let before = try Data(contentsOf: store.backupURL)
+        try store.save(SavedSession(tabs: [tab], selectedID: tab.id, wasRunning: true))
+        #expect(throws: (any Error).self) { try store.writeCleanBackup() }
+        #expect(try Data(contentsOf: store.backupURL) == before)
+        try store.save(SavedSession(tabs: [tab], selectedID: tab.id, wasRunning: false))
+        var database: OpaquePointer?
+        try #require(sqlite3_open(url.path, &database) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        try #require(sqlite3_exec(database, "UPDATE session_tabs SET may_reload=2", nil, nil, nil) == SQLITE_OK)
+        #expect(throws: (any Error).self) { try store.writeCleanBackup() }
+        #expect(try Data(contentsOf: store.backupURL) == before)
+    }
+
+    @Test func unwritableFolderPreservesPreviousBackupAndSavedPrimary() throws {
+        let url = try temporaryURL()
+        let manager = FileManager.default
+        let directory = url.deletingLastPathComponent()
+        defer {
+            try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try? manager.removeItem(at: directory)
+        }
+        let store = try SessionStore(fileURL: url)
+        let tab = SavedTab(id: UUID(), title: "Before", url: nil, mayReload: false)
+        try store.save(SavedSession(tabs: [tab], selectedID: tab.id, wasRunning: false))
+        try store.writeCleanBackup()
+        let before = try Data(contentsOf: store.backupURL)
+        let changed = SavedTab(id: tab.id, title: "Saved after", url: nil, mayReload: false)
+        let saved = SavedSession(tabs: [changed], selectedID: changed.id, wasRunning: false)
+        try store.save(saved)
+        try manager.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        #expect(throws: (any Error).self) { try store.writeCleanBackup() }
+        #expect(try Data(contentsOf: store.backupURL) == before)
+        #expect(try store.load() == saved)
+    }
+
+    @MainActor @Test func normalExitCreatesBackupAfterSavingPrimary() throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url)
+        let session = BrowserSession(dataStore: .nonPersistent(), store: store)
+        #expect(FileManager.default.fileExists(atPath: store.backupURL.path) == false)
+        session.persistSession()
+        #expect(FileManager.default.fileExists(atPath: store.backupURL.path) == false)
+        #expect(session.prepareToQuit())
+        #expect(session.backupFailure == nil)
+        #expect(try SessionStore(fileURL: store.backupURL).load() == store.load())
+        #expect(try store.load()?.wasRunning == false)
+    }
+
+    @MainActor @Test func backupFailureAllowsQuitAfterSuccessfulPrimarySave() throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url)
+        let session = BrowserSession(dataStore: .nonPersistent(), store: store)
+        try FileManager.default.createDirectory(at: store.backupURL, withIntermediateDirectories: false)
+        let marker = store.backupURL.appendingPathComponent("preserve.txt")
+        try Data("preserve".utf8).write(to: marker)
+        #expect(session.prepareToQuit())
+        #expect(session.storageFailure == nil)
+        #expect(session.backupFailure != nil)
+        #expect(try store.load()?.wasRunning == false)
+        #expect(try Data(contentsOf: marker) == Data("preserve".utf8))
+    }
+
+    @MainActor @Test func failedPrimarySaveNeverRefreshesBackup() throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url)
+        let session = BrowserSession(dataStore: .nonPersistent(), store: store)
+        try #require(session.prepareToQuit())
+        let before = try Data(contentsOf: store.backupURL)
+        session.persistSession()
+        var lock: OpaquePointer?
+        try #require(sqlite3_open(url.path, &lock) == SQLITE_OK)
+        defer { sqlite3_close(lock) }
+        try #require(sqlite3_exec(lock, "BEGIN EXCLUSIVE", nil, nil, nil) == SQLITE_OK)
+        #expect(session.prepareToQuit() == false)
+        #expect(session.storageFailure != nil)
+        #expect(try Data(contentsOf: store.backupURL) == before)
+        try #require(sqlite3_exec(lock, "ROLLBACK", nil, nil, nil) == SQLITE_OK)
+    }
+
 }
