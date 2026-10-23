@@ -39,8 +39,9 @@ final class BrowserSession {
     let downloads = DownloadManager()
     @ObservationIgnored private var siteDataModel: SiteDataLibrary?
     var isDeletingSiteData: Bool { siteDataModel?.isDeleting == true }
-    enum SettingsSection: Hashable { case history, siteData }
-    var settingsSection = SettingsSection.history
+    enum SettingsSection: Hashable { case general, history, siteData }
+    var settingsSection = SettingsSection.general
+    let preferences: BrowserPreferences
     let history: HistoryLibrary
     let bookmarks: BookmarkLibrary
     var isBookmarkListVisible = false
@@ -57,7 +58,9 @@ final class BrowserSession {
         let index: Int
     }
 
-    init(dataStore: WKWebsiteDataStore? = nil, store: SessionStore? = nil, bookmarkFileURL: URL? = nil, historyFileURL: URL? = nil) {
+    init(dataStore: WKWebsiteDataStore? = nil, store: SessionStore? = nil, bookmarkFileURL: URL? = nil, historyFileURL: URL? = nil,
+         preferencesFileURL: URL? = nil) {
+        preferences = BrowserPreferences(fileURL: preferencesFileURL)
         history = HistoryLibrary(fileURL: historyFileURL)
         bookmarks = BookmarkLibrary(fileURL: bookmarkFileURL)
         let tab = BrowserTab()
@@ -159,6 +162,7 @@ final class BrowserSession {
     static func persistentSession(in folder: URL, dataStore: WKWebsiteDataStore? = nil) -> BrowserSession {
         let bookmarkURL = folder.appendingPathComponent("bookmarks.sqlite3")
         let historyURL = folder.appendingPathComponent("history.sqlite3")
+        let preferencesURL = folder.appendingPathComponent("browser-preferences.json")
         var resolved: URL?
         do {
             let file = try SessionStore.currentFileURL(in: folder)
@@ -171,9 +175,10 @@ final class BrowserSession {
                 throw SessionStore.Failure.invalidData
             }
             return BrowserSession(dataStore: dataStore, store: try SessionStore(fileURL: file),
-                                  bookmarkFileURL: bookmarkURL, historyFileURL: historyURL)
+                                  bookmarkFileURL: bookmarkURL, historyFileURL: historyURL, preferencesFileURL: preferencesURL)
         } catch {
-            let session = BrowserSession(dataStore: dataStore, bookmarkFileURL: bookmarkURL, historyFileURL: historyURL)
+            let session = BrowserSession(dataStore: dataStore, bookmarkFileURL: bookmarkURL, historyFileURL: historyURL,
+                                         preferencesFileURL: preferencesURL)
             session.storageFailure = "タブ一覧の保存先を開けませんでした。この起動ではタブ一覧を保存しません。"
             session.configureRecovery(from: resolved, error: error)
             return session
@@ -361,6 +366,7 @@ final class BrowserSession {
         selectedID = tab.id
         addressFocusRequest += 1
         persistSession()
+        if let url = preferences.newTabURL { _ = navigate(url.absoluteString) }
         return tab
     }
 

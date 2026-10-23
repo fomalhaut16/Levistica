@@ -1,14 +1,46 @@
 import SwiftUI
 
 struct PrivacySettingsView: View {
+    let preferences: BrowserPreferences
     let history: HistoryLibrary
     let siteData: SiteDataLibrary
     @Binding var section: BrowserSession.SettingsSection
     var body: some View {
         TabView(selection: $section) {
+            NewTabPreferencesView(preferences: preferences)
+                .tabItem { Label("一般", systemImage: "gearshape") }.tag(BrowserSession.SettingsSection.general)
             HistoryPreferencesView(history: history).tabItem { Label("履歴", systemImage: "clock") }.tag(BrowserSession.SettingsSection.history)
             SiteDataSettingsView(library: siteData).tabItem { Label("サイトデータ", systemImage: "externaldrive") }.tag(BrowserSession.SettingsSection.siteData)
         }.frame(width: 620, height: 540)
+    }
+}
+
+private struct NewTabPreferencesView: View {
+    let preferences: BrowserPreferences
+    @State private var draft = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("新しいタブで開くページ").font(.title2)
+            TextField("URL（空欄で空白ページ）", text: $draft)
+                .textFieldStyle(.roundedBorder).accessibilityIdentifier("newTabPageField")
+                .disabled(!preferences.canSave)
+            HStack {
+                Button("Google") { draft = "https://www.google.com/" }.accessibilityIdentifier("useGoogleNewTabButton")
+                Button("空白ページ") { draft = "" }.accessibilityIdentifier("useBlankNewTabButton")
+                Spacer()
+                Button("保存") { if preferences.saveNewTabPage(draft) { draft = preferences.newTabURL?.absoluteString ?? "" } }
+                    .accessibilityIdentifier("saveNewTabPageButton")
+            }.disabled(!preferences.canSave)
+            Text("＋やCmd-Tでタブを追加するときに開きます。空欄ではページを読み込みません。前回のタブの復元には影響しません。")
+                .font(.callout).foregroundStyle(.secondary)
+            if let notice = preferences.notice { Text(notice).accessibilityIdentifier("newTabPageNotice") }
+            if !preferences.isPersistent { Text("この起動だけの設定です。終了すると消えます。").font(.caption) }
+            Spacer(minLength: 0)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { draft = preferences.newTabURL?.absoluteString ?? "" }
     }
 }
 

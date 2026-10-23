@@ -2,6 +2,88 @@ import XCTest
 import AppKit
 
 final class BrowserFlowTests: XCTestCase {
+    @MainActor
+    func testNewTabPageSettingAppliesToPlusAndCommandTAndSurvivesRestart() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].waitForExistence(timeout: 10))
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        func openGeneral() {
+            app.typeKey(",", modifierFlags: .command)
+            XCTAssertTrue(app.buttons["一般"].waitForExistence(timeout: 10))
+            app.buttons["一般"].click()
+            XCTAssertTrue(app.textFields["newTabPageField"].waitForExistence(timeout: 5))
+        }
+        func closeSettings() {
+            app.typeKey("w", modifierFlags: .command)
+            XCTAssertTrue(settings.waitForNonExistence(timeout: 5))
+        }
+        openGeneral()
+        app.buttons["useGoogleNewTabButton"].click()
+        let field = app.textFields["newTabPageField"]
+        XCTAssertEqual(field.value as? String, "https://www.google.com/")
+        field.click()
+        waitForInputIndicator(in: app)
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText(base + "/one")
+        waitForInputIndicator(in: app)
+        app.buttons["saveNewTabPageButton"].click()
+        XCTAssertTrue(app.staticTexts["設定を保存しました。次に追加するタブから適用します。"].waitForExistence(timeout: 5))
+        attachWindowImage(app, name: "new-tab-page-settings", knownFrame: settings.frame)
+        closeSettings()
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].exists)
+        app.buttons["newTabButton"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み1"].exists)
+        submit(base + "/two", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/two")
+        app.typeKey("t", modifierFlags: .command)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["3タブ・読み込み済み2"].exists)
+        openGeneral()
+        XCTAssertEqual(field.value as? String, base + "/one")
+        field.click()
+        waitForInputIndicator(in: app)
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText("file:///private/synthetic")
+        waitForInputIndicator(in: app)
+        app.buttons["saveNewTabPageButton"].click()
+        XCTAssertTrue(app.staticTexts["HTTPまたはHTTPSのURLを入力してください。空欄にすると空白ページになります。"].waitForExistence(timeout: 5))
+        closeSettings()
+        app.buttons["newTabButton"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["4タブ・読み込み済み3"].exists)
+        openGeneral()
+        app.buttons["useBlankNewTabButton"].click()
+        app.buttons["saveNewTabPageButton"].click()
+        closeSettings()
+        app.buttons["newTabButton"].click()
+        XCTAssertTrue(app.staticTexts["5タブ・読み込み済み3"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.webViews.count, 0)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.staticTexts["5タブ・読み込み済み0"].waitForExistence(timeout: 10))
+        app.buttons["newTabButton"].click()
+        XCTAssertTrue(app.staticTexts["6タブ・読み込み済み0"].waitForExistence(timeout: 5))
+        attachWindowImage(app, name: "new-tab-page-blank-restart")
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
     // Opt-in only: attach to the canonical entrypoint's already running Profile app.
     @MainActor
     func testProfileSleepWorkload() async throws {
