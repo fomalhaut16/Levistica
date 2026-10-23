@@ -132,7 +132,7 @@ final class BrowserFlowTests: XCTestCase {
             try await Task.sleep(for: .seconds(5))
             XCTAssertEqual(app.state, .runningForeground)
             check(try readState())
-            if tick.isMultiple(of: 6) { print("Twenty-tab idle checkpoint: \(tick * 5) seconds; no RAM capture") }
+            if tick.isMultiple(of: 6) { print("Twenty-tab idle checkpoint: \(tick * 5) seconds; workload check only") }
         }
         let idleElapsed = Date().timeIntervalSince(idleStart)
         let idle = try readState()
@@ -160,7 +160,7 @@ final class BrowserFlowTests: XCTestCase {
         let summary: [String: Any] = ["kind": "twenty-tab-idle-revisit", "variant": variant, "minimumIdleSeconds": 120,
             "idleElapsedSeconds": idleElapsed,
             "loads": 20, "latestReportLagSeconds": lags, "lagOver15Seconds": lags.values.filter { $0 > 15 }.count,
-            "revisited": [1, 20], "sameInstances": true, "ramCaptured": false]
+            "revisited": [1, 20], "sameInstances": true, "ramCapturedByUITest": false]
         let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: summary, options: .sortedKeys), uniformTypeIdentifier: "public.json")
         attachment.name = "twenty-tab-idle-revisit"
         attachment.lifetime = .keepAlways

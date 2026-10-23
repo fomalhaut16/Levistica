@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only, local-only footprint snapshots for Release Levistica or isolated Chrome.
+"""Read-only, local-only footprints for Release/isolated Release Levistica or isolated Chrome.
 
 Attribution verifies PID-domain XPC; Chrome also verifies descendants and its isolated Crashpad.
 launchctl's human-readable format is not a stable API: parsing fails closed.
@@ -278,6 +278,13 @@ def check_fixture(current, original=None, now=None):
         raise ValueError('Video viewport changed')
 
 
+def validate_measurement_signing(info, entitlements):
+    if (info.get('CFBundleIdentifier') != 'dev.fomalhaut16.Levistica.measurement'
+            or entitlements.get('com.apple.security.get-task-allow') is True
+            or entitlements.get('com.apple.security.app-sandbox') is not True):
+        raise ValueError('Measurement requires the isolated bundle, Sandbox, and no debugger entitlement')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ready-file", type=pathlib.Path, help="Optional synthetic fixture readiness state")
@@ -285,7 +292,7 @@ def main():
     parser.add_argument('--sleep-baseline', type=pathlib.Path, help='Validated five-page lifecycle checkpoint')
     parser.add_argument('--sleep-cycle-checkpoint', type=pathlib.Path, help='Validated all-loaded history for sleep cycle 1..5')
     parser.add_argument('--sleeping-documents', default='', help='Empty or 1,2,3,4; requires sleep-baseline')
-    parser.add_argument("--browser", choices=["levistica", "chrome"], default="levistica")
+    parser.add_argument("--browser", choices=["levistica", "levistica-measurement", "chrome"], default="levistica")
     parser.add_argument("--chrome-profile", type=pathlib.Path)
     parser.add_argument("--label", required=True, help="Non-private state label, never a URL")
     parser.add_argument("--loaded-pages", type=int, required=True)
@@ -343,6 +350,23 @@ def main():
         binary = app / "Contents/MacOS/Google Chrome"
     elif args.chrome_profile:
         parser.error("--chrome-profile requires --browser chrome")
+    if args.browser == "levistica-measurement":
+        if checkpoint is not None:
+            parser.error("Measurement does not support the manual-sleep comparison")
+        app = ROOT / '.local/MeasurementDerivedData/Build/Products/Release/Levistica.app'
+        binary = app / 'Contents/MacOS/Levistica'
+        run(['/usr/bin/codesign', '--verify', '--strict', str(app)])
+        with (app / 'Contents/Info.plist').open('rb') as source:
+            info = plistlib.load(source)
+        entitlements = plistlib.loads(run(['/usr/bin/codesign', '-d', '--entitlements', ':-', str(app)]).encode())
+        validate_measurement_signing(info, entitlements)
+        spec = importlib.util.spec_from_file_location('app_processes', ROOT / 'script/check-app-processes.py')
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+        checked = guard.check_snapshot(guard.run_ps(['-axo', 'pid=,comm=']), ROOT,
+                                       guard.describe_process, os.getuid(), only='Measurement')
+        if checked != [find_app(binary)]:
+            raise ValueError('Measurement app identity is unavailable')
     fixture = None
     sleep_guard_file = None
     sleep_observations = []
@@ -383,7 +407,7 @@ def main():
         "schema": 2, "label": args.label, "fixture": fixture, "ready_delay_seconds": args.ready_delay if fixture else None,
         "sleep_guard_file": str(sleep_guard_file) if sleep_guard_file else None,
         "loaded_pages": args.loaded_pages, "total_tabs": args.total_tabs,
-        "browser": args.browser, "pid": pid, "source_head_at_sampling": run(["git", "rev-parse", "HEAD"]).strip(),
+        "browser": args.browser, "storage_mode": "compile-time nonpersistent" if args.browser == "levistica-measurement" else "launch configuration", "pid": pid, "source_head_at_sampling": run(["git", "rev-parse", "HEAD"]).strip(),
         "measurement_script_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "worktree_dirty": bool(run(["git", "status", "--porcelain", "--untracked-files=no"]).strip()),
