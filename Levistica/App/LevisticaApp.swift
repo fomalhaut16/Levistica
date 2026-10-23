@@ -1,12 +1,29 @@
 import SwiftUI
 
+enum AppWindowIdentity {
+    static var title: String {
+        var labels: [String] = []
+        #if LEVISTICA_MEASUREMENT
+        labels.append("メモリ計測用")
+        #elseif LEVISTICA_PROFILE
+        labels.append("詳細診断用")
+        #elseif DEBUG
+        labels.append("開発用")
+        #endif
+        if ProcessInfo.processInfo.environment["LEVISTICA_EPHEMERAL"] == "1" {
+            labels.append("検証データ")
+        }
+        return labels.isEmpty ? "Levistica" : "Levistica（" + labels.joined(separator: "・") + "）"
+    }
+}
+
 @main
 struct LevisticaApp: App {
     @NSApplicationDelegateAdaptor(BrowserAppDelegate.self) private var delegate
     @State private var session = BrowserSession.applicationSession()
 
     var body: some Scene {
-        Window("Levistica", id: "browser") {
+        Window(AppWindowIdentity.title, id: "browser") {
             BrowserScene(session: session, delegate: delegate)
         }
         .defaultSize(width: 1100, height: 760)
