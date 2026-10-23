@@ -106,7 +106,7 @@ final class BrowserFlowTests: XCTestCase {
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
         app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
         app.launchEnvironment["LEVISTICA_RECOVERY_FIXTURE"] = "1"
-        app.launchEnvironment["LEVISTICA_RECOVERY_FIXTURE_BASE"] = base
+        app.launchEnvironment["LEVISTICA_SESSION_FIXTURE_BASE"] = base
         app.launch()
         app.activate()
         let restore = app.buttons["restoreSessionBackupButton"]
@@ -146,6 +146,60 @@ final class BrowserFlowTests: XCTestCase {
         attachWindowImage(app, name: "session-backup-restart")
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
+    @MainActor
+    func testFiftyAndOneHundredTabsRestoreAndSearchWithoutLoadingEveryPage() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        for count in [50, 100] {
+            let app = XCUIApplication()
+            app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+            app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+            app.launchEnvironment["LEVISTICA_SESSION_FIXTURE_BASE"] = base
+            app.launchEnvironment["LEVISTICA_LARGE_SESSION_FIXTURE"] = String(count)
+            app.launch()
+            app.activate()
+            XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.staticTexts["\(count)タブ・読み込み済み1"].exists)
+            let search = app.textFields["tabSearchField"]
+            search.click()
+            waitForInputIndicator(in: app)
+            let lastTitle = String(format: "Scale tab %03d", count)
+            search.typeText(lastTitle)
+            waitForInputIndicator(in: app)
+            let lastTab = app.outlines.staticTexts[lastTitle].firstMatch
+            XCTAssertTrue(lastTab.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["\(count)タブ・読み込み済み1"].exists)
+            XCTAssertTrue(lastTab.isHittable)
+            lastTab.click()
+            let address = app.textFields["addressField"]
+            let selectedURL = base + "/one#tab-\(count)"
+            let selected = expectation(for: NSPredicate(format: "value == %@", selectedURL), evaluatedWith: address)
+            wait(for: [selected], timeout: 10)
+            XCTAssertTrue(app.staticTexts["\(count)タブ・読み込み済み2"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["reloadButton"].waitForExistence(timeout: 10))
+            XCTAssertEqual(search.value as? String, "")
+            let visibleSelection = app.outlines.staticTexts["Fixture one"].firstMatch
+            let selectionInView = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: visibleSelection)
+            wait(for: [selectionInView], timeout: 5)
+            attachWindowImage(app, name: "large-session-\(count)-selected", knownFrame: app.windows["browser"].frame)
+            app.typeKey("q", modifierFlags: .command)
+            XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+            app.launch()
+            app.activate()
+            XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+            XCTAssertEqual(app.textFields["addressField"].value as? String, selectedURL)
+            XCTAssertTrue(app.staticTexts["\(count)タブ・読み込み済み1"].exists)
+            XCTAssertFalse(app.staticTexts["sessionRecoveryNotice"].exists)
+            XCTAssertFalse(app.staticTexts["storageFailure"].exists)
+            let restoredSelection = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: visibleSelection)
+            wait(for: [restoredSelection], timeout: 5)
+            attachWindowImage(app, name: "large-session-\(count)-restart", knownFrame: app.windows["browser"].frame)
+            app.typeKey("q", modifierFlags: .command)
+            XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        }
     }
 
     @MainActor
