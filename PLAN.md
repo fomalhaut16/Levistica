@@ -1083,3 +1083,13 @@ SessionStoreが持つSQLite接続から、[SQLite Online Backup API](https://www
 保存先の指定が壊れた場合や、指定の公開に失敗して復旧用DBだけが残った場合は、候補を推測せず保存を止める。候補の手動選択、不要になった復旧ファイルの整理、異なるアプリ版からの復旧は未実装。保存先指定の導入前の旧アプリは復旧後のDBを選べないため、旧アプリだけを戻す運用は認めない。M5では対応する版と保存先指定・DB・副本を組にして戻す手順を検証する。通常利用のデータの復旧とPM受入は、今回の隔離試験に含めない。
 
 通常Releaseと隔離Profileの正式ビルド・strict署名検証も成功した。通常Releaseにget-task-allowが無いことを入口で検査し、試験・ビルド後の既知のLevisticaプロセスは0件だった。全画面のfixture表示と通常ウィンドウへの復帰画像も確認した。これらは隔離Debugの操作確認と各構成のビルド確認であり、通常データでの復旧や性能受入の証明ではない。
+
+### 2026-10-23 同一document内のURL変更と閲覧履歴
+
+PR #39の復旧機能をCI成功後に統合し、履歴の残項目へ進む。Xや動画サイトのようにページ全体を読み込み直さない移動でも、後から資料やページを探せるようにする。[WKWebView.url](https://developer.apple.com/documentation/webkit/wkwebview/url) の公開KVOを既存のメタデータ監視と共有し、別のスクリプト注入やページ内容の収集は追加しない。
+
+読込を完了したGETページに訪問があり、読み込み中でも失敗状態でもなく、現在のbackForwardList項目と観測URLが一致する場合だけ、同じorigin内のURL変更を記録する。POST結果、ローカルPDF、識別可能な認証用URLは従来どおり除外する。タイトルの後着は同じ訪問だけを更新し、削除した訪問を作り直さない。記録停止と保持上限は既存のHistoryStoreに従う。履歴全体をメモリへ常駐させず、KVOからMainActorへ渡した時点の最終URLを使うため、同じ処理内での短い連続変更を全件追跡するものではない。
+
+検証は隔離fixtureでpushState→replaceState→戻る→認証用パラメータのあるURL→安全なURL→履歴全削除→タイトル変更を操作する。通常の読込完了、POSTの除外、記録停止・保持設定・削除の既存試験も回帰確認する。実サービスでの全てのSPA動作や入力保護の範囲を、この履歴対応から保証しない。
+
+全単体105件は `.local/artifacts/tests.KyJkp7/Results.xcresult` で成功した。新しい一連のUI試験は `.local/artifacts/tests.kyGUGZ/Results.xcresult` で32.045秒、1件成功し、履歴削除後の表示画像も確認した。既存の記録停止・保持設定、検索・削除・再起動、POST PDFの履歴除外のUI試験も、それぞれ `.local/artifacts/tests.i51OeN/Results.xcresult`、`tests.DyzFm9/Results.xcresult`、`tests.51Gm6O/Results.xcresult` で成功した。今回のUI検証範囲は変更に関係する4件である。通常Releaseの正式ビルドとstrict署名検証も成功した。

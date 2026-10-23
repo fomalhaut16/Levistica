@@ -449,6 +449,54 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testSameDocumentRoutesAreRecordedWithoutResurrectingDeletedHistory() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/spa", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["SPA fixture"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["reloadButton"].waitForExistence(timeout: 10))
+        app.buttons["showHistoryButton"].click()
+        XCTAssertTrue(app.staticTexts["1件表示"].waitForExistence(timeout: 10))
+        app.webViews.buttons["Push route"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Second route"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["2件表示"].waitForExistence(timeout: 10))
+        let list = app.descendants(matching: .any).matching(identifier: "historyList").firstMatch
+        XCTAssertTrue(list.staticTexts["SPA second"].waitForExistence(timeout: 5))
+        app.webViews.buttons["Replace route"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Replaced route"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["3件表示"].waitForExistence(timeout: 10))
+        XCTAssertTrue(list.staticTexts["SPA replaced"].waitForExistence(timeout: 5))
+        app.buttons["backButton"].click()
+        let address = app.textFields["addressField"]
+        let atStart = expectation(for: NSPredicate(format: "value == %@", base + "/spa"), evaluatedWith: address)
+        wait(for: [atStart], timeout: 10)
+        XCTAssertTrue(app.staticTexts["3件表示"].exists)
+        app.webViews.buttons["Sensitive route"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Excluded route"].waitForExistence(timeout: 5))
+        app.webViews.buttons["Rename route"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Renamed route"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["3件表示"].exists)
+        XCTAssertFalse(list.staticTexts["Excluded route"].exists)
+        app.webViews.buttons["Replace route"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Replaced route"].waitForExistence(timeout: 5))
+        XCTAssertTrue(list.staticTexts["SPA replaced"].waitForExistence(timeout: 5))
+        app.buttons["clearHistoryButton"].click()
+        app.buttons["confirmClearHistoryButton"].click()
+        XCTAssertTrue(app.staticTexts["0件表示"].waitForExistence(timeout: 10))
+        app.webViews.buttons["Rename route"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Renamed route"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["0件表示"].exists)
+        attachWindowImage(app, name: "same-document-history-cleared", knownFrame: app.windows["browser"].frame)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
+    @MainActor
     func testHistorySearchDeleteAndClearKeepBookmarksAndTheCurrentPage() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180
