@@ -107,10 +107,30 @@ class ComparisonChromeTests(unittest.TestCase):
             marker = {'pid': 123, 'profile': str(profile), 'identity': identity}
             (profile / 'levistica-benchmark.json').write_text(json.dumps(marker))
             with patch.object(chrome, 'base', base), patch.object(chrome.m, 'find_app', return_value=123), \
-                    patch.object(chrome.m, 'identities', side_effect=[{123: identity}, ValueError('exited')]), \
+                    patch.object(chrome.m, 'identities', side_effect=[{123: identity}, {123: identity}, ValueError('exited')]), \
+                    patch.object(chrome.m, 'run', return_value='chrome --user-data-dir=' + str(profile)), \
                     patch.object(chrome.os, 'kill') as kill:
                 chrome.stop(profile)
                 kill.assert_called_once_with(123, chrome.signal.SIGTERM)
+
+    def test_verification_targets_recorded_pid_even_during_another_forwarder(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = pathlib.Path(temporary).resolve()
+            profile = base / 'chrome-trial.synthetic'; profile.mkdir()
+            identity = {'started': 'original start', 'executable': str(chrome.binary)}
+            marker = {'pid': 123, 'profile': str(profile), 'identity': identity}
+            (profile / 'levistica-benchmark.json').write_text(json.dumps(marker))
+            with patch.object(chrome, 'base', base), \
+                    patch.object(chrome.m, 'find_app', side_effect=ValueError('ambiguous roots')) as discover, \
+                    patch.object(chrome.m, 'identities', return_value={123: identity}), \
+                    patch.object(chrome.m, 'run', return_value='chrome --user-data-dir=' + str(profile)):
+                self.assertEqual(chrome.verified_marker(profile), marker)
+                discover.assert_not_called()
+            with patch.object(chrome, 'base', base), \
+                    patch.object(chrome.m, 'identities', return_value={123: identity}), \
+                    patch.object(chrome.m, 'run', return_value='chrome --user-data-dir=' + str(profile) + '-other'):
+                with self.assertRaises(ValueError):
+                    chrome.verified_marker(profile)
 
     def test_reused_pid_changed_profile_or_start_time_never_receives_a_signal(self):
         with tempfile.TemporaryDirectory() as temporary:

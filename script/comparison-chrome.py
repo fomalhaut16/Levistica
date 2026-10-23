@@ -68,9 +68,16 @@ def verified_marker(profile):
     marker = json.loads(marker_path.read_text())
     if marker.get('profile') != str(profile):
         raise ValueError('Experiment marker belongs to another profile')
-    pid = m.find_app(binary, profile)
-    if pid != marker['pid'] or m.identities([pid])[pid] != marker['identity']:
+    pid = marker.get('pid')
+    if type(pid) is not int or pid <= 0:
+        raise ValueError('Invalid experiment PID')
+    identity = m.identities([pid]).get(pid)
+    if identity != marker['identity'] or identity.get('executable') != str(binary):
         raise ValueError('Chrome process identity changed; refusing to operate')
+    arguments = m.run(['/bin/ps', '-p', str(pid), '-o', 'args='])
+    if (not m.has_path_argument(arguments, '--user-data-dir=', profile)
+            or m.identities([pid]).get(pid) != identity):
+        raise ValueError('Chrome profile or identity changed; refusing to operate')
     return marker
 
 
