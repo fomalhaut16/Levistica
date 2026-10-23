@@ -1869,6 +1869,8 @@ final class BrowserFlowTests: XCTestCase {
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
         app.launch()
         app.activate()
+        XCTAssertEqual(app.windows["browser"].title, "Levistica（開発用・検証データ）")
+        attachWindowImage(app, name: "isolated-build-label", knownFrame: app.windows["browser"].frame)
         submit(base + "/one", in: app)
         XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 15), "Fixture: \(base)\n\(app.debugDescription)")
         app.webViews.links["Blocked native link"].click()
