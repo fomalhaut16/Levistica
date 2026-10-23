@@ -18,6 +18,15 @@ class ProfileBuildSafetyTests(unittest.TestCase):
         self.assertNotIn('Built ', result.stdout)
         return result.stderr
 
+    def test_measurement_rejects_unsafe_configuration_before_stopping_apps(self):
+        defaults = dict(LEVISTICA_MEASUREMENT='1', CONFIGURATION='Release', LEVISTICA_EPHEMERAL='1')
+        for changed in [dict(CONFIGURATION='Debug'), dict(LEVISTICA_EPHEMERAL='0'),
+                        dict(LEVISTICA_PROFILE='1'), dict(LEVISTICA_MALLOC_STACKS='1'),
+                        dict(LEVISTICA_SESSION_TEST_ID='b52d2f59-88ef-4d84-9ea1-931d419114f0')]:
+            with self.subTest(changed=changed):
+                self.assertIn('MEASUREMENT requires', self.rejected(**{**defaults, **changed}))
+        self.assertIn('must be 0 or 1', self.rejected(**{**defaults, 'LEVISTICA_MEASUREMENT': 'true'}))
+
     def test_profile_cannot_use_debug_or_an_unspecified_configuration(self):
         for configuration in [None, 'Debug']:
             with self.subTest(configuration=configuration):

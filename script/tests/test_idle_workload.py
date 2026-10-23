@@ -73,17 +73,42 @@ class IdleWorkloadTests(unittest.TestCase):
 
     def test_profile_pid_start_time_and_path_must_match(self):
         executable = '/synthetic/Levistica.app/Contents/MacOS/Levistica'
-        original = {'pid': 123, 'executable': executable, 'started': 'original start'}
+        original = {'variant': 'Profile', 'pid': 123, 'executable': executable, 'started': 'original start'}
         for changed in [{}, {'pid': 124}, {'executable': '/different/Levistica'}, {'started': 'reused PID'}]:
             workload = {**original, **changed}
             with patch.object(module.processes, 'run_ps', side_effect=['synthetic snapshot', 'original start']), \
                     patch.object(module.processes, 'check_snapshot', return_value=[123]), \
-                    patch.object(module.processes, 'known_apps', return_value={executable: 'synthetic.profile'}):
+                    patch.object(module.processes, 'known_apps', return_value={executable: 'dev.fomalhaut16.Levistica.profile'}):
                 if changed:
                     with self.subTest(changed=changed), self.assertRaises(ValueError):
-                        module.verify_profile(workload)
+                        module.verify_application(workload)
                 else:
-                    module.verify_profile(workload)
+                    module.verify_application(workload)
+
+    def test_measurement_identity_checks_use_only_the_isolated_release(self):
+        _, executable = module.application('Measurement')
+        workload = {'variant': 'Measurement', 'pid': 123, 'executable': executable, 'started': 'original start'}
+        with patch.object(module.processes, 'run_ps', side_effect=['synthetic snapshot', 'original start']), \
+                patch.object(module.processes, 'check_snapshot', return_value=[123]) as check:
+            module.verify_application(workload)
+            self.assertEqual(check.call_args.kwargs['only'], 'Measurement')
+        for variant in [None, 'Release', 'Debug', 'Other']:
+            with self.subTest(variant=variant), self.assertRaises(ValueError):
+                module.verify_application({**workload, 'variant': variant})
+        with patch.object(module.processes, 'run_ps', return_value='synthetic snapshot'), \
+                patch.object(module.processes, 'check_snapshot', return_value=[124]):
+            with self.assertRaises(ValueError):
+                module.verify_application(workload)
+
+    def test_release_idle_mode_rejects_unsafe_overrides_before_building(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        for settings in [{'TEST_ONLY': 'LevisticaTests'}, {'LEVISTICA_MALLOC_STACKS': '1'}]:
+            env = {key: value for key, value in os.environ.items()
+                   if not key.startswith('LEVISTICA_') and key not in ('CONFIGURATION', 'TEST_ONLY')}
+            result = subprocess.run(['bash', str(root / 'script/test.sh'), '--release-idle-ui'],
+                                    env={**env, **settings}, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertNotIn('Built ', result.stdout)
 
     def test_idle_mode_rejects_test_override_and_stack_logging_before_building(self):
         root = pathlib.Path(__file__).resolve().parents[2]

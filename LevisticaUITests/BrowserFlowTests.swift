@@ -4,6 +4,16 @@ import AppKit
 final class BrowserFlowTests: XCTestCase {
     @MainActor
     func testProfileTwentyTabIdleRevisit() async throws {
+        try await runTwentyTabIdleRevisit(variant: "Profile")
+    }
+
+    @MainActor
+    func testReleaseTwentyTabIdleRevisit() async throws {
+        try await runTwentyTabIdleRevisit(variant: "Measurement")
+    }
+
+    @MainActor
+    private func runTwentyTabIdleRevisit(variant: String) async throws {
         guard let path = ProcessInfo.processInfo.environment["LEVISTICA_PROFILE_IDLE_WORKLOAD"],
               !path.isEmpty, !path.hasPrefix("$(") else {
             throw XCTSkip("Run script/test.sh --idle-ui for the twenty-tab revisit workload.")
@@ -11,6 +21,7 @@ final class BrowserFlowTests: XCTestCase {
         continueAfterFailure = false
         executionTimeAllowance = 300
         struct Workload: Decodable {
+            let variant: String
             let pid: Int32
             let executable: String
             let urls: [String: String]
@@ -38,6 +49,11 @@ final class BrowserFlowTests: XCTestCase {
         struct Health: Decodable { let checkedAt: Double; let ok: Bool; let level: Int? }
         let directory = URL(fileURLWithPath: path).deletingLastPathComponent().resolvingSymlinksInPath()
         let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        guard workload.variant == variant else { throw XCTSkip("Workload belongs to the other isolated app variant.") }
+        let bundleIdentifier = "dev.fomalhaut16.Levistica." + (variant == "Profile" ? "profile" : "measurement")
+        let buildFolder = variant == "Profile" ? "ProfileDerivedData" : "MeasurementDerivedData"
+        let checkout = directory.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        XCTAssertEqual(workload.executable, checkout.appendingPathComponent(".local/\(buildFolder)/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica").path)
         for (value, name) in [(workload.state, "idle-state.json"), (workload.health, "idle-health.json")] {
             let file = URL(fileURLWithPath: value).resolvingSymlinksInPath()
             XCTAssertEqual(file.deletingLastPathComponent(), directory)
@@ -55,10 +71,10 @@ final class BrowserFlowTests: XCTestCase {
             ports.insert(try XCTUnwrap(parts.port))
         }
         XCTAssertEqual(ports.count, 1)
-        let app = XCUIApplication(bundleIdentifier: "dev.fomalhaut16.Levistica.profile")
+        let app = XCUIApplication(bundleIdentifier: bundleIdentifier)
         let running = try XCTUnwrap(NSRunningApplication(processIdentifier: workload.pid))
         func identityMatches() -> Bool {
-            let candidates = NSRunningApplication.runningApplications(withBundleIdentifier: "dev.fomalhaut16.Levistica.profile")
+            let candidates = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
             return !running.isTerminated && candidates.count == 1
                 && candidates.first?.processIdentifier == workload.pid
                 && running.executableURL?.path == workload.executable
@@ -141,7 +157,7 @@ final class BrowserFlowTests: XCTestCase {
             XCTAssertTrue(observed, "Selected document did not resume reporting within ten seconds")
         }
         check(try readState())
-        let summary: [String: Any] = ["kind": "twenty-tab-idle-revisit", "minimumIdleSeconds": 120,
+        let summary: [String: Any] = ["kind": "twenty-tab-idle-revisit", "variant": variant, "minimumIdleSeconds": 120,
             "idleElapsedSeconds": idleElapsed,
             "loads": 20, "latestReportLagSeconds": lags, "lagOver15Seconds": lags.values.filter { $0 > 15 }.count,
             "revisited": [1, 20], "sameInstances": true, "ramCaptured": false]
