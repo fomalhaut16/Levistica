@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Loopback-only deterministic pages for UI tests; never logs requests."""
+"""Loopback-only deterministic pages for browser tests; never logs requests."""
 import base64
 import io
 import wave

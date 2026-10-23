@@ -4,6 +4,70 @@ import WebKit
 
 @MainActor
 struct PageInputGuardTests {
+    private func httpFixtureURL(environmentKey: String = "LEVISTICA_FIXTURE_URL", path: String) throws -> URL {
+        let raw = try #require(ProcessInfo.processInfo.environment[environmentKey], "Run script/test.sh for loopback fixtures.")
+        let base = try #require(URL(string: raw))
+        try #require(base.scheme == "http" && base.host == "127.0.0.1" && base.port != nil
+                     && base.user == nil && base.password == nil && base.query == nil && base.fragment == nil
+                     && (base.path.isEmpty || base.path == "/"))
+        return base.appendingPathComponent(path)
+    }
+
+    @Test func actualHTTPDownloadPreservesTheDisplayedDocumentAndIdentity() async throws {
+        let destination = try httpFixtureURL(path: "download")
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        defer { runtime.onDownload = nil; runtime.stop() }
+        let pageURL = try #require(URL(string: "https://www.google.com/"))
+        runtime.webView.loadSimulatedRequest(URLRequest(url: pageURL), responseHTML:
+            "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'\"><title>HTTP download fixture</title>")
+        let pageDeadline = ContinuousClock.now + .seconds(10)
+        while runtime.webView.title != "HTTP download fixture", ContinuousClock.now < pageDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(runtime.webView.title == "HTTP download fixture")
+        let originalAgent = runtime.webView.customUserAgent ?? ""
+        var receivedDownload = false
+        var agentAtDownload: String?
+        runtime.onDownload = { [weak runtime] download in
+            agentAtDownload = runtime?.webView.customUserAgent ?? ""
+            receivedDownload = true
+            download.cancel { _ in }
+        }
+        runtime.load(destination)
+        let downloadDeadline = ContinuousClock.now + .seconds(15)
+        while !receivedDownload, ContinuousClock.now < downloadDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(receivedDownload)
+        #expect(runtime.webView.title == "HTTP download fixture")
+        #expect(runtime.url == pageURL)
+        #expect(runtime.canRetry)
+        #expect(runtime.failure == nil)
+        #expect(agentAtDownload == originalAgent)
+    }
+
+    @Test func actualConnectionFailureKeepsTheDocumentAndRetryDestination() async throws {
+        let page = try httpFixtureURL(path: "one")
+        let failure = try httpFixtureURL(environmentKey: "LEVISTICA_FAILURE_FIXTURE_URL", path: "failure")
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        defer { runtime.stop() }
+        runtime.load(page)
+        let pageDeadline = ContinuousClock.now + .seconds(10)
+        while runtime.webView.title != "Fixture one", ContinuousClock.now < pageDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(runtime.webView.title == "Fixture one")
+        runtime.load(failure)
+        let failureDeadline = ContinuousClock.now + .seconds(15)
+        while runtime.failure == nil, ContinuousClock.now < failureDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(runtime.failure != nil)
+        #expect(runtime.webView.title == "Fixture one")
+        #expect(runtime.url == failure)
+        #expect(runtime.canRetry)
+    }
+
     @Test(arguments: [false, true])
     func stoppingPreservesIdentityCapturedAtCommit(googleIdentity: Bool) async throws {
         let runtime = PageRuntime(dataStore: .nonPersistent())

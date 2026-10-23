@@ -380,6 +380,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     private func acceptDownload(_ download: WKDownload) {
         // A download did not replace the displayed document. Preserve its POST guard
         // and never persist the download URL as a page to reopen on the next launch.
+        restoreDisplayedIdentity()
         lastRequest = committedRequest
         canRetry = committedRequest?.httpMethod == "GET"
         url = webView.url.flatMap { $0.absoluteString == "about:blank" ? nil : $0 }
