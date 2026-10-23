@@ -3,6 +3,156 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testProfileTwentyTabIdleRevisit() async throws {
+        guard let path = ProcessInfo.processInfo.environment["LEVISTICA_PROFILE_IDLE_WORKLOAD"],
+              !path.isEmpty, !path.hasPrefix("$(") else {
+            throw XCTSkip("Run script/test.sh --idle-ui for the twenty-tab revisit workload.")
+        }
+        continueAfterFailure = false
+        executionTimeAllowance = 300
+        struct Workload: Decodable {
+            let pid: Int32
+            let executable: String
+            let urls: [String: String]
+            let state: String
+            let health: String
+        }
+        struct Document: Decodable {
+            let instance: String
+            let seenVisible: Bool
+            let complete: Bool
+            let sections: Int
+            let width: Double
+            let height: Double
+            let dpr: Double
+            let visibility: String
+            let reported_monotonic: Double
+            let pulse: Int
+        }
+        struct State: Decodable {
+            let loads: Int
+            let documents: [String: Document]
+            let stream_connections: [String: Int]
+            let invalid_reason: String?
+        }
+        struct Health: Decodable { let checkedAt: Double; let ok: Bool; let level: Int? }
+        let directory = URL(fileURLWithPath: path).deletingLastPathComponent().resolvingSymlinksInPath()
+        let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        for (value, name) in [(workload.state, "idle-state.json"), (workload.health, "idle-health.json")] {
+            let file = URL(fileURLWithPath: value).resolvingSymlinksInPath()
+            XCTAssertEqual(file.deletingLastPathComponent(), directory)
+            XCTAssertEqual(file.lastPathComponent, name)
+        }
+        XCTAssertEqual(Set(workload.urls.keys), Set((1...20).map(String.init)))
+        var ports = Set<Int>()
+        for number in 1...20 {
+            let parts = try XCTUnwrap(URLComponents(string: try XCTUnwrap(workload.urls[String(number)])))
+            XCTAssertEqual(parts.scheme, "http")
+            XCTAssertEqual(parts.host, "document-\(number).localhost")
+            XCTAssertEqual(parts.path, "/document/\(number)")
+            XCTAssertNil(parts.user); XCTAssertNil(parts.password)
+            XCTAssertNil(parts.query); XCTAssertNil(parts.fragment)
+            ports.insert(try XCTUnwrap(parts.port))
+        }
+        XCTAssertEqual(ports.count, 1)
+        let app = XCUIApplication(bundleIdentifier: "dev.fomalhaut16.Levistica.profile")
+        let running = try XCTUnwrap(NSRunningApplication(processIdentifier: workload.pid))
+        func identityMatches() -> Bool {
+            let candidates = NSRunningApplication.runningApplications(withBundleIdentifier: "dev.fomalhaut16.Levistica.profile")
+            return !running.isTerminated && candidates.count == 1
+                && candidates.first?.processIdentifier == workload.pid
+                && running.executableURL?.path == workload.executable
+        }
+        XCTAssertTrue(identityMatches())
+        XCTAssertTrue(app.state == .runningForeground || app.state == .runningBackground)
+        defer { if identityMatches() && app.state != .notRunning { app.terminate() } }
+        func readState() throws -> State {
+            XCTAssertTrue(identityMatches())
+            let health = try JSONDecoder().decode(Health.self, from: Data(contentsOf: URL(fileURLWithPath: workload.health)))
+            let age = Date().timeIntervalSince1970 - health.checkedAt
+            XCTAssertTrue(health.ok && health.level == 1 && (0...12).contains(age), "Pressure changed or monitor stopped")
+            let state = try JSONDecoder().decode(State.self, from: Data(contentsOf: URL(fileURLWithPath: workload.state)))
+            XCTAssertNil(state.invalid_reason)
+            return state
+        }
+        app.activate()
+        XCTAssertTrue(identityMatches())
+        XCTAssertTrue(app.webViews.staticTexts["Levistica documents 20"].waitForExistence(timeout: 10))
+        waitForInputIndicator(in: app)
+        // The canonical entrypoint has delivered all URLs through the app's
+        // normal external-link handler. Visit deferred tabs without typing URLs.
+        for number in stride(from: 19, through: 1, by: -1) {
+            _ = try readState()
+            app.typeKey("[", modifierFlags: [.command, .shift])
+            XCTAssertTrue(app.webViews.staticTexts["Levistica documents \(number)"].waitForExistence(timeout: 10))
+        }
+        for _ in 1...19 { app.typeKey("]", modifierFlags: [.command, .shift]) }
+        XCTAssertTrue(app.webViews.staticTexts["Levistica documents 20"].exists)
+        XCTAssertTrue(app.staticTexts["20タブ・読み込み済み20"].exists)
+        var baseline = try readState()
+        for _ in 0..<10 {
+            if baseline.documents.count == 20 && baseline.documents.values.allSatisfy({ $0.complete && $0.seenVisible && $0.pulse > 0 }) { break }
+            try await Task.sleep(for: .seconds(1))
+            baseline = try readState()
+        }
+        XCTAssertEqual(baseline.documents.count, 20)
+        let first = try XCTUnwrap(baseline.documents["1"])
+        func check(_ state: State) {
+            XCTAssertEqual(state.loads, 20)
+            XCTAssertEqual(state.stream_connections, Dictionary(uniqueKeysWithValues: (1...20).map { (String($0), 1) }))
+            XCTAssertEqual(state.documents.count, 20)
+            XCTAssertEqual(state.documents["20"]?.visibility, "visible")
+            XCTAssertEqual(app.textFields["addressField"].value as? String, workload.urls["20"])
+            for (key, document) in state.documents {
+                XCTAssertEqual(document.instance, baseline.documents[key]?.instance)
+                XCTAssertTrue(document.complete && document.seenVisible && document.sections == 240)
+                XCTAssertEqual(document.width, first.width); XCTAssertEqual(document.height, first.height)
+                XCTAssertEqual(document.dpr, first.dpr)
+            }
+        }
+        check(baseline)
+        let idleStart = Date()
+        for tick in 1...24 {
+            try await Task.sleep(for: .seconds(5))
+            XCTAssertEqual(app.state, .runningForeground)
+            check(try readState())
+            if tick.isMultiple(of: 6) { print("Twenty-tab idle checkpoint: \(tick * 5) seconds; no RAM capture") }
+        }
+        let idleElapsed = Date().timeIntervalSince(idleStart)
+        let idle = try readState()
+        XCTAssertGreaterThan(try XCTUnwrap(idle.documents["20"]).pulse, try XCTUnwrap(baseline.documents["20"]).pulse)
+        let latest = try XCTUnwrap(idle.documents.values.map(\.reported_monotonic).max())
+        let lags = idle.documents.mapValues { latest - $0.reported_monotonic }
+        for number in [1, 20] {
+            let old = try XCTUnwrap((try readState()).documents[String(number)])
+            for _ in 1...19 { app.typeKey(number == 1 ? "[" : "]", modifierFlags: [.command, .shift]) }
+            XCTAssertTrue(app.webViews.staticTexts["Levistica documents \(number)"].waitForExistence(timeout: 5))
+            var observed = false
+            for _ in 0..<10 {
+                let state = try readState()
+                XCTAssertEqual(state.loads, 20)
+                if let document = state.documents[String(number)], document.visibility == "visible",
+                   document.reported_monotonic > old.reported_monotonic, document.instance == old.instance {
+                    observed = true
+                    break
+                }
+                try await Task.sleep(for: .seconds(1))
+            }
+            XCTAssertTrue(observed, "Selected document did not resume reporting within ten seconds")
+        }
+        check(try readState())
+        let summary: [String: Any] = ["kind": "twenty-tab-idle-revisit", "minimumIdleSeconds": 120,
+            "idleElapsedSeconds": idleElapsed,
+            "loads": 20, "latestReportLagSeconds": lags, "lagOver15Seconds": lags.values.filter { $0 > 15 }.count,
+            "revisited": [1, 20], "sameInstances": true, "ramCaptured": false]
+        let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: summary, options: .sortedKeys), uniformTypeIdentifier: "public.json")
+        attachment.name = "twenty-tab-idle-revisit"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        attachWindowImage(app, name: "twenty-tab-idle-revisited")
+    }
+
+    @MainActor
     func testNewTabPageSettingAppliesToPlusAndCommandTAndSurvivesRestart() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180
