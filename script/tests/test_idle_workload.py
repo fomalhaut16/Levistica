@@ -1,5 +1,7 @@
 import importlib.util
 import pathlib
+import os
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -64,9 +66,34 @@ class IdleWorkloadTests(unittest.TestCase):
         with patch.object(module.subprocess, 'check_output', return_value='2\n'):
             with self.assertRaises(ValueError):
                 module.pressure()
+
         with patch.object(module.subprocess, 'check_output', side_effect=OSError('synthetic error')):
             with self.assertRaises(OSError):
                 module.pressure()
+
+    def test_profile_pid_start_time_and_path_must_match(self):
+        executable = '/synthetic/Levistica.app/Contents/MacOS/Levistica'
+        original = {'pid': 123, 'executable': executable, 'started': 'original start'}
+        for changed in [{}, {'pid': 124}, {'executable': '/different/Levistica'}, {'started': 'reused PID'}]:
+            workload = {**original, **changed}
+            with patch.object(module.processes, 'run_ps', side_effect=['synthetic snapshot', 'original start']), \
+                    patch.object(module.processes, 'check_snapshot', return_value=[123]), \
+                    patch.object(module.processes, 'known_apps', return_value={executable: 'synthetic.profile'}):
+                if changed:
+                    with self.subTest(changed=changed), self.assertRaises(ValueError):
+                        module.verify_profile(workload)
+                else:
+                    module.verify_profile(workload)
+
+    def test_idle_mode_rejects_test_override_and_stack_logging_before_building(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        for settings in [{'TEST_ONLY': 'LevisticaTests'}, {'LEVISTICA_MALLOC_STACKS': '1'}]:
+            env = {key: value for key, value in os.environ.items()
+                   if not key.startswith('LEVISTICA_') and key not in ('CONFIGURATION', 'TEST_ONLY')}
+            result = subprocess.run(['bash', str(root / 'script/test.sh'), '--idle-ui'],
+                                    env={**env, **settings}, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertNotIn('Built ', result.stdout)
 
 
 if __name__ == '__main__':

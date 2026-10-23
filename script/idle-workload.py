@@ -70,9 +70,20 @@ def monitor(output):
         time.sleep(5)
 
 
+def verify_profile(workload):
+    snapshot = processes.run_ps(['-axo', 'pid=,comm='])
+    if snapshot is None:
+        raise ValueError('Process enumeration failed')
+    pids = processes.check_snapshot(snapshot, ROOT, processes.describe_process, os.getuid(), only='Profile')
+    expected = next(path for path, identifier in processes.known_apps(ROOT).items() if identifier.endswith('.profile'))
+    if (pids != [workload['pid']] or workload['executable'] != expected
+            or processes.run_ps(['-p', str(workload['pid']), '-o', 'lstart=']) != workload['started']):
+        raise ValueError('Profile identity changed; no URLs delivered')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['prepare', 'monitor', 'validate'])
+    parser.add_argument('mode', choices=['prepare', 'deliver', 'monitor', 'validate'])
     parser.add_argument('state', type=pathlib.Path)
     parser.add_argument('output', nargs='?', type=pathlib.Path)
     args = parser.parse_args()
@@ -81,6 +92,19 @@ def main():
         return
     state = json.loads(args.state.read_text())
     validate_state(state, completed=args.mode == 'validate')
+    if args.mode == 'deliver':
+        if args.output is None:
+            parser.error('deliver requires the workload file')
+        workload = json.loads(args.output.read_text())
+        if workload['urls'] != state['urls']:
+            raise ValueError('Workload does not match this fresh fixture')
+        verify_profile(workload)
+        pressure()
+        app = pathlib.Path(workload['executable']).parents[2]
+        subprocess.run(['/usr/bin/open', '-a', str(app), *[state['urls'][str(n)] for n in range(1, 21)]],
+                       check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        verify_profile(workload)
+        return
     if args.mode == 'validate':
         print('Twenty documents displayed without reload or reconnect; no RAM measurement.')
         return
@@ -94,7 +118,10 @@ def main():
     if len(pids) != 1:
         raise ValueError('Exactly one verified Profile process is required')
     executable = next(path for path, identifier in processes.known_apps(ROOT).items() if identifier.endswith('.profile'))
-    args.output.write_text(json.dumps({'pid': pids[0], 'executable': executable, 'urls': state['urls'],
+    started = processes.run_ps(['-p', str(pids[0]), '-o', 'lstart='])
+    if not started:
+        raise ValueError('Profile exited during preparation')
+    args.output.write_text(json.dumps({'pid': pids[0], 'executable': executable, 'started': started, 'urls': state['urls'],
         'state': str(args.state.resolve()), 'health': str(args.state.with_name('idle-health.json').resolve())}) + '\n')
     args.output.chmod(0o600)
 

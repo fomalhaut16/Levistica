@@ -62,6 +62,7 @@ elif [[ "$MODE" == --idle-ui ]]; then
         sleep 0.1
     done
     [[ -f "$RUN_DIR/idle-health.json" ]] || { echo 'Pressure monitor did not become ready' >&2; exit 1; }
+    python3 "$ROOT_DIR/script/idle-workload.py" deliver "$RUN_DIR/idle-state.json" "$RUN_DIR/idle-workload.json"
     BUILD_ARGS+=("LEVISTICA_PROFILE_IDLE_WORKLOAD=$RUN_DIR/idle-workload.json"
         -only-testing:LevisticaUITests/BrowserFlowTests/testProfileTwentyTabIdleRevisit
         -test-timeouts-enabled YES -maximum-test-execution-time-allowance 300)

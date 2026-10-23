@@ -77,12 +77,17 @@ final class BrowserFlowTests: XCTestCase {
         }
         app.activate()
         XCTAssertTrue(identityMatches())
-        for number in 1...20 {
+        XCTAssertTrue(app.webViews.staticTexts["Levistica documents 20"].waitForExistence(timeout: 10))
+        waitForInputIndicator(in: app)
+        // The canonical entrypoint has delivered all URLs through the app's
+        // normal external-link handler. Visit deferred tabs without typing URLs.
+        for number in stride(from: 19, through: 1, by: -1) {
             _ = try readState()
-            if number > 1 { app.typeKey("t", modifierFlags: .command) }
-            submit(try XCTUnwrap(workload.urls[String(number)]), in: app)
+            app.typeKey("[", modifierFlags: [.command, .shift])
             XCTAssertTrue(app.webViews.staticTexts["Levistica documents \(number)"].waitForExistence(timeout: 10))
         }
+        for _ in 1...19 { app.typeKey("]", modifierFlags: [.command, .shift]) }
+        XCTAssertTrue(app.webViews.staticTexts["Levistica documents 20"].exists)
         XCTAssertTrue(app.staticTexts["20タブ・読み込み済み20"].exists)
         var baseline = try readState()
         for _ in 0..<10 {
