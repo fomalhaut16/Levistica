@@ -70,15 +70,24 @@ def monitor(output):
         time.sleep(5)
 
 
-def verify_profile(workload):
+def application(variant):
+    if variant not in ('Profile', 'Measurement'):
+        raise ValueError('Only isolated Profile or Measurement is allowed')
+    identifier = 'dev.fomalhaut16.Levistica.' + ('profile' if variant == 'Profile' else 'measurement')
+    executable = next(path for path, value in processes.known_apps(ROOT).items() if value == identifier)
+    return identifier, executable
+
+
+def verify_application(workload):
+    variant = workload.get('variant')
+    _, expected = application(variant)
     snapshot = processes.run_ps(['-axo', 'pid=,comm='])
     if snapshot is None:
         raise ValueError('Process enumeration failed')
-    pids = processes.check_snapshot(snapshot, ROOT, processes.describe_process, os.getuid(), only='Profile')
-    expected = next(path for path, identifier in processes.known_apps(ROOT).items() if identifier.endswith('.profile'))
+    pids = processes.check_snapshot(snapshot, ROOT, processes.describe_process, os.getuid(), only=variant)
     if (pids != [workload['pid']] or workload['executable'] != expected
             or processes.run_ps(['-p', str(workload['pid']), '-o', 'lstart=']) != workload['started']):
-        raise ValueError('Profile identity changed; no URLs delivered')
+        raise ValueError('Isolated app identity changed; no URLs delivered')
 
 
 def main():
@@ -86,6 +95,7 @@ def main():
     parser.add_argument('mode', choices=['prepare', 'deliver', 'monitor', 'validate'])
     parser.add_argument('state', type=pathlib.Path)
     parser.add_argument('output', nargs='?', type=pathlib.Path)
+    parser.add_argument('--variant', choices=['Profile', 'Measurement'], default='Profile')
     args = parser.parse_args()
     if args.mode == 'monitor':
         monitor(args.state)
@@ -98,12 +108,12 @@ def main():
         workload = json.loads(args.output.read_text())
         if workload['urls'] != state['urls']:
             raise ValueError('Workload does not match this fresh fixture')
-        verify_profile(workload)
+        verify_application(workload)
         pressure()
         app = pathlib.Path(workload['executable']).parents[2]
         subprocess.run(['/usr/bin/open', '-a', str(app), *[state['urls'][str(n)] for n in range(1, 21)]],
                        check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        verify_profile(workload)
+        verify_application(workload)
         return
     if args.mode == 'validate':
         print('Twenty documents displayed without reload or reconnect; no RAM measurement.')
@@ -111,17 +121,17 @@ def main():
     if args.output is None:
         parser.error('prepare requires an output file')
     pressure()
+    _, executable = application(args.variant)
     snapshot = processes.run_ps(['-axo', 'pid=,comm='])
     if snapshot is None:
         raise ValueError('Process enumeration failed')
-    pids = processes.check_snapshot(snapshot, ROOT, processes.describe_process, os.getuid(), only='Profile')
+    pids = processes.check_snapshot(snapshot, ROOT, processes.describe_process, os.getuid(), only=args.variant)
     if len(pids) != 1:
-        raise ValueError('Exactly one verified Profile process is required')
-    executable = next(path for path, identifier in processes.known_apps(ROOT).items() if identifier.endswith('.profile'))
+        raise ValueError('Exactly one verified isolated app process is required')
     started = processes.run_ps(['-p', str(pids[0]), '-o', 'lstart='])
     if not started:
-        raise ValueError('Profile exited during preparation')
-    args.output.write_text(json.dumps({'pid': pids[0], 'executable': executable, 'started': started, 'urls': state['urls'],
+        raise ValueError('Isolated app exited during preparation')
+    args.output.write_text(json.dumps({'variant': args.variant, 'pid': pids[0], 'executable': executable, 'started': started, 'urls': state['urls'],
         'state': str(args.state.resolve()), 'health': str(args.state.with_name('idle-health.json').resolve())}) + '\n')
     args.output.chmod(0o600)
 

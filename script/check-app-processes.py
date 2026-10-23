@@ -15,6 +15,7 @@ def known_apps(root):
         str(root / '.local/DerivedData/Build/Products/Debug/Levistica.app/Contents/MacOS/Levistica'): 'dev.fomalhaut16.Levistica.debug',
         str(root / '.local/DerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica'): 'dev.fomalhaut16.Levistica',
         str(root / '.local/ProfileDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica'): 'dev.fomalhaut16.Levistica.profile',
+        str(root / '.local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica'): 'dev.fomalhaut16.Levistica.measurement',
     }
 
 
@@ -28,7 +29,8 @@ def check_snapshot(snapshot, root, describe, uid, only=None):
         pid = int(fields[0])
         identifier = expected[fields[1]]
         variant = ('Debug' if identifier.endswith('.debug') else
-                   'Profile' if identifier.endswith('.profile') else 'Release')
+                   'Profile' if identifier.endswith('.profile') else
+                   'Measurement' if identifier.endswith('.measurement') else 'Release')
         if only is not None and variant != only:
             raise ValueError(f'Unexpected {variant} app PID {pid} while only {only} is allowed; do not stop it automatically.')
         info = describe(pid, fields[1])
@@ -65,7 +67,7 @@ def describe_process(pid, expected_path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--only', choices=['Debug', 'Release', 'Profile'])
+    parser.add_argument('--only', choices=['Debug', 'Release', 'Profile', 'Measurement'])
     args = parser.parse_args()
     snapshot = run_ps(['-axo', 'pid=,comm='])
     if snapshot is None:

@@ -87,7 +87,7 @@ final class BrowserSession {
     }
 
     static func applicationSession() -> BrowserSession {
-        #if LEVISTICA_PROFILE
+        #if LEVISTICA_PROFILE || LEVISTICA_MEASUREMENT
         return BrowserSession()
         #else
         let environment = ProcessInfo.processInfo.environment
@@ -700,7 +700,7 @@ final class BrowserSession {
 
     private func websiteDataStore() -> WKWebsiteDataStore {
         if let dataStore { return dataStore }
-        #if LEVISTICA_PROFILE
+        #if LEVISTICA_PROFILE || LEVISTICA_MEASUREMENT
         let value = WKWebsiteDataStore.nonPersistent()
         #else
         let isolated = ProcessInfo.processInfo.environment["LEVISTICA_EPHEMERAL"] == "1"

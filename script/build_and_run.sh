@@ -5,12 +5,18 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 MODE="${1:-run}"
 CONFIGURATION="${CONFIGURATION:-Debug}"
 PROFILE="${LEVISTICA_PROFILE:-0}"
+MEASUREMENT="${LEVISTICA_MEASUREMENT:-0}"
 MALLOC_STACKS="${LEVISTICA_MALLOC_STACKS:-0}"
 case "$MODE" in run|--build|--verify|--debug|--logs|--telemetry) ;; *) echo "usage: $0 [--build|--verify|--debug|--logs|--telemetry]" >&2; exit 2;; esac
 case "$CONFIGURATION" in Debug|Release) ;; *) echo 'CONFIGURATION must be Debug or Release' >&2; exit 2;; esac
 case "$PROFILE" in 0|1) ;; *) echo 'LEVISTICA_PROFILE must be 0 or 1' >&2; exit 2;; esac
 if [[ "$PROFILE" == 1 && ( "$CONFIGURATION" != Release || "${LEVISTICA_EPHEMERAL:-0}" != 1 || -n "${LEVISTICA_SESSION_TEST_ID:-}" ) ]]; then
     echo 'PROFILE requires Release, EPHEMERAL=1, and no SESSION_TEST_ID' >&2
+    exit 2
+fi
+case "$MEASUREMENT" in 0|1) ;; *) echo 'LEVISTICA_MEASUREMENT must be 0 or 1' >&2; exit 2;; esac
+if [[ "$MEASUREMENT" == 1 && ( "$CONFIGURATION" != Release || "${LEVISTICA_EPHEMERAL:-0}" != 1 || "$PROFILE" != 0 || -n "${LEVISTICA_SESSION_TEST_ID:-}" || "$MALLOC_STACKS" != 0 ) ]]; then
+    echo 'MEASUREMENT requires Release, EPHEMERAL=1, PROFILE=0, no SESSION_TEST_ID, and no stack logging' >&2
     exit 2
 fi
 case "$MALLOC_STACKS" in 0|1) ;; *) echo 'LEVISTICA_MALLOC_STACKS must be 0 or 1' >&2; exit 2;; esac
@@ -33,6 +39,11 @@ if [[ "$PROFILE" == 1 ]]; then
     VARIANT=Profile
     EXPECTED_IDENTIFIER="dev.fomalhaut16.Levistica.profile"
 fi
+if [[ "$MEASUREMENT" == 1 ]]; then
+    DERIVED_DATA="$ROOT_DIR/.local/MeasurementDerivedData"
+    VARIANT=Measurement
+    EXPECTED_IDENTIFIER="dev.fomalhaut16.Levistica.measurement"
+fi
 APP_BUNDLE="$DERIVED_DATA/Build/Products/$CONFIGURATION/Levistica.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/Levistica"
 BUILD_ARGS=(-project "$ROOT_DIR/Levistica.xcodeproj" -scheme Levistica
@@ -51,6 +62,12 @@ if [[ "$PROFILE" == 1 ]]; then
         SWIFT_ACTIVE_COMPILATION_CONDITIONS=LEVISTICA_PROFILE)
 fi
 
+if [[ "$MEASUREMENT" == 1 ]]; then
+    BUILD_ARGS+=(CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
+        "PRODUCT_BUNDLE_IDENTIFIER=$EXPECTED_IDENTIFIER"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS=LEVISTICA_MEASUREMENT)
+fi
+
 # Stop only this checkout's development app, after matching its executable path.
 for pid in $(/usr/bin/pgrep -x Levistica || true); do
     actual="$(/bin/ps -p "$pid" -o comm= || true)"
@@ -58,6 +75,7 @@ for pid in $(/usr/bin/pgrep -x Levistica || true); do
         "$ROOT_DIR/.local/DerivedData/Build/Products/Debug/Levistica.app/Contents/MacOS/Levistica") identifier_to_stop=dev.fomalhaut16.Levistica.debug ;;
         "$ROOT_DIR/.local/DerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica") identifier_to_stop=dev.fomalhaut16.Levistica ;;
         "$ROOT_DIR/.local/ProfileDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica") identifier_to_stop=dev.fomalhaut16.Levistica.profile ;;
+        "$ROOT_DIR/.local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica") identifier_to_stop=dev.fomalhaut16.Levistica.measurement ;;
         *) continue ;;
     esac
     bundle="${actual%/Contents/MacOS/Levistica}"
