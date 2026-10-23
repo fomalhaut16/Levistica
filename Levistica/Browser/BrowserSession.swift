@@ -4,10 +4,8 @@ import AppKit
 
 enum MeasurementWebsiteStorage {
     static let storeKey = "LEVISTICA_MEASUREMENT_STORE_ID"
-    static let cleanupKey = "LEVISTICA_MEASUREMENT_CLEANUP_REQUEST"
     struct Configuration {
         let storeID: UUID?
-        let cleanupRequest: UUID?
     }
     enum Failure: Error { case invalidConfiguration }
 
@@ -21,23 +19,14 @@ enum MeasurementWebsiteStorage {
     }
 
     static func configuration(environment: [String: String], bundleIdentifier: String?) throws -> Configuration {
-        let rawStore = environment[storeKey]
-        let rawRequest = environment[cleanupKey]
-        if rawStore == nil && rawRequest == nil { return Configuration(storeID: nil, cleanupRequest: nil) }
-        guard bundleIdentifier == "dev.fomalhaut16.Levistica.measurement", let rawStore else {
+        guard environment["LEVISTICA_MEASUREMENT_CLEANUP_REQUEST"] == nil else {
             throw Failure.invalidConfiguration
         }
-        return try Configuration(storeID: uuid(rawStore), cleanupRequest: rawRequest.map(uuid))
-    }
-
-    @MainActor static func initializeManagement() {
-        // The cold management process has not initialized WebKit through a view.
-        // Use no URL and no persistent/default store; release the view before enumeration.
-        autoreleasepool {
-            let configuration = WKWebViewConfiguration()
-            configuration.websiteDataStore = .nonPersistent()
-            _ = WKWebView(frame: .zero, configuration: configuration)
+        guard let rawStore = environment[storeKey] else { return Configuration(storeID: nil) }
+        guard bundleIdentifier == "dev.fomalhaut16.Levistica.measurement" else {
+            throw Failure.invalidConfiguration
         }
+        return try Configuration(storeID: uuid(rawStore))
     }
 
     @MainActor static func dataStore(configuration: Configuration) -> WKWebsiteDataStore {

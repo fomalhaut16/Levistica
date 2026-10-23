@@ -8,7 +8,6 @@ struct BrowserSessionTests {
     @Test func measurementStorageDefaultsToNonPersistentWithoutAnIdentifier() throws {
         let config = try MeasurementWebsiteStorage.configuration(environment: [:], bundleIdentifier: "dev.fomalhaut16.Levistica")
         #expect(config.storeID == nil)
-        #expect(config.cleanupRequest == nil)
         #expect(MeasurementWebsiteStorage.dataStore(configuration: config).isPersistent == false)
     }
 
@@ -29,27 +28,10 @@ struct BrowserSessionTests {
         }
     }
 
-    @Test func cleanupRequiresAnExplicitNonzeroStoreAndRequest() throws {
-        let id = UUID(), request = UUID()
-        let config = try MeasurementWebsiteStorage.configuration(environment: [
-            MeasurementWebsiteStorage.storeKey: id.uuidString, MeasurementWebsiteStorage.cleanupKey: request.uuidString],
-            bundleIdentifier: "dev.fomalhaut16.Levistica.measurement")
-        #expect(config.storeID == id && config.cleanupRequest == request)
-        #expect(throws: MeasurementWebsiteStorage.Failure.self) {
-            try MeasurementWebsiteStorage.configuration(environment: [MeasurementWebsiteStorage.cleanupKey: request.uuidString],
-                bundleIdentifier: "dev.fomalhaut16.Levistica.measurement")
-        }
-        #expect(throws: MeasurementWebsiteStorage.Failure.self) {
-            try MeasurementWebsiteStorage.configuration(environment: [MeasurementWebsiteStorage.storeKey: id.uuidString,
-                MeasurementWebsiteStorage.cleanupKey: "invalid"], bundleIdentifier: "dev.fomalhaut16.Levistica.measurement")
-        }
-    }
-
-    @Test func namedMeasurementStoreIsPersistentAndRemovableWithoutWebViews() async throws {
-        MeasurementWebsiteStorage.initializeManagement()
+    @Test func namedMeasurementStoreIsPersistentAndRemovableWithoutTargetWebViews() async throws {
         let id = UUID()
         var store: WKWebsiteDataStore? = autoreleasepool {
-            MeasurementWebsiteStorage.dataStore(configuration: .init(storeID: id, cleanupRequest: nil))
+            MeasurementWebsiteStorage.dataStore(configuration: .init(storeID: id))
         }
         #expect(store?.isPersistent == true)
         #expect(store?.identifier == id)

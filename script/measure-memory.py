@@ -340,6 +340,7 @@ def main():
                 'sleep_checkpoint': checkpoint, 'sleeping_documents': sleeping,
                 'memory_pressure_level': pressure, 'workload': state}
     app, binary, profile = APP, BINARY, None
+    measurement_storage = None
     if args.browser == "chrome":
         if not args.chrome_profile:
             parser.error("Chrome requires an isolated --chrome-profile")
@@ -367,6 +368,10 @@ def main():
                                        guard.describe_process, os.getuid(), only='Measurement')
         if checked != [find_app(binary)]:
             raise ValueError('Measurement app identity is unavailable')
+        spec = importlib.util.spec_from_file_location('measurement_store', ROOT / 'script/measurement-store.py')
+        stores = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(stores)
+        measurement_storage = stores.selection(stores.runtime_flags(checked[0]))
     fixture = None
     sleep_guard_file = None
     sleep_observations = []
@@ -407,7 +412,7 @@ def main():
         "schema": 2, "label": args.label, "fixture": fixture, "ready_delay_seconds": args.ready_delay if fixture else None,
         "sleep_guard_file": str(sleep_guard_file) if sleep_guard_file else None,
         "loaded_pages": args.loaded_pages, "total_tabs": args.total_tabs,
-        "browser": args.browser, "storage_mode": "compile-time nonpersistent" if args.browser == "levistica-measurement" else "launch configuration", "pid": pid, "source_head_at_sampling": run(["git", "rev-parse", "HEAD"]).strip(),
+        "browser": args.browser, "storage_mode": measurement_storage["mode"] if measurement_storage else "launch configuration", "measurement_store_id": measurement_storage["storeID"] if measurement_storage else None, "pid": pid, "source_head_at_sampling": run(["git", "rev-parse", "HEAD"]).strip(),
         "measurement_script_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "worktree_dirty": bool(run(["git", "status", "--porcelain", "--untracked-files=no"]).strip()),
