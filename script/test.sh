@@ -3,16 +3,16 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 MODE="${1:---unit}"
-case "$MODE" in --unit|--ui|--all|--profile-ui) ;; *) echo "usage: $0 [--unit|--ui|--all|--profile-ui]" >&2; exit 2;; esac
+case "$MODE" in --unit|--ui|--all|--profile-ui|--idle-ui) ;; *) echo "usage: $0 [--unit|--ui|--all|--profile-ui|--idle-ui]" >&2; exit 2;; esac
 # Diagnostic selection is fixed; never run normal launch-based tests against Profile.
-if [[ "$MODE" == --profile-ui && -n "${TEST_ONLY:-}" ]]; then
-    echo '--profile-ui does not accept TEST_ONLY' >&2; exit 2
+if [[ ( "$MODE" == --profile-ui || "$MODE" == --idle-ui ) && -n "${TEST_ONLY:-}" ]]; then
+    echo "$MODE does not accept TEST_ONLY" >&2; exit 2
 fi
 case "${LEVISTICA_MALLOC_STACKS:-0}" in 0|1) ;; *) echo 'LEVISTICA_MALLOC_STACKS must be 0 or 1' >&2; exit 2;; esac
 if [[ "${LEVISTICA_MALLOC_STACKS:-0}" == 1 && "$MODE" != --profile-ui ]]; then
     echo 'MALLOC_STACKS requires --profile-ui' >&2; exit 2
 fi
-unset LEVISTICA_PROFILE_WORKLOAD
+unset LEVISTICA_PROFILE_WORKLOAD LEVISTICA_PROFILE_IDLE_WORKLOAD
 # Reuse the canonical entrypoint to stop this checkout's verified development apps first.
 LEVISTICA_MALLOC_STACKS=0 "$ROOT_DIR/script/build_and_run.sh" --build
 python3 "$ROOT_DIR/script/check-app-processes.py" --only Debug
@@ -23,7 +23,7 @@ COLLECTOR_PID=""
 cleanup() {
     local result=$?
     if [[ -n "$COLLECTOR_PID" ]]; then kill "$COLLECTOR_PID" 2>/dev/null || true; wait "$COLLECTOR_PID" 2>/dev/null || true; fi
-    if [[ "$MODE" == --profile-ui ]]; then
+    if [[ "$MODE" == --profile-ui || "$MODE" == --idle-ui ]]; then
         # Reuse the verified stop/build path even if XCTest never reaches its defer.
         if python3 "$ROOT_DIR/script/check-app-processes.py" --only Profile; then
             CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=1 \
@@ -40,6 +40,31 @@ BUILD_ARGS=(-project "$ROOT_DIR/Levistica.xcodeproj" -scheme Levistica
     -derivedDataPath "$ROOT_DIR/.local/DerivedData")
 if [[ "$MODE" == --unit ]]; then
     if [[ -z "${TEST_ONLY:-}" ]]; then BUILD_ARGS+=(-only-testing:LevisticaTests); fi
+elif [[ "$MODE" == --idle-ui ]]; then
+    if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" build-for-testing >"$RUN_DIR/build-for-testing.log" 2>&1; then
+        tail -n 70 "$RUN_DIR/build-for-testing.log" >&2; exit 1
+    fi
+    TEST_ACTION=test-without-building
+    python3 "$ROOT_DIR/script/cross-site-fixture.py" --count 20 --state "$RUN_DIR/idle-state.json" >"$RUN_DIR/fixture.log" 2>&1 &
+    FIXTURE_PID=$!
+    for ((attempt=0; attempt<100; attempt++)); do
+        [[ -f "$RUN_DIR/idle-state.json" ]] && break
+        kill -0 "$FIXTURE_PID" 2>/dev/null || { cat "$RUN_DIR/fixture.log" >&2; exit 1; }
+        sleep 0.1
+    done
+    CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=1 "$ROOT_DIR/script/build_and_run.sh" --verify
+    python3 "$ROOT_DIR/script/idle-workload.py" prepare "$RUN_DIR/idle-state.json" "$RUN_DIR/idle-workload.json"
+    python3 "$ROOT_DIR/script/idle-workload.py" monitor "$RUN_DIR/idle-health.json" >"$RUN_DIR/idle-health.log" 2>&1 &
+    COLLECTOR_PID=$!
+    for ((attempt=0; attempt<100; attempt++)); do
+        [[ -f "$RUN_DIR/idle-health.json" ]] && break
+        kill -0 "$COLLECTOR_PID" 2>/dev/null || { echo 'Pressure monitor exited before startup' >&2; exit 1; }
+        sleep 0.1
+    done
+    [[ -f "$RUN_DIR/idle-health.json" ]] || { echo 'Pressure monitor did not become ready' >&2; exit 1; }
+    BUILD_ARGS+=("LEVISTICA_PROFILE_IDLE_WORKLOAD=$RUN_DIR/idle-workload.json"
+        -only-testing:LevisticaUITests/BrowserFlowTests/testProfileTwentyTabIdleRevisit
+        -test-timeouts-enabled YES -maximum-test-execution-time-allowance 300)
 elif [[ "$MODE" == --profile-ui ]]; then
     if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" build-for-testing >"$RUN_DIR/build-for-testing.log" 2>&1; then
         tail -n 70 "$RUN_DIR/build-for-testing.log" >&2; exit 1
@@ -91,7 +116,7 @@ if [[ -n "${LEVISTICA_FAILURE_FIXTURE_URL:-}" ]]; then BUILD_ARGS+=("LEVISTICA_F
 if [[ -n "${TEST_ONLY:-}" ]]; then BUILD_ARGS+=("-only-testing:$TEST_ONLY"); fi
 BUILD_ARGS+=(-resultBundlePath "$RUN_DIR/Results.xcresult")
 EXPECTED_VARIANT=Debug
-[[ "$MODE" != --profile-ui ]] || EXPECTED_VARIANT=Profile
+[[ "$MODE" != --profile-ui && "$MODE" != --idle-ui ]] || EXPECTED_VARIANT=Profile
 python3 "$ROOT_DIR/script/check-app-processes.py" --only "$EXPECTED_VARIANT"
 echo "Test artifacts: $RUN_DIR"
 if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" "$TEST_ACTION" >"$RUN_DIR/xcodebuild.log" 2>&1; then
@@ -106,5 +131,7 @@ if [[ "$MODE" == --profile-ui ]]; then
         COLLECTOR_PID=""
     fi
     python3 "$ROOT_DIR/script/profile-workload.py" validate "$RUN_DIR/lifecycle.json"
+elif [[ "$MODE" == --idle-ui ]]; then
+    python3 "$ROOT_DIR/script/idle-workload.py" validate "$RUN_DIR/idle-state.json"
 fi
 tail -n 25 "$RUN_DIR/xcodebuild.log"
