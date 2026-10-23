@@ -1,6 +1,20 @@
 import Foundation
 
 enum NavigationPolicy {
+    // Google serves its legacy homepage to the bare macOS WKWebView identity.
+    // Keep WebKit's frozen desktop tokens, add Safari compatibility without
+    // claiming a Safari release, and identify this app explicitly.
+    private static let googleUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Safari/605.1.15 Levistica"
+
+    static func userAgent(for url: URL?) -> String? {
+        guard let url, url.scheme?.lowercased() == "https", url.user == nil, url.password == nil,
+              url.port == nil || url.port == 443,
+              ["google.com", "www.google.com", "google.co.jp", "www.google.co.jp"].contains(url.host?.lowercased()) else {
+            return nil
+        }
+        return googleUserAgent
+    }
+
     // WHATWG Fetch §2.9, checked 2026-10-20: https://fetch.spec.whatwg.org/#port-blocking
     // Reject explicitly so a WebKit-rejected port cannot leave an unexplained blank page.
     private static let restrictedPorts: Set<Int> = [

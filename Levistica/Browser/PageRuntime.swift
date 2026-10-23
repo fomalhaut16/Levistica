@@ -301,6 +301,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     private func acceptMainNavigation(_ request: URLRequest, initialBlank: Bool) {
+        webView.customUserAgent = NavigationPolicy.userAgent(for: request.url)
         if !initialBlank { permitsInitialBlankPage = false }
         lastRequest = request
         canRetry = request.httpMethod == "GET"
@@ -347,6 +348,8 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
             .split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased()
         let download = !response.canShowMIMEType || disposition == "attachment"
         if response.isForMainFrame && !download {
+            // Reconcile the final destination after server redirects as well.
+            webView.customUserAgent = NavigationPolicy.userAgent(for: response.response.url)
             pendingPDFTitle = nil
             if response.response.mimeType?.lowercased() == "application/pdf" {
                 let name = response.response.suggestedFilename ?? "PDF資料"

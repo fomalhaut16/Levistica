@@ -4,6 +4,41 @@ import WebKit
 
 @MainActor
 struct PageInputGuardTests {
+    @Test func simulatedMainNavigationsResetGoogleIdentityWithoutNetworkAccess() async throws {
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        defer { runtime.stop() }
+        for (index, address) in ["https://www.google.com/", "https://example.org/", "https://www.google.co.jp/",
+                                 "https://accounts.google.com/"].enumerated() {
+            let destination = try #require(URL(string: address))
+            let title = "Identity fixture \(index)"
+            runtime.webView.loadSimulatedRequest(URLRequest(url: destination), responseHTML:
+                "<html><head><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'\"><title>\(title)</title></head><body>Fixture</body></html>")
+            let deadline = ContinuousClock.now + .seconds(10)
+            while (runtime.webView.isLoading || runtime.webView.title != title), ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try #require(runtime.webView.title == title)
+            #expect(runtime.webView.url == destination)
+            if let expected = NavigationPolicy.userAgent(for: destination) {
+                #expect(runtime.webView.customUserAgent == expected)
+            } else {
+                // WebKit normalizes a cleared custom agent to an empty string.
+                #expect(runtime.webView.customUserAgent?.isEmpty ?? true)
+            }
+            let agent: String = try await withCheckedThrowingContinuation { continuation in
+                runtime.webView.evaluateJavaScript("navigator.userAgent") { value, error in
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume(returning: value as? String ?? "") }
+                }
+            }
+            if let expected = NavigationPolicy.userAgent(for: destination) {
+                #expect(agent == expected)
+            } else {
+                #expect(agent.contains("Levistica") == false)
+            }
+        }
+    }
+
     @Test func inheritedConfigurationPreservesScriptsWithoutSharingInputObservers() {
         let store = WKWebsiteDataStore.nonPersistent()
         let configuration = WKWebViewConfiguration()
