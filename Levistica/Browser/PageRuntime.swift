@@ -196,7 +196,16 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         failure = nil
         activeNavigation = webView.reload()
     }
-    func stop() { dialogs.cancel(); webView.stopLoading() }
+    func stop() {
+        dialogs.cancel()
+        webView.stopLoading()
+        restoreDisplayedIdentity()
+    }
+
+    private func restoreDisplayedIdentity() {
+        // A provisional destination has not replaced the committed document.
+        webView.customUserAgent = NavigationPolicy.userAgent(for: committedRequest?.url)
+    }
     func dismissFailure() { failure = nil }
 
     func retry() {
@@ -460,6 +469,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         let error = error as NSError
         if let failedURL = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL,
            let requestedURL = lastRequest?.url, failedURL != requestedURL { return }
+        restoreDisplayedIdentity()
         guard !(error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled) else { return }
         updateSnapshot()
         url = lastRequest?.url ?? url
