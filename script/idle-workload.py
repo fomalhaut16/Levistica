@@ -92,6 +92,48 @@ def verify_application(workload):
         raise ValueError('Isolated app identity changed; no URLs delivered')
 
 
+def deliver_sequential(state_path, workload_path):
+    initial = json.loads(state_path.read_text())
+    validate_state(initial)
+    workload = json.loads(workload_path.read_text())
+    if (workload.get('variant') != 'Measurement' or workload.get('urls') != initial['urls']
+            or workload.get('state') != str(state_path.resolve())):
+        raise ValueError('Sequential preparation requires the matching Measurement workload')
+    verify_application(workload)
+    app = pathlib.Path(workload['executable']).parents[2]
+    deadline = time.monotonic() + 180
+    fixed = ('kind', 'transport', 'run_id', 'urls', 'origins', 'document_hashes', 'expected_tabs')
+    for number in range(1, 21):
+        pressure()
+        verify_application(workload)
+        subprocess.run(['/usr/bin/open', '-a', str(app), workload['urls'][str(number)]],
+                       check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        verify_application(workload)
+        for _ in range(50):
+            if time.monotonic() >= deadline:
+                raise ValueError('Sequential preparation exceeded its bounded time')
+            current = json.loads(state_path.read_text())
+            if (any(current.get(key) != initial.get(key) for key in fixed)
+                    or current.get('invalid_reason') or current.get('loads', 0) > number
+                    or any(value > 1 for value in current.get('stream_connections', {}).values())):
+                raise ValueError('Fixture identity changed, or a document reloaded/reconnected')
+            report = current.get('documents', {}).get(str(number), {})
+            if report.get('complete') and report.get('seenVisible') and report.get('pulse', 0) > 0:
+                break
+            time.sleep(0.2)
+        else:
+            raise ValueError('Selected document did not visibly report within ten seconds')
+    verify_application(workload)
+    pressure()
+    final = json.loads(state_path.read_text())
+    validate_state(final, completed=True)
+    spec = importlib.util.spec_from_file_location('measure_memory', ROOT / 'script/measure-memory.py')
+    measure = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(measure)
+    measure.check_fixture(final)
+    return final
+
+
 def measurement_result(text):
     matches = [line.removeprefix('Local evidence: ') for line in text.splitlines() if line.startswith('Local evidence: ')]
     if len(matches) != 1:
@@ -204,13 +246,19 @@ def capture_memory(state_path, workload_path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['prepare', 'deliver', 'monitor', 'validate', 'capture'])
+    parser.add_argument('mode', choices=['prepare', 'deliver', 'deliver-sequential', 'monitor', 'validate', 'capture'])
     parser.add_argument('state', type=pathlib.Path)
     parser.add_argument('output', nargs='?', type=pathlib.Path)
     parser.add_argument('--variant', choices=['Profile', 'Measurement'], default='Profile')
     args = parser.parse_args()
     if args.mode == 'monitor':
         monitor(args.state)
+        return
+    if args.mode == 'deliver-sequential':
+        if args.output is None:
+            parser.error('deliver-sequential requires the workload file')
+        deliver_sequential(args.state, args.output)
+        print('Twenty documents prepared in order 1..20; no RAM captured.')
         return
     if args.mode == 'capture':
         if args.output is None:
