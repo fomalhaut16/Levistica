@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import Darwin
 
 struct SavedTab: Equatable {
     enum Kind: String { case web, localPDF }
@@ -297,15 +298,37 @@ final class SessionStore {
 
     // Recovery forks into a new DB; unreadable originals and their sidecars stay in place.
     static func recoverCleanBackup(of original: URL) throws -> SessionStore {
-        let saved = try readCleanBackup(of: original)
         let directory = original.deletingLastPathComponent()
+        guard try currentFileURL(in: directory) == original else { throw Failure.invalidData }
+        let saved = try readCleanBackup(of: original)
         let name = "recovered-session-" + UUID().uuidString + ".sqlite3"
-        let recovered = try SessionStore(fileURL: directory.appendingPathComponent(name))
+        let manager = FileManager.default
+        let candidateURL = directory.appendingPathComponent(name)
+        let suffixes = ["", ".backup", "-journal", "-wal", "-shm"]
+        let existingNames = Set(try manager.contentsOfDirectory(atPath: directory.path).map { $0.lowercased() })
+        guard !suffixes.contains(where: { existingNames.contains((name + $0).lowercased()) }) else { throw Failure.invalidData }
+        // Claim a new private file exclusively before taking ownership of cleanup.
+        let descriptor = candidateURL.path.withCString {
+            Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode_t(0o600))
+        }
+        guard descriptor >= 0 else { throw Failure.unavailable }
+        var candidate: SessionStore?
+        var published = false
+        defer {
+            if !published, candidate?.closeForFailedRecovery() ?? true,
+               canRemoveFailedRecoveryCandidate(of: original) {
+                for suffix in suffixes {
+                    try? manager.removeItem(atPath: candidateURL.path + suffix)
+                }
+            }
+        }
+        guard Darwin.close(descriptor) == 0 else { throw Failure.unavailable }
+        let recovered = try SessionStore(fileURL: candidateURL)
+        candidate = recovered
         try recovered.save(saved)
         try recovered.writeCleanBackup()
         try recovered.save(SavedSession(tabs: saved.tabs, selectedID: saved.selectedID, wasRunning: true))
         let pointer = directory.appendingPathComponent("current-session.json")
-        let manager = FileManager.default
         if manager.fileExists(atPath: pointer.path) {
             guard try manager.attributesOfItem(atPath: pointer.path)[.type] as? FileAttributeType == .typeRegular else {
                 throw Failure.invalidData
@@ -325,7 +348,29 @@ final class SessionStore {
         } else {
             try manager.moveItem(at: temporary, to: pointer)
         }
+        published = true
         return recovered
+    }
+
+    private func closeForFailedRecovery() -> Bool {
+        guard let database else { return true }
+        guard sqlite3_close(database) == SQLITE_OK else { return false }
+        self.database = nil
+        return true
+    }
+
+    static func canRemoveFailedRecoveryCandidate(of original: URL) -> Bool {
+        // A filesystem error need not prove that publication did not happen.
+        // Keep the candidate if the location changed or cannot be inspected.
+        let directory = original.deletingLastPathComponent()
+        let pointer = directory.appendingPathComponent("current-session.json")
+        var attributes = stat()
+        let status = pointer.path.withCString { path in
+            let result = Darwin.lstat(path, &attributes)
+            return (result, errno)
+        }
+        if status.0 != 0 { return status.0 == -1 && status.1 == ENOENT }
+        return (try? currentFileURL(in: directory)) == original
     }
 
     static func persistableURL(_ url: URL?) -> URL? {
