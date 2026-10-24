@@ -8,6 +8,11 @@ PROFILE="${LEVISTICA_PROFILE:-0}"
 MEASUREMENT="${LEVISTICA_MEASUREMENT:-0}"
 MALLOC_STACKS="${LEVISTICA_MALLOC_STACKS:-0}"
 STORE_ID="${LEVISTICA_MEASUREMENT_STORE_ID:-}"
+PERSIST_METADATA="${LEVISTICA_MEASUREMENT_PERSIST_METADATA-0}"
+case "$PERSIST_METADATA" in 0|1) ;; *) echo 'MEASUREMENT_PERSIST_METADATA must be 0 or 1' >&2; exit 2;; esac
+if [[ "$PERSIST_METADATA" == 1 && ( "$MEASUREMENT" != 1 || -z "$STORE_ID" ) ]]; then
+    echo 'Persistent metadata requires Measurement and an owned store UUID' >&2; exit 2
+fi
 case "$MODE" in run|--build|--verify|--debug|--logs|--telemetry) ;; *) echo "usage: $0 [--build|--verify|--debug|--logs|--telemetry]" >&2; exit 2;; esac
 case "$CONFIGURATION" in Debug|Release) ;; *) echo 'CONFIGURATION must be Debug or Release' >&2; exit 2;; esac
 case "$PROFILE" in 0|1) ;; *) echo 'LEVISTICA_PROFILE must be 0 or 1' >&2; exit 2;; esac
@@ -137,6 +142,9 @@ if [[ "${LEVISTICA_EPHEMERAL:-0}" == 1 ]]; then
     LEVISTICA_OPEN_ARGS=(-n --env LEVISTICA_EPHEMERAL=1)
     if [[ -n "$STORE_ID" ]]; then
         LEVISTICA_OPEN_ARGS+=(--env "LEVISTICA_MEASUREMENT_STORE_ID=$STORE_ID")
+    fi
+    if [[ "$PERSIST_METADATA" == 1 ]]; then
+        LEVISTICA_OPEN_ARGS+=(--env LEVISTICA_MEASUREMENT_PERSIST_METADATA=1)
     fi
     if [[ "$MALLOC_STACKS" == 1 ]]; then
         LEVISTICA_OPEN_ARGS+=(--env MallocStackLogging=lite)

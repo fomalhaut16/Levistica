@@ -4,10 +4,16 @@ import AppKit
 
 enum MeasurementWebsiteStorage {
     static let storeKey = "LEVISTICA_MEASUREMENT_STORE_ID"
+    static let metadataKey = "LEVISTICA_MEASUREMENT_PERSIST_METADATA"
     struct Configuration {
         let storeID: UUID?
+        let persistsMetadata: Bool
+        init(storeID: UUID?, persistsMetadata: Bool = false) {
+            self.storeID = storeID
+            self.persistsMetadata = persistsMetadata
+        }
     }
-    enum Failure: Error { case invalidConfiguration }
+    enum Failure: Error { case invalidConfiguration, unavailableMetadata }
 
     static func uuid(_ raw: String) throws -> UUID {
         guard let value = UUID(uuidString: raw),
@@ -22,11 +28,15 @@ enum MeasurementWebsiteStorage {
         guard environment["LEVISTICA_MEASUREMENT_CLEANUP_REQUEST"] == nil else {
             throw Failure.invalidConfiguration
         }
+        let metadata = environment[metadataKey] ?? "0"
+        guard ["0", "1"].contains(metadata), metadata != "1" || environment[storeKey] != nil else {
+            throw Failure.invalidConfiguration
+        }
         guard let rawStore = environment[storeKey] else { return Configuration(storeID: nil) }
         guard bundleIdentifier == "dev.fomalhaut16.Levistica.measurement" else {
             throw Failure.invalidConfiguration
         }
-        return try Configuration(storeID: uuid(rawStore))
+        return try Configuration(storeID: uuid(rawStore), persistsMetadata: metadata == "1")
     }
 
     @MainActor static func dataStore(configuration: Configuration) -> WKWebsiteDataStore {
@@ -120,7 +130,16 @@ final class BrowserSession {
     }
 
     static func applicationSession() -> BrowserSession {
-        #if LEVISTICA_PROFILE || LEVISTICA_MEASUREMENT
+        #if LEVISTICA_MEASUREMENT
+        do {
+            let configuration = try MeasurementWebsiteStorage.configuration(
+                environment: ProcessInfo.processInfo.environment, bundleIdentifier: Bundle.main.bundleIdentifier)
+            guard configuration.persistsMetadata else { return BrowserSession() }
+            let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                                       appropriateFor: nil, create: true)
+            return try measurementSession(configuration: configuration, applicationSupport: support)
+        } catch { preconditionFailure("Isolated measurement metadata is unavailable") }
+        #elseif LEVISTICA_PROFILE
         return BrowserSession()
         #else
         let environment = ProcessInfo.processInfo.environment
@@ -156,6 +175,33 @@ final class BrowserSession {
             return session
         }
         #endif
+    }
+
+    static func measurementSession(configuration: MeasurementWebsiteStorage.Configuration,
+                                   applicationSupport: URL, dataStore: WKWebsiteDataStore? = nil) throws -> BrowserSession {
+        guard configuration.persistsMetadata else { return BrowserSession(dataStore: dataStore) }
+        guard let identifier = configuration.storeID,
+              identifier != UUID(uuidString: "00000000-0000-0000-0000-000000000000") else {
+            throw MeasurementWebsiteStorage.Failure.invalidConfiguration
+        }
+        let namespace = applicationSupport.appendingPathComponent("LevisticaMeasurementProfiles", isDirectory: true)
+        let folder = namespace.appendingPathComponent(identifier.uuidString.lowercased(), isDirectory: true)
+        let manager = FileManager.default
+        for directory in [namespace, folder] {
+            if let attributes = try? manager.attributesOfItem(atPath: directory.path) {
+                guard attributes[.type] as? FileAttributeType == .typeDirectory else {
+                    throw MeasurementWebsiteStorage.Failure.unavailableMetadata
+                }
+            } else {
+                try manager.createDirectory(at: directory, withIntermediateDirectories: false,
+                                            attributes: [.posixPermissions: 0o700])
+            }
+        }
+        let session = persistentSession(in: folder, dataStore: dataStore)
+        guard session.storageFailure == nil, session.canRetryPersistence, session.preferences.canSave else {
+            throw MeasurementWebsiteStorage.Failure.unavailableMetadata
+        }
+        return session
     }
 
     #if DEBUG

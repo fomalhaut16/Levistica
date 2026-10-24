@@ -413,6 +413,7 @@ def main():
         "sleep_guard_file": str(sleep_guard_file) if sleep_guard_file else None,
         "loaded_pages": args.loaded_pages, "total_tabs": args.total_tabs,
         "browser": args.browser, "storage_mode": measurement_storage["mode"] if measurement_storage else "launch configuration", "measurement_store_id": measurement_storage["storeID"] if measurement_storage else None, "pid": pid, "source_head_at_sampling": run(["git", "rev-parse", "HEAD"]).strip(),
+        "measurement_metadata_persistent": measurement_storage["metadataPersistent"] if measurement_storage else False,
         "measurement_script_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "worktree_dirty": bool(run(["git", "status", "--porcelain", "--untracked-files=no"]).strip()),
@@ -446,6 +447,10 @@ def main():
                 sample['fixture_before'] = read_fixture()
                 check_fixture(sample['fixture_before'], fixture)
             before = snapshot(pid, app, binary, profile)
+            if measurement_storage and measurement_storage['metadataPersistent']:
+                sample['metadata_before'] = stores.metadata_snapshot(pid, measurement_storage['storeID'])
+                if args.total_tabs is not None and sample['metadata_before']['tabCount'] != args.total_tabs:
+                    raise ValueError('Saved tab count differs from the measurement condition')
             sample["attribution_before"] = before
             pids = sorted(before["identities"])
             raw = output / f"footprint-{index + 1}.json"
@@ -454,6 +459,10 @@ def main():
             document = json.loads(raw.read_text())
             values, missing = metrics(document, pids)
             after = snapshot(pid, app, binary, profile)
+            if measurement_storage and measurement_storage['metadataPersistent']:
+                sample['metadata_after'] = stores.metadata_snapshot(pid, measurement_storage['storeID'])
+                if sample['metadata_before'] != sample['metadata_after']:
+                    raise ValueError('Persistent measurement metadata changed during capture')
             sample["attribution_after"] = after
             if args.ready_file:
                 sample['fixture_after'] = read_fixture()
