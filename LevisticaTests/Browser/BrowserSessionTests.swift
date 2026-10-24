@@ -495,6 +495,46 @@ struct BrowserSessionTests {
         #expect(session.preferences.newTabURL == home)
     }
 
+    @Test(arguments: ["closed", "replaced"])
+    func delayedDownloadFromDetachedRuntimeIsCancelled(path: String) async throws {
+        let base = try #require(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let original = session.activeTab
+        try #require(session.navigate(base + "/one"))
+        let page = try #require(original.page)
+        let delivery = try #require(page.onDownload)
+        let pageDeadline = ContinuousClock.now + .seconds(10)
+        while (page.webView.title != "Fixture one" || page.webView.isLoading), ContinuousClock.now < pageDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(page.webView.title == "Fixture one")
+        if path == "closed" {
+            session.closeTab(original.id)
+        } else {
+            original.page = PageRuntime(dataStore: .nonPersistent())
+        }
+        // Keep both the old tab and runtime alive: a weak reference alone must
+        // not allow a late PDF/download completion to attach to a stale owner.
+        let selection = session.selectedID
+        let tabIDs = session.tabs.map(\.id)
+        let destination = try #require(URL(string: base + "/download"))
+        var delivered = false
+        page.webView.startDownload(using: URLRequest(url: destination)) { download in
+            delivery(download)
+            delivered = true
+            download.cancel { _ in }
+        }
+        let deadline = ContinuousClock.now + .seconds(15)
+        while !delivered, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(delivered)
+        #expect(session.downloads.items.isEmpty)
+        #expect(session.selectedID == selection && session.tabs.map(\.id) == tabIDs)
+        page.stop()
+        original.page?.stop()
+    }
+
     @Test func oneHundredBlankTabsDoNotAllocateWebViews() {
         let session = BrowserSession(dataStore: .nonPersistent())
         for _ in 1..<100 { _ = session.newTab() }
