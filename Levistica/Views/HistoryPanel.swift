@@ -33,7 +33,7 @@ struct HistoryPanel: View {
             }.accessibilityIdentifier("historyList")
             if let selected {
                 Button("新しいタブで開く") {
-                    _ = session.newTab()
+                    guard session.newTab() != nil else { return }
                     _ = session.navigate(selected.url.absoluteString)
                 }.accessibilityIdentifier("openHistoryButton")
                 Button("この履歴を削除") { library.removeSelected() }

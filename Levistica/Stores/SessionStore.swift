@@ -24,6 +24,7 @@ struct SavedSession: Equatable {
 
 // Owned synchronously by BrowserSession on MainActor; no concurrent callers.
 final class SessionStore {
+    static let maximumTabCount = 1000
     enum Failure: Error { case unavailable, invalidData, newerVersion }
     private var database: OpaquePointer?
     private let fileURL: URL
@@ -132,7 +133,7 @@ final class SessionStore {
         var ids = Set<UUID>()
         var result = sqlite3_step(rows)
         while result == SQLITE_ROW {
-            guard tabs.count < 1000, let rawID = text(rows, 0), let id = UUID(uuidString: rawID),
+            guard tabs.count < Self.maximumTabCount, let rawID = text(rows, 0), let id = UUID(uuidString: rawID),
                   ids.insert(id).inserted, sqlite3_column_int(rows, 1) == tabs.count,
                   let title = text(rows, 2), title.count <= 512 else { throw Failure.invalidData }
             let rawURL = text(rows, 3)
@@ -165,7 +166,7 @@ final class SessionStore {
 
     func save(_ session: SavedSession) throws {
         if lastSaved == session { return }
-        guard !session.tabs.isEmpty, session.tabs.count <= 1000,
+        guard !session.tabs.isEmpty, session.tabs.count <= Self.maximumTabCount,
               Set(session.tabs.map(\.id)).count == session.tabs.count,
               session.tabs.contains(where: { $0.id == session.selectedID }),
               session.tabs.allSatisfy({ ($0.kind != .localPDF || ($0.url == nil && !$0.mayReload))

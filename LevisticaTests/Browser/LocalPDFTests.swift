@@ -58,6 +58,25 @@ struct LocalPDFTests {
         #expect(try Data(contentsOf: database).range(of: Data(url.path.utf8)) == nil)
     }
 
+    @Test func openingPDFAtCapacityKeepsTheSelectedTabAndSavedSession() throws {
+        let url = try fixture()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url.deletingLastPathComponent().appendingPathComponent("session.sqlite3"))
+        let records = (0..<1000).map { SavedTab(id: UUID(), title: "Synthetic tab \($0)", url: nil, mayReload: true) }
+        let selected = records[50].id
+        try store.save(SavedSession(tabs: records, selectedID: selected, wasRunning: false))
+        let session = BrowserSession(dataStore: .nonPersistent(), store: store)
+        session.activeTab.addressDraft = "unsent synthetic address"
+        try session.openLocalPDF(selectedURL: url)
+        #expect(session.tabs.map(\.id) == records.map(\.id))
+        #expect(session.selectedID == selected)
+        #expect(session.activeTab.addressDraft == "unsent synthetic address")
+        #expect(session.loadedPageCount == 0)
+        #expect(session.externalOpenNotice != nil)
+        #expect(session.prepareToQuit())
+        #expect(try store.load()?.tabs.count == 1000)
+    }
+
     @Test func encryptedPDFIsRejectedExplicitly() throws {
         let url = try fixture(encrypted: true)
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }

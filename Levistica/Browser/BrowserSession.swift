@@ -163,7 +163,7 @@ final class BrowserSession {
                 if environment["LEVISTICA_RECOVERY_FIXTURE"] == "1" {
                     try seedRecoveryFixture(in: folder, base: url)
                 } else if let rawCount = environment["LEVISTICA_LARGE_SESSION_FIXTURE"],
-                          ["50", "100"].contains(rawCount), let count = Int(rawCount) {
+                          ["50", "100", "1000"].contains(rawCount), let count = Int(rawCount) {
                     try seedLargeSessionFixture(in: folder, base: url, count: count)
                 }
             }
@@ -209,7 +209,7 @@ final class BrowserSession {
         let manager = FileManager.default
         if manager.fileExists(atPath: folder.path),
            !(try manager.contentsOfDirectory(atPath: folder.path)).isEmpty { return }
-        guard [50, 100].contains(count) else { throw SessionStore.Failure.invalidData }
+        guard [50, 100, SessionStore.maximumTabCount].contains(count) else { throw SessionStore.Failure.invalidData }
         let tabs = try (1...count).map { number in
             guard var location = URLComponents(url: base.appendingPathComponent(number == 1 ? "two" : "one"), resolvingAgainstBaseURL: false) else {
                 throw SessionStore.Failure.invalidData
@@ -435,11 +435,20 @@ final class BrowserSession {
         get { activeTab.inputError }
         set { activeTab.inputError = newValue }
     }
-    var canReopenClosedTab: Bool { !closedTabs.isEmpty }
+    var canReopenClosedTab: Bool { !closedTabs.isEmpty && tabs.count < SessionStore.maximumTabCount }
     var loadedPageCount: Int { tabs.filter { $0.page != nil }.count }
 
+    private func allowAdditionalTab() -> Bool {
+        guard tabs.count < SessionStore.maximumTabCount else {
+            externalOpenNotice = "タブは\(SessionStore.maximumTabCount)件までです。タブを閉じてから、もう一度開いてください。"
+            return false
+        }
+        return true
+    }
+
     @discardableResult
-    func newTab() -> BrowserTab {
+    func newTab() -> BrowserTab? {
+        guard allowAdditionalTab() else { return nil }
         let tab = BrowserTab()
         tabs.append(tab)
         selectedID = tab.id
@@ -580,13 +589,13 @@ final class BrowserSession {
 
     func receiveExternalURLs(_ urls: [URL]) {
         var last: UUID?
-        var rejected = urls.count > 1000
-        for url in urls.prefix(1000) {
+        var rejected = urls.count > SessionStore.maximumTabCount
+        for url in urls.prefix(SessionStore.maximumTabCount) {
             guard NavigationPolicy.allows(url, isMainFrame: true) else { rejected = true; continue }
             let blank = tabs.count == 1 && activeTab.page == nil && activeTab.pendingURL == nil
                 && activeTab.addressDraft.isEmpty && activeTab.inputError == nil && activeTab.restorationNotice == nil
                 && (activeTab.storedTitle.isEmpty || activeTab.storedTitle == "新しいタブ")
-            guard blank || tabs.count < 1000 else { rejected = true; continue }
+            guard blank || tabs.count < SessionStore.maximumTabCount else { rejected = true; continue }
             let tab = blank ? activeTab : BrowserTab()
             tab.pendingURL = url
             tab.addressDraft = url.absoluteString
@@ -682,7 +691,7 @@ final class BrowserSession {
     }
 
     func reopenClosedTab() {
-        guard let closed = closedTabs.popLast() else { return }
+        guard !closedTabs.isEmpty, allowAdditionalTab(), let closed = closedTabs.popLast() else { return }
         let tab = BrowserTab()
         tab.isLocalPDF = closed.isLocalPDF
         tab.isKept = closed.isKept
@@ -749,7 +758,7 @@ final class BrowserSession {
     @discardableResult
     func openRelatedPage(configuration: WKWebViewConfiguration, openerID: UUID,
                          origin: String, foreground: Bool) -> PageRuntime? {
-        guard let index = tabs.firstIndex(where: { $0.id == openerID }) else { return nil }
+        guard let index = tabs.firstIndex(where: { $0.id == openerID }), allowAdditionalTab() else { return nil }
         let tab = BrowserTab()
         tab.openerID = openerID
         tab.openerOrigin = origin
@@ -765,7 +774,7 @@ final class BrowserSession {
     func openLink(_ request: URLRequest, openerID: UUID, origin: String, foreground: Bool) {
         guard request.httpMethod == "GET", NavigationPolicy.allows(request.url, isMainFrame: true),
               let opener = tabs.first(where: { $0.id == openerID }), let dataStore = opener.page?.webView.configuration.websiteDataStore,
-              let index = tabs.firstIndex(where: { $0.id == openerID }) else { return }
+              let index = tabs.firstIndex(where: { $0.id == openerID }), allowAdditionalTab() else { return }
         let tab = BrowserTab()
         tab.openerOrigin = origin
         let runtime = PageRuntime(dataStore: dataStore)
@@ -822,6 +831,7 @@ final class BrowserSession {
                   activeTab.restorationNotice == nil, !activeTab.isLocalPDF {
             tab = activeTab
         } else {
+            guard allowAdditionalTab() else { return }
             tab = BrowserTab()
             tabs.append(tab)
         }
