@@ -24,6 +24,39 @@ struct SessionStoreTests {
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
     }
 
+    @Test func embeddedNullAndUnicodeTitleSurvivePrimaryAndBackupRoundTrips() throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url)
+        let tab = SavedTab(id: UUID(), title: "Before\0After \u{1F30C} e\u{301}",
+                           url: URL(string: "https://example.com/"), mayReload: true)
+        let saved = SavedSession(tabs: [tab], selectedID: tab.id, wasRunning: false)
+        try store.save(saved)
+        #expect(try store.load() == saved)
+        try store.writeCleanBackup()
+        #expect(try SessionStore.readCleanBackup(of: url) == saved)
+    }
+
+    @Test(arguments: [
+        "UPDATE session_tabs SET id=id||char(0)||'suffix'",
+        "UPDATE session_meta SET selected_id=selected_id||char(0)||'suffix'",
+        "UPDATE session_tabs SET kind=kind||char(0)||'suffix'",
+        "UPDATE session_tabs SET title=CAST(X'80' AS TEXT)",
+        "UPDATE session_tabs SET title=X'41'"
+    ])
+    func malformedStoredTextIsRejected(_ sql: String) throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url)
+        let tab = SavedTab(id: UUID(), title: "Original", url: nil, mayReload: false)
+        try store.save(SavedSession(tabs: [tab], selectedID: tab.id, wasRunning: false))
+        var database: OpaquePointer?
+        try #require(sqlite3_open(url.path, &database) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        try #require(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
+        #expect(throws: (any Error).self) { _ = try store.load() }
+    }
+
     @MainActor @Test func keptAndSleepingTabsPersistWithoutCreatingPages() throws {
         let url = try temporaryURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
