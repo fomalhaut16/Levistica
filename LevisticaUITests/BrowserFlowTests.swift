@@ -1658,13 +1658,13 @@ final class BrowserFlowTests: XCTestCase {
         save.click()
         let replaceEnglish = app.buttons["Replace"].firstMatch
         let replaceJapanese = app.buttons["置き換える"].firstMatch
-        XCTAssertTrue(replaceEnglish.waitForExistence(timeout: 3) || replaceJapanese.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(replaceEnglish.waitForExistence(timeout: 3) || replaceJapanese.waitForExistence(timeout: 3))
         let replacements = [app.dialogs.buttons["Replace"].firstMatch, app.sheets.buttons["Replace"].firstMatch,
                             app.windows.buttons["Replace"].firstMatch, app.dialogs.buttons["置き換える"].firstMatch,
                             app.sheets.buttons["置き換える"].firstMatch, app.windows.buttons["置き換える"].firstMatch]
-        let replace = try XCTUnwrap(replacements.first(where: { $0.exists }), app.debugDescription)
+        let replace = try XCTUnwrap(replacements.first(where: { $0.exists }))
         replace.click()
-        XCTAssertTrue(app.staticTexts["ダウンロード中"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["ダウンロード中"].waitForExistence(timeout: 10))
         attachWindowImage(app, name: "active-download")
         XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "keep the original")
         app.typeKey("w", modifierFlags: .command)
@@ -1726,7 +1726,7 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons[title].firstMatch.waitForExistence(timeout: 5))
         let candidates = [app.dialogs.buttons[title].firstMatch, app.sheets.buttons[title].firstMatch,
                           app.windows.buttons[title].firstMatch]
-        return try XCTUnwrap(candidates.first(where: { $0.exists }), app.debugDescription)
+        return try XCTUnwrap(candidates.first(where: { $0.exists }))
     }
 
     @MainActor
@@ -1761,7 +1761,7 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(link.waitForExistence(timeout: 10))
         link.click()
         let save = app.windows.buttons["保存"].firstMatch
-        XCTAssertTrue(save.waitForExistence(timeout: 10), app.windows.debugDescription)
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
         save.click()
         XCTAssertTrue(app.staticTexts["保存しました"].waitForExistence(timeout: 15))
         XCTAssertFalse(app.staticTexts["errorMessage"].exists)
@@ -1776,7 +1776,9 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(choose.waitForExistence(timeout: 10))
         app.typeKey("g", modifierFlags: [.command, .shift])
         app.typeText(upload.path)
+        waitForInputIndicator(in: app)
         app.typeKey(.return, modifierFlags: [])
+        waitForInputIndicator(in: app)
         choose.click()
         XCTAssertTrue(app.webViews.staticTexts["synthetic-upload.txt"].waitForExistence(timeout: 10))
         app.webViews.buttons["Upload synthetic fixture"].click()
@@ -1910,7 +1912,7 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertEqual(app.windows["browser"].title, "Levistica（開発用・検証データ）")
         attachWindowImage(app, name: "isolated-build-label", knownFrame: app.windows["browser"].frame)
         submit(base + "/one", in: app)
-        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 15), "Fixture: \(base)\n\(app.debugDescription)")
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 15), "The isolated fixture page did not appear.")
         app.webViews.links["Blocked native link"].click()
         XCTAssertTrue(app.staticTexts["errorMessage"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].exists)
@@ -1971,7 +1973,7 @@ final class BrowserFlowTests: XCTestCase {
         app.activate()
         let address = app.textFields["addressField"]
         submit(url + "/", in: app)
-        XCTAssertTrue(app.staticTexts["errorMessage"].waitForExistence(timeout: 15), "Disconnected: \(url)\n\(app.debugDescription)")
+        XCTAssertTrue(app.staticTexts["errorMessage"].waitForExistence(timeout: 15), "The isolated failure page did not appear.")
         XCTAssertEqual(address.value as? String, url + "/")
         XCTAssertTrue(app.buttons["再試行"].exists)
         app.terminate()
