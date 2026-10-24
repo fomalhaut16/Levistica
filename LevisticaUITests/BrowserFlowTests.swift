@@ -1981,6 +1981,16 @@ final class BrowserFlowTests: XCTestCase {
 
     @MainActor
     func testFullscreenCanEnterAndExit() throws {
+        try verifyElementFullscreen(path: "fullscreen")
+    }
+
+    @MainActor
+    func testDarkFullscreenCanEnterAndExit() throws {
+        try verifyElementFullscreen(path: "fullscreen-dark")
+    }
+
+    @MainActor
+    private func verifyElementFullscreen(path: String) throws {
         continueAfterFailure = false
         executionTimeAllowance = 120
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
@@ -1988,13 +1998,13 @@ final class BrowserFlowTests: XCTestCase {
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
         app.launch()
         app.activate()
-        submit(base + "/fullscreen", in: app)
+        submit(base + "/" + path, in: app)
         let enter = app.webViews.buttons["Enter fullscreen"]
         XCTAssertTrue(enter.waitForExistence(timeout: 10))
         app.buttons["showBookmarksButton"].click()
         XCTAssertTrue(app.textFields["bookmarkSearchField"].waitForExistence(timeout: 5))
         let beforeFrame = app.webViews.firstMatch.frame
-        XCTAssertTrue(attachWindowImage(app, name: "fullscreen-before"))
+        XCTAssertTrue(attachWindowImage(app, name: path + "-before"))
         enter.click()
         XCTAssertTrue(app.webViews.staticTexts["fullscreen active"].waitForExistence(timeout: 10))
         let screen = try XCTUnwrap(NSScreen.main)
@@ -2021,7 +2031,7 @@ final class BrowserFlowTests: XCTestCase {
             XCTAssertFalse(marker.frame.isEmpty)
             XCTAssertTrue(fullscreenFrame.insetBy(dx: -2, dy: -2).contains(marker.frame))
         }
-        XCTAssertTrue(attachWindowImage(app, name: "fullscreen-active", knownFrame: fullscreenFrame))
+        XCTAssertTrue(attachWindowImage(app, name: path + "-active", knownFrame: fullscreenFrame))
         print("Fullscreen fixture frames: before=\(beforeFrame); active=\(fullscreenFrame); reservedTop=\(reservedTop)")
         app.webViews.buttons["Exit fullscreen"].click()
         XCTAssertTrue(app.webViews.staticTexts["windowed"].waitForExistence(timeout: 10))
@@ -2037,7 +2047,7 @@ final class BrowserFlowTests: XCTestCase {
         let afterFrame = app.webViews.firstMatch.frame
         XCTAssertEqual(afterFrame.width, beforeFrame.width, accuracy: 2)
         XCTAssertEqual(afterFrame.height, beforeFrame.height, accuracy: 2)
-        XCTAssertTrue(attachWindowImage(app, name: "fullscreen-after"))
+        XCTAssertTrue(attachWindowImage(app, name: path + "-after"))
         XCTAssertTrue(app.textFields["bookmarkSearchField"].exists)
         let closeBookmarks = app.buttons["closeBookmarksButton"]
         let readyToClose = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: closeBookmarks)
@@ -2049,7 +2059,7 @@ final class BrowserFlowTests: XCTestCase {
         }, evaluatedWith: nil)
         wait(for: [expandedContent], timeout: 5)
         print("Restored fullscreen fixture frame: \(afterFrame); expanded=\(app.webViews.firstMatch.frame)")
-        XCTAssertTrue(attachWindowImage(app, name: "fullscreen-after-bookmarks-closed"))
+        XCTAssertTrue(attachWindowImage(app, name: path + "-after-bookmarks-closed"))
         app.terminate()
     }
 

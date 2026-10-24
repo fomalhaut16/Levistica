@@ -209,6 +209,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                   document.getElementById('state').textContent = document.fullscreenElement ? 'fullscreen active' : 'windowed';
                 });</script>''',
         }
+        pages["/fullscreen-dark"] = pages["/fullscreen"].replace(
+            "<style>", "<style>html, body { background: #181818; color: white; }", 1)
         body = ("<!doctype html><meta charset=utf-8>" + pages.get(self.path, "Not found")).encode()
         self.send_response(200 if self.path in pages else 404)
         if self.path == "/pdf-cookie": self.send_header("Set-Cookie", "levistica_pdf=synthetic; HttpOnly; SameSite=Lax; Path=/")
