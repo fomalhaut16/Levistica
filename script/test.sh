@@ -51,7 +51,8 @@ BUILD_ARGS=(-project "$ROOT_DIR/Levistica.xcodeproj" -scheme Levistica
     -derivedDataPath "$ROOT_DIR/.local/DerivedData")
 if [[ "$MODE" == --unit ]]; then
     if [[ -z "${TEST_ONLY:-}" ]]; then BUILD_ARGS+=(-only-testing:LevisticaTests); fi
-elif [[ "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui ]]; then
+fi
+if [[ "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui ]]; then
     if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" build-for-testing >"$RUN_DIR/build-for-testing.log" 2>&1; then
         tail -n 70 "$RUN_DIR/build-for-testing.log" >&2; exit 1
     fi
