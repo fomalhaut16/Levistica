@@ -142,6 +142,21 @@ if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" "$TEST_ACTION" >"$RUN_DIR/xcodebuild
     exit 1
 fi
 python3 "$ROOT_DIR/script/check-app-processes.py" --only "$EXPECTED_VARIANT"
+# xcodebuild can return success when a selector matches no tests. Verify the
+# result bundle, rather than treating its exit status as execution evidence.
+/usr/bin/xcrun xcresulttool get test-results summary --path "$RUN_DIR/Results.xcresult" \
+    --format json >"$RUN_DIR/test-summary.json"
+python3 - "$RUN_DIR/test-summary.json" <<'PYRESULT'
+import json
+import pathlib
+import sys
+summary = json.loads(pathlib.Path(sys.argv[1]).read_text())
+counts = [summary.get(key) for key in ('totalTestCount', 'passedTests', 'failedTests')]
+if (any(type(value) is not int or value < 0 for value in counts)
+        or counts[0] == 0 or counts[1] == 0 or counts[2] != 0):
+    raise SystemExit('No successful test execution in the result bundle; check TEST_ONLY and test results.')
+print(f'Verified test result: {counts[1]} passed of {counts[0]} total, {counts[2]} failed.')
+PYRESULT
 if [[ "$MODE" == --profile-ui ]]; then
     if [[ -n "$COLLECTOR_PID" ]]; then
         wait "$COLLECTOR_PID"
