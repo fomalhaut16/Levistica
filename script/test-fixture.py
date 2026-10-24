@@ -49,9 +49,34 @@ def silent_audio_data():
 
 class Handler(http.server.BaseHTTPRequestHandler):
     popup_posts = 0
+    redirect_303_posts = 0
+    redirect_307_posts = 0
     counter_lock = threading.Lock()
 
+    def fixture_redirect(self, status, target):
+        self.send_response(status)
+        self.send_header("Location", target)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def do_GET(self):
+        if self.path in ["/redirect-two", "/redirect-download", "/redirect-failure"]:
+            target = {"/redirect-two": "/two", "/redirect-download": "/download",
+                      "/redirect-failure": self.server.fixture_failure_url + "/failure"}[self.path]
+            self.fixture_redirect(302, target)
+            return
+        if self.path == "/redirect-post-count":
+            with self.counter_lock:
+                body = json.dumps({"post303": Handler.redirect_303_posts,
+                                   "post307": Handler.redirect_307_posts}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == "/protected.pdf" and "levistica_pdf=synthetic" not in self.headers.get("Cookie", ""):
             self.send_error(403, "Synthetic PDF cookie required")
             return
@@ -184,6 +209,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         received = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if self.path in ["/redirect-303", "/redirect-307"]:
+            if self.path == "/redirect-303":
+                with self.counter_lock:
+                    Handler.redirect_303_posts += 1
+                self.fixture_redirect(303, "/two")
+            else:
+                self.fixture_redirect(307, "/redirect-post-target")
+            return
+        if self.path == "/redirect-post-target":
+            if received != b"synthetic=1":
+                self.send_error(400, "Synthetic POST body was not preserved")
+                return
+            with self.counter_lock:
+                Handler.redirect_307_posts += 1
+            body = b"<!doctype html><title>Redirect POST fixture</title><h1>Redirect POST received</h1>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == "/pdf-post":
             body = synthetic_pdf(self.server.server_address[1])
             self.send_response(200)
@@ -226,6 +273,8 @@ server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 failed = socketserver.ThreadingTCPServer(("127.0.0.1", 0), DisconnectHandler)
 threading.Thread(target=failed.serve_forever, daemon=True).start()
 tls_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+for fixture_server in (server, tls_server):
+    fixture_server.fixture_failure_url = f"http://127.0.0.1:{failed.server_address[1]}"
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain(sys.argv[2], sys.argv[3])
 tls_server.socket = context.wrap_socket(tls_server.socket, server_side=True)
