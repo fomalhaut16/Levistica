@@ -122,17 +122,18 @@ final class SessionStore {
         var ids = Set<UUID>()
         var result = sqlite3_step(rows)
         while result == SQLITE_ROW {
-            guard tabs.count < Self.maximumTabCount, let rawID = text(rows, 0), let id = UUID(uuidString: rawID),
+            guard tabs.count < Self.maximumTabCount, let rawID = try text(rows, 0), rawID.utf8.count == 36,
+                  let id = UUID(uuidString: rawID),
                   ids.insert(id).inserted, sqlite3_column_type(rows, 1) == SQLITE_INTEGER,
                   sqlite3_column_int64(rows, 1) == Int64(tabs.count),
-                  let title = text(rows, 2), title.count <= 512 else { throw Failure.invalidData }
-            let rawURL = text(rows, 3)
+                  let title = try text(rows, 2), title.count <= 512 else { throw Failure.invalidData }
+            let rawURL = try text(rows, 3)
             let url = rawURL.flatMap(URL.init(string:))
             if rawURL != nil && (url == nil || Self.persistableURL(url) != url) { throw Failure.invalidData }
             guard sqlite3_column_type(rows, 4) == SQLITE_INTEGER else { throw Failure.invalidData }
             let mayReload = sqlite3_column_int64(rows, 4)
             guard mayReload == 0 || mayReload == 1 else { throw Failure.invalidData }
-            guard let rawKind = text(rows, 5), let kind = SavedTab.Kind(rawValue: rawKind),
+            guard let rawKind = try text(rows, 5), let kind = SavedTab.Kind(rawValue: rawKind),
                   kind != .localPDF || (url == nil && mayReload == 0) else { throw Failure.invalidData }
             guard sqlite3_column_type(rows, 6) == SQLITE_INTEGER,
                   sqlite3_column_type(rows, 7) == SQLITE_INTEGER else { throw Failure.invalidData }
@@ -149,7 +150,7 @@ final class SessionStore {
         defer { sqlite3_finalize(meta) }
         let metaResult = sqlite3_step(meta)
         if tabs.isEmpty && metaResult == SQLITE_DONE { return nil }
-        guard !tabs.isEmpty, metaResult == SQLITE_ROW, let rawSelected = text(meta, 0),
+        guard !tabs.isEmpty, metaResult == SQLITE_ROW, let rawSelected = try text(meta, 0), rawSelected.utf8.count == 36,
               let selected = UUID(uuidString: rawSelected), ids.contains(selected) else { throw Failure.invalidData }
         guard sqlite3_column_type(meta, 1) == SQLITE_INTEGER else { throw Failure.invalidData }
         let running = sqlite3_column_int64(meta, 1)
@@ -241,7 +242,7 @@ final class SessionStore {
         return try withExtendedLifetime(copy) {
             let check = try copy.statement("PRAGMA quick_check")
             defer { sqlite3_finalize(check) }
-            guard sqlite3_step(check) == SQLITE_ROW, copy.text(check, 0) == "ok",
+            guard sqlite3_step(check) == SQLITE_ROW, try copy.text(check, 0) == "ok",
                   sqlite3_step(check) == SQLITE_DONE else { throw Failure.invalidData }
             return try copy.load()
         }
@@ -356,14 +357,25 @@ final class SessionStore {
     }
 
     private func bind(_ value: String?, to index: Int32, in statement: OpaquePointer) throws {
-        let result = value.map { string in
-            string.withCString { sqlite3_bind_text(statement, index, $0, -1, transient) }
-        } ?? sqlite3_bind_null(statement, index)
+        let result: Int32
+        if let value {
+            guard let length = Int32(exactly: value.utf8.count) else { throw Failure.invalidData }
+            result = value.withCString { sqlite3_bind_text(statement, index, $0, length, transient) }
+        } else {
+            result = sqlite3_bind_null(statement, index)
+        }
         guard result == SQLITE_OK else { throw Failure.unavailable }
     }
 
-    private func text(_ statement: OpaquePointer, _ index: Int32) -> String? {
-        guard let value = sqlite3_column_text(statement, index) else { return nil }
-        return String(cString: value)
+    private func text(_ statement: OpaquePointer, _ index: Int32) throws -> String? {
+        let type = sqlite3_column_type(statement, index)
+        if type == SQLITE_NULL { return nil }
+        guard type == SQLITE_TEXT, let value = sqlite3_column_text(statement, index) else { throw Failure.invalidData }
+        let length = sqlite3_column_bytes(statement, index)
+        guard length >= 0,
+              let string = String(bytes: UnsafeBufferPointer(start: value, count: Int(length)), encoding: .utf8) else {
+            throw Failure.invalidData
+        }
+        return string
     }
 }
