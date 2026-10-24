@@ -152,6 +152,29 @@ struct SessionStoreTests {
         #expect(try store.load() == saved)
     }
 
+    @Test func failedMultiStepMigrationPreservesLegacyDatabase() throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        var database: OpaquePointer?
+        try #require(sqlite3_open(url.path, &database) == SQLITE_OK)
+        let id = UUID().uuidString
+        // A conflicting later column permits the v1 -> v2 step, then rejects v3.
+        let sql = """
+        CREATE TABLE session_tabs (id TEXT PRIMARY KEY NOT NULL, position INTEGER UNIQUE NOT NULL,
+            title TEXT NOT NULL, url TEXT, may_reload INTEGER NOT NULL, is_kept INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK(id=1), selected_id TEXT NOT NULL, was_running INTEGER NOT NULL);
+        INSERT INTO session_tabs (id, position, title, url, may_reload) VALUES ('\(id)',0,'Legacy tab','https://example.com/',1);
+        INSERT INTO session_meta VALUES (1,'\(id)',0);
+        PRAGMA user_version=1;
+        """
+        let result = sqlite3_exec(database, sql, nil, nil, nil)
+        sqlite3_close(database)
+        try #require(result == SQLITE_OK)
+        let before = try Data(contentsOf: url)
+        #expect(throws: (any Error).self) { _ = try SessionStore(fileURL: url) }
+        #expect(try Data(contentsOf: url) == before)
+    }
+
     @MainActor @Test func localPDFRestoresOnlyASelectionPlaceholder() throws {
         let url = try temporaryURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
