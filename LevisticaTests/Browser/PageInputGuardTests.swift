@@ -29,8 +29,10 @@ struct PageInputGuardTests {
         let originalAgent = runtime.webView.customUserAgent ?? ""
         var receivedDownload = false
         var agentAtDownload: String?
+        var locationAtDownload: URL?
         runtime.onDownload = { [weak runtime] download in
             agentAtDownload = runtime?.webView.customUserAgent ?? ""
+            locationAtDownload = runtime?.url
             receivedDownload = true
             download.cancel { _ in }
         }
@@ -42,6 +44,7 @@ struct PageInputGuardTests {
         try #require(receivedDownload)
         #expect(runtime.webView.title == "HTTP download fixture")
         #expect(runtime.url == pageURL)
+        #expect(locationAtDownload == pageURL)
         #expect(runtime.canRetry)
         #expect(runtime.failure == nil)
         #expect(agentAtDownload == originalAgent)
