@@ -82,32 +82,18 @@ final class SessionStore {
                 guard number == 3 else { throw Failure.invalidData }
                 return
             }
-            if number == 0 {
-                try execute("BEGIN IMMEDIATE")
-                do {
-                    try execute("CREATE TABLE session_tabs (id TEXT PRIMARY KEY NOT NULL, position INTEGER UNIQUE NOT NULL, title TEXT NOT NULL, url TEXT, may_reload INTEGER NOT NULL)")
-                    try execute("CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK(id=1), selected_id TEXT NOT NULL, was_running INTEGER NOT NULL)")
-                    try execute("PRAGMA user_version=1")
-                    try execute("COMMIT")
-                } catch {
-                    try? execute("ROLLBACK")
-                    throw error
-                }
-            }
-            if number < 2 {
-                try execute("BEGIN IMMEDIATE")
-                do {
-                    try execute("ALTER TABLE session_tabs ADD COLUMN kind TEXT NOT NULL DEFAULT 'web'")
-                    try execute("PRAGMA user_version=2")
-                    try execute("COMMIT")
-                } catch {
-                    try? execute("ROLLBACK")
-                    throw error
-                }
-            }
             if number < 3 {
+                // All required schema steps and the version advance must commit
+                // together, so a later failure cannot leave a partial upgrade.
                 try execute("BEGIN IMMEDIATE")
                 do {
+                    if number == 0 {
+                        try execute("CREATE TABLE session_tabs (id TEXT PRIMARY KEY NOT NULL, position INTEGER UNIQUE NOT NULL, title TEXT NOT NULL, url TEXT, may_reload INTEGER NOT NULL)")
+                        try execute("CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK(id=1), selected_id TEXT NOT NULL, was_running INTEGER NOT NULL)")
+                    }
+                    if number < 2 {
+                        try execute("ALTER TABLE session_tabs ADD COLUMN kind TEXT NOT NULL DEFAULT 'web'")
+                    }
                     try execute("ALTER TABLE session_tabs ADD COLUMN is_kept INTEGER NOT NULL DEFAULT 0")
                     try execute("ALTER TABLE session_tabs ADD COLUMN is_sleeping INTEGER NOT NULL DEFAULT 0")
                     try execute("PRAGMA user_version=3")
