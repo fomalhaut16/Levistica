@@ -522,7 +522,9 @@ struct BrowserSessionTests {
         page.webView.startDownload(using: URLRequest(url: destination)) { download in
             delivery(download)
             delivered = true
-            download.cancel { _ in }
+            // On a regression, clean up the accepted item without cancelling
+            // an already-rejected download for a second time.
+            for item in session.downloads.items { session.downloads.cancel(item) }
         }
         let deadline = ContinuousClock.now + .seconds(15)
         while !delivered, ContinuousClock.now < deadline {
