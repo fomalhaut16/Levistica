@@ -192,9 +192,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/submitted": '<h1>Unexpected GET replay</h1>',
             "/one": '<title>Fixture one</title><h1>Levistica fixture one</h1><a href="/two">Second page</a><a href="levistica-test-native:blocked">Blocked native link</a>',
             "/two": '<title>Fixture two</title><h1>Levistica fixture two</h1><a href="/one">First page</a><input aria-label="Draft">',
-            "/fullscreen": '''<h1>Fullscreen fixture</h1><p id="state">windowed</p>
+            "/fullscreen": '''<style>
+                body { padding: 40px 0; }
+                .corner { position: fixed; padding: 5px 8px; color: white; font: bold 12px monospace; pointer-events: none; z-index: 10; }
+                .tl { top: 8px; left: 8px; background: #a00030; }
+                .tr { top: 8px; right: 8px; background: #0055aa; }
+                .bl { bottom: 8px; left: 8px; background: #167040; }
+                .br { bottom: 8px; right: 8px; background: #7040a0; }
+                </style><span class="corner tl">TOP LEFT</span><span class="corner tr">TOP RIGHT</span>
+                <span class="corner bl">BOTTOM LEFT</span><span class="corner br">BOTTOM RIGHT</span>
+                <h1>Fullscreen fixture</h1><p id="state">windowed</p>
                 <button onclick="document.documentElement.requestFullscreen().catch(e => document.getElementById('state').textContent = 'fullscreen failed: ' + e.name)">Enter fullscreen</button>
                 <button onclick="document.exitFullscreen()">Exit fullscreen</button>
+                <input aria-label="Fullscreen draft">
                 <script>document.addEventListener('fullscreenchange', () => {
                   document.getElementById('state').textContent = document.fullscreenElement ? 'fullscreen active' : 'windowed';
                 });</script>''',
