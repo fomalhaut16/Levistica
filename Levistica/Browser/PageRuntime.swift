@@ -37,6 +37,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var lastRequest: URLRequest?
     @ObservationIgnored private var committedRequest: URLRequest?
+    @ObservationIgnored private var committedURL: URL?
     @ObservationIgnored private var committedUserAgent: String?
     @ObservationIgnored private var activeNavigation: WKNavigation?
     @ObservationIgnored private var documentGeneration = 0
@@ -81,7 +82,10 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     private func updateSnapshot() {
         let previousURL = url
         let previousTitle = title
-        if failure == nil, let current = webView.url, current.absoluteString != "about:blank" { url = current }
+        // A provisional URL can survive briefly after a navigation becomes a
+        // download. Only committed history locations may replace the page URL.
+        if failure == nil, !webView.isLoading, let current = webView.url,
+           current.absoluteString != "about:blank", webView.backForwardList.currentItem?.url == current { url = current }
         title = localPDF?.url.lastPathComponent ?? (isPDF ? pdfTitle : nil)
             ?? webView.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Levistica"
         isLoading = webView.isLoading
@@ -304,7 +308,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     private func restoreCommittedLocation() {
-        url = webView.url ?? committedRequest?.url
+        url = displayedDocumentURL
         lastRequest = committedRequest
         canRetry = committedRequest?.httpMethod == "GET"
         onMetadataChange?()
@@ -383,7 +387,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         restoreDisplayedIdentity()
         lastRequest = committedRequest
         canRetry = committedRequest?.httpMethod == "GET"
-        url = webView.url.flatMap { $0.absoluteString == "about:blank" ? nil : $0 }
+        url = displayedDocumentURL
         isLoading = false
         failure = nil
         onMetadataChange?()
@@ -457,9 +461,16 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         pdfTitle = pendingPDFTitle
         inputGuard.beginDocument()
         committedRequest = lastRequest
+        committedURL = webView.url
+        url = displayedDocumentURL
         committedUserAgent = webView.customUserAgent
         invalidateFindResult()
         updateSnapshot()
+    }
+
+    private var displayedDocumentURL: URL? {
+        (webView.backForwardList.currentItem?.url ?? committedURL)
+            .flatMap { $0.absoluteString == "about:blank" ? nil : $0 }
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
