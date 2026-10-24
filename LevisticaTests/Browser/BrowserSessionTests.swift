@@ -422,6 +422,52 @@ struct BrowserSessionTests {
         #expect(page.isLoading == false)
     }
 
+    @Test(arguments: ["new", "reopen", "related", "link"])
+    func tabCreationAtStorageCapacityDoesNotChangeTheSessionOrPreventQuit(path: String) throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try SessionStore(fileURL: folder.appendingPathComponent("session.sqlite3"))
+        let records = (0..<1000).map { SavedTab(id: UUID(), title: "Synthetic tab \($0)", url: nil, mayReload: true) }
+        let selected = records[500].id
+        try store.save(SavedSession(tabs: records, selectedID: selected, wasRunning: false))
+        let session = BrowserSession(dataStore: .nonPersistent(), store: store)
+        if path == "reopen" {
+            session.closeTab(try #require(session.tabs.last).id)
+            _ = try #require(session.newTab())
+        }
+        if path == "link" { session.activeTab.page = PageRuntime(dataStore: .nonPersistent()) }
+        let expectedIDs = session.tabs.map(\.id)
+        let expectedSelection = session.selectedID
+        let expectedPageCount = session.loadedPageCount
+        session.activeTab.addressDraft = "unsent synthetic address"
+        session.activeTab.hasEditedAddress = true
+        switch path {
+        case "new": #expect(session.newTab() == nil)
+        case "reopen":
+            session.reopenClosedTab()
+            #expect(session.canReopenClosedTab == false)
+        case "related":
+            let config = WKWebViewConfiguration()
+            config.websiteDataStore = .nonPersistent()
+            #expect(session.openRelatedPage(configuration: config, openerID: expectedSelection,
+                                           origin: "http://127.0.0.1:9", foreground: true) == nil)
+        default:
+            let base = try #require(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+            let url = try #require(URL(string: base + "/one"))
+            try #require(NavigationPolicy.allows(url, isMainFrame: true))
+            session.openLink(URLRequest(url: url), openerID: expectedSelection,
+                             origin: base, foreground: true)
+        }
+        #expect(session.tabs.map(\.id) == expectedIDs)
+        #expect(session.selectedID == expectedSelection)
+        #expect(session.activeTab.addressDraft == "unsent synthetic address")
+        #expect(session.loadedPageCount == expectedPageCount)
+        #expect(session.externalOpenNotice != nil)
+        #expect(session.storageFailure == nil)
+        #expect(session.prepareToQuit())
+        #expect(try store.load()?.tabs.count == 1000)
+    }
+
     @Test func oneHundredBlankTabsDoNotAllocateWebViews() {
         let session = BrowserSession(dataStore: .nonPersistent())
         for _ in 1..<100 { _ = session.newTab() }
@@ -443,12 +489,12 @@ struct BrowserSessionTests {
         #expect(session.selectedID == original.id)
     }
 
-    @Test func closingTabsReleasesRuntimeAndPreservesSelection() {
+    @Test func closingTabsReleasesRuntimeAndPreservesSelection() throws {
         let session = BrowserSession(dataStore: .nonPersistent())
         let firstID = session.selectedID
         weak var runtime: PageRuntime?
         weak var view: WKWebView?
-        let second = session.newTab()
+        let second = try #require(session.newTab())
         autoreleasepool {
             let page = PageRuntime(dataStore: .nonPersistent())
             runtime = page
@@ -475,10 +521,10 @@ struct BrowserSessionTests {
         #expect(session.loadedPageCount == 0)
     }
 
-    @Test func adjacentSelectionWrapsWithoutChangingRuntimeCount() {
+    @Test func adjacentSelectionWrapsWithoutChangingRuntimeCount() throws {
         let session = BrowserSession(dataStore: .nonPersistent())
         let firstID = session.selectedID
-        let second = session.newTab()
+        let second = try #require(session.newTab())
         session.selectAdjacent(1)
         #expect(session.selectedID == firstID)
         session.selectAdjacent(-1)
@@ -510,13 +556,13 @@ struct BrowserSessionTests {
         #expect(page.webView.pageZoom == 1)
     }
 
-    @Test func movingTabsPreservesSelectedIdentityAndRuntime() {
+    @Test func movingTabsPreservesSelectedIdentityAndRuntime() throws {
         let session = BrowserSession(dataStore: .nonPersistent())
         let first = session.activeTab
         let runtime = PageRuntime(dataStore: .nonPersistent())
         first.page = runtime
-        let second = session.newTab()
-        let third = session.newTab()
+        let second = try #require(session.newTab())
+        let third = try #require(session.newTab())
         session.select(first.id)
         session.moveTabs(from: IndexSet(integer: 0), to: 3)
         #expect(session.tabs.map(\.id) == [second.id, third.id, first.id])

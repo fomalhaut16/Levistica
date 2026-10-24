@@ -397,6 +397,44 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testTabCapacityKeepsAddressDraftAndAllowsCleanRestart() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launchEnvironment["LEVISTICA_SESSION_FIXTURE_BASE"] = base
+        app.launchEnvironment["LEVISTICA_LARGE_SESSION_FIXTURE"] = "1000"
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        XCTAssertEqual((app.staticTexts["tabLoadSummary"].value as? String ?? app.staticTexts["tabLoadSummary"].label).replacingOccurrences(of: ",", with: ""), "1000タブ・読み込み済み1")
+        let address = app.textFields["addressField"]
+        address.click()
+        address.typeKey("a", modifierFlags: .command)
+        address.typeText("unfinished synthetic address")
+        waitForInputIndicator(in: app)
+        app.buttons["newTabButton"].click()
+        XCTAssertTrue(app.staticTexts["externalOpenNotice"].waitForExistence(timeout: 5))
+        XCTAssertEqual(address.value as? String, "unfinished synthetic address")
+        XCTAssertEqual((app.staticTexts["tabLoadSummary"].value as? String ?? app.staticTexts["tabLoadSummary"].label).replacingOccurrences(of: ",", with: ""), "1000タブ・読み込み済み1")
+        app.typeKey("t", modifierFlags: .command)
+        XCTAssertEqual(address.value as? String, "unfinished synthetic address")
+        XCTAssertEqual((app.staticTexts["tabLoadSummary"].value as? String ?? app.staticTexts["tabLoadSummary"].label).replacingOccurrences(of: ",", with: ""), "1000タブ・読み込み済み1")
+        attachWindowImage(app, name: "tab-capacity-blocked", knownFrame: app.windows["browser"].frame)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        XCTAssertEqual((app.staticTexts["tabLoadSummary"].value as? String ?? app.staticTexts["tabLoadSummary"].label).replacingOccurrences(of: ",", with: ""), "1000タブ・読み込み済み1")
+        XCTAssertFalse(app.staticTexts["storageFailure"].exists)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
+    @MainActor
     func testFiftyAndOneHundredTabsRestoreAndSearchWithoutLoadingEveryPage() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180
