@@ -187,6 +187,7 @@ class AttributionReadinessTests(unittest.TestCase):
                 self.assertEqual(result_code, 0 if valid else 1)
                 self.assertEqual(sample['valid'], valid)
                 self.assertEqual(result['valid_sample_count'], int(valid))
+                self.assertIsNone(result['binary_build_source'])
                 self.assertEqual(len([c for c in calls if c[0] == '/usr/bin/footprint']), captures)
                 self.assertEqual(sample['attribution_readiness']['status'], 'failed' if label == 'unverifiable' else 'ready')
                 if valid:
