@@ -5,6 +5,99 @@ import WebKit
 
 @MainActor
 struct BrowserSessionTests {
+    @Test(arguments: ["", "2", "true"])
+    func measurementMetadataRejectsInvalidModes(_ mode: String) {
+        #expect(throws: MeasurementWebsiteStorage.Failure.self) {
+            try MeasurementWebsiteStorage.configuration(environment: [MeasurementWebsiteStorage.metadataKey: mode],
+                bundleIdentifier: "dev.fomalhaut16.Levistica.measurement")
+        }
+    }
+
+    @Test func measurementMetadataRequiresANamedMeasurementStore() throws {
+        #expect(throws: MeasurementWebsiteStorage.Failure.self) {
+            try MeasurementWebsiteStorage.configuration(environment: [MeasurementWebsiteStorage.metadataKey: "1"],
+                bundleIdentifier: "dev.fomalhaut16.Levistica.measurement")
+        }
+        let environment = [MeasurementWebsiteStorage.storeKey: UUID().uuidString, MeasurementWebsiteStorage.metadataKey: "1"]
+        for bundle in ["dev.fomalhaut16.Levistica", "dev.fomalhaut16.Levistica.debug", "dev.fomalhaut16.Levistica.profile"] {
+            #expect(throws: MeasurementWebsiteStorage.Failure.self) {
+                try MeasurementWebsiteStorage.configuration(environment: environment, bundleIdentifier: bundle)
+            }
+        }
+        let config = try MeasurementWebsiteStorage.configuration(environment: environment,
+            bundleIdentifier: "dev.fomalhaut16.Levistica.measurement")
+        #expect(config.persistsMetadata)
+    }
+
+    @Test func isolatedMeasurementMetadataRoundTripsWithoutUsingTheDefaultFolder() async throws {
+        let support = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: support) }
+        let config = MeasurementWebsiteStorage.Configuration(storeID: UUID(), persistsMetadata: true)
+        let first = try BrowserSession.measurementSession(configuration: config, applicationSupport: support,
+                                                          dataStore: .nonPersistent())
+        #expect(first.preferences.isPersistent && first.bookmarks.isPersistent && first.history.isPersistent)
+        _ = first.newTab()
+        _ = first.newTab()
+        let ids = first.tabs.map(\.id)
+        let url = try #require(URL(string: "https://example.org/fixture"))
+        first.bookmarks.add(url: url, title: "Synthetic bookmark")
+        first.history.record(url: url, title: "Synthetic history")
+        await first.history.flush()
+        #expect(first.preferences.saveNewTabPage(url.absoluteString))
+        try #require(first.prepareToQuit())
+        let reopened = try BrowserSession.measurementSession(configuration: config, applicationSupport: support,
+                                                             dataStore: .nonPersistent())
+        #expect(reopened.tabs.map(\.id) == ids)
+        #expect(reopened.loadedPageCount == 0)
+        #expect(reopened.preferences.newTabURL == url)
+        reopened.bookmarks.load()
+        reopened.history.isVisible = true
+        reopened.history.load()
+        await reopened.history.flush()
+        #expect(reopened.bookmarks.items.map(\.url) == [url])
+        #expect(reopened.history.items.map(\.url) == [url])
+        let other = try BrowserSession.measurementSession(configuration: .init(storeID: UUID(), persistsMetadata: true),
+                                                         applicationSupport: support, dataStore: .nonPersistent())
+        #expect(other.tabs.count == 1 && other.preferences.newTabURL == nil)
+        #expect(FileManager.default.fileExists(atPath: support.appendingPathComponent("Levistica").path) == false)
+    }
+
+    @Test func measurementMetadataRejectsLinkedNamespacesAndStorageFallback() throws {
+        let support = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: support) }
+        let namespace = support.appendingPathComponent("LevisticaMeasurementProfiles")
+        let target = support.appendingPathComponent("untouched")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: namespace, withDestinationURL: target)
+        let id = UUID()
+        let config = MeasurementWebsiteStorage.Configuration(storeID: id, persistsMetadata: true)
+        #expect(throws: (any Error).self) {
+            try BrowserSession.measurementSession(configuration: config, applicationSupport: support, dataStore: .nonPersistent())
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: target.path).isEmpty)
+        try FileManager.default.removeItem(at: namespace)
+        let folder = namespace.appendingPathComponent(id.uuidString.lowercased())
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("session.sqlite3")
+        let original = Data("invalid synthetic database".utf8)
+        try original.write(to: file)
+        #expect(throws: (any Error).self) {
+            try BrowserSession.measurementSession(configuration: config, applicationSupport: support, dataStore: .nonPersistent())
+        }
+        #expect(try Data(contentsOf: file) == original)
+    }
+
+    @Test func defaultMeasurementMetadataDoesNotCreateDirectories() throws {
+        let support = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let session = try BrowserSession.measurementSession(configuration: .init(storeID: nil),
+                                                           applicationSupport: support, dataStore: .nonPersistent())
+        #expect(session.canRetryPersistence == false)
+        #expect(session.preferences.isPersistent == false)
+        #expect(FileManager.default.fileExists(atPath: support.path) == false)
+    }
+
     @Test func measurementStorageDefaultsToNonPersistentWithoutAnIdentifier() throws {
         let config = try MeasurementWebsiteStorage.configuration(environment: [:], bundleIdentifier: "dev.fomalhaut16.Levistica")
         #expect(config.storeID == nil)
