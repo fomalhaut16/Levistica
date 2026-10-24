@@ -96,6 +96,9 @@ final class SessionStore {
                     }
                     try execute("ALTER TABLE session_tabs ADD COLUMN is_kept INTEGER NOT NULL DEFAULT 0")
                     try execute("ALTER TABLE session_tabs ADD COLUMN is_sleeping INTEGER NOT NULL DEFAULT 0")
+                    // Invalid legacy records must roll back the schema changes
+                    // too, before a caller attempts to restore the session.
+                    _ = try load()
                     try execute("PRAGMA user_version=3")
                     try execute("COMMIT")
                 } catch {

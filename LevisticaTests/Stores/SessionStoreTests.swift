@@ -152,6 +152,47 @@ struct SessionStoreTests {
         #expect(try store.load() == saved)
     }
 
+    @MainActor @Test(arguments: [1, 2])
+    func invalidLegacyRecordsDoNotCommitAnUpgrade(_ version: Int) throws {
+        let (url, saved) = try recoveryFixture()
+        let folder = url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let backup = try Data(contentsOf: url.appendingPathExtension("backup"))
+        try FileManager.default.removeItem(at: url)
+        var database: OpaquePointer?
+        try #require(sqlite3_open(url.path, &database) == SQLITE_OK)
+        let id = UUID().uuidString
+        let kindColumn = version == 2 ? ", kind TEXT NOT NULL DEFAULT 'web'" : ""
+        let kindValue = version == 2 ? ", 'web'" : ""
+        let sql = """
+        CREATE TABLE session_tabs (id TEXT PRIMARY KEY NOT NULL, position INTEGER UNIQUE NOT NULL,
+            title TEXT NOT NULL, url TEXT, may_reload INTEGER NOT NULL\(kindColumn));
+        CREATE TABLE session_meta (id INTEGER PRIMARY KEY CHECK(id=1), selected_id TEXT NOT NULL, was_running INTEGER NOT NULL);
+        INSERT INTO session_tabs VALUES ('\(id)',0,'Legacy tab','https://example.com/',2\(kindValue));
+        INSERT INTO session_meta VALUES (1,'\(id)',0);
+        PRAGMA user_version=\(version);
+        """
+        let result = sqlite3_exec(database, sql, nil, nil, nil)
+        sqlite3_close(database)
+        try #require(result == SQLITE_OK)
+        let before = try Data(contentsOf: url)
+        let session = BrowserSession.persistentSession(in: folder, dataStore: .nonPersistent())
+        session.activateInitialSelection()
+        #expect(session.storageFailure != nil)
+        #expect(session.loadedPageCount == 0)
+        #expect(session.canRestoreSessionBackup)
+        #expect(try Data(contentsOf: url) == before)
+        #expect(try Data(contentsOf: url.appendingPathExtension("backup")) == backup)
+        #expect(session.restoreSessionBackup())
+        session.activateInitialSelection()
+        #expect(session.recoveryRequired)
+        #expect(session.loadedPageCount == 0)
+        #expect(session.tabs.map(\.id) == saved.tabs.map(\.id))
+        #expect(session.selectedID == saved.selectedID)
+        #expect(try Data(contentsOf: url) == before)
+        #expect(try Data(contentsOf: url.appendingPathExtension("backup")) == backup)
+    }
+
     @Test func failedMultiStepMigrationPreservesLegacyDatabase() throws {
         let url = try temporaryURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
