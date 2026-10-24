@@ -422,7 +422,7 @@ struct BrowserSessionTests {
         #expect(page.isLoading == false)
     }
 
-    @Test(arguments: ["new", "reopen", "related", "link"])
+    @Test(arguments: ["new", "new-explicit", "reopen", "related", "link"])
     func tabCreationAtStorageCapacityDoesNotChangeTheSessionOrPreventQuit(path: String) throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -443,6 +443,8 @@ struct BrowserSessionTests {
         session.activeTab.hasEditedAddress = true
         switch path {
         case "new": #expect(session.newTab() == nil)
+        case "new-explicit":
+            #expect(session.newTab(opening: URL(string: "https://example.org/unused")) == nil)
         case "reopen":
             session.reopenClosedTab()
             #expect(session.canReopenClosedTab == false)
@@ -466,6 +468,31 @@ struct BrowserSessionTests {
         #expect(session.storageFailure == nil)
         #expect(session.prepareToQuit())
         #expect(try store.load()?.tabs.count == 1000)
+    }
+
+    @Test(arguments: [false, true])
+    func newTabUsesExplicitDestinationOrConfiguredHomePage(explicit: Bool) async throws {
+        let base = try #require(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let home = try #require(URL(string: base + "/one"))
+        let target = try #require(URL(string: base + "/two"))
+        let expected = explicit ? target : home
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let original = session.activeTab
+        try #require(session.preferences.saveNewTabPage(home.absoluteString))
+        let added = try #require(session.newTab(opening: explicit ? target : nil))
+        let page = try #require(added.page)
+        defer { page.stop() }
+        let expectedTitle = explicit ? "Fixture two" : "Fixture one"
+        let deadline = ContinuousClock.now + .seconds(10)
+        while (page.webView.title != expectedTitle || page.webView.isLoading), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(page.webView.title == expectedTitle)
+        #expect(page.url == expected)
+        #expect(page.webView.backForwardList.backList.isEmpty)
+        #expect(session.tabs.count == 2 && session.selectedID == added.id)
+        #expect(session.loadedPageCount == 1 && original.page == nil)
+        #expect(session.preferences.newTabURL == home)
     }
 
     @Test func oneHundredBlankTabsDoNotAllocateWebViews() {

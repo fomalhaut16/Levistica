@@ -40,8 +40,7 @@ struct BookmarkPanel: View {
                     Button("削除") { library.removeSelected() }.accessibilityIdentifier("deleteBookmarkButton")
                 }
                 Button("新しいタブで開く") {
-                    guard session.newTab() != nil else { return }
-                    _ = session.navigate(selected.url.absoluteString)
+                    _ = session.newTab(opening: selected.url)
                 }.accessibilityIdentifier("openBookmarkButton")
             }
             if library.recentlyDeleted != nil {
