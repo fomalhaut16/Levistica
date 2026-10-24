@@ -729,8 +729,9 @@ final class BrowserSession {
             guard let self, let tab, self.tabs.contains(where: { $0 === tab }) else { return }
             self.history.updateTitle(url: url, title: title, visited: visited)
         }
-        runtime.onDownload = { [weak self, weak tab] download in
-            guard let self, let tab else { download.cancel { _ in }; return }
+        runtime.onDownload = { [weak self, weak tab, weak runtime] download in
+            guard let self, let tab, let runtime, self.tabs.contains(where: { $0 === tab }),
+                  tab.page === runtime else { download.cancel { _ in }; return }
             self.downloads.accept(download, tabID: tab.id)
         }
         runtime.onMetadataChange = { [weak self, weak tab] in
