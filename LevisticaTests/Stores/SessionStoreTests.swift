@@ -42,8 +42,10 @@ struct SessionStoreTests {
         #expect(session.prepareToQuit())
     }
 
-    @Test(arguments: ["is_kept=4294967296", "is_sleeping=-1", "is_kept='text'", "is_sleeping=1.5"])
-    func invalidLifecycleFlagsAreRejected(_ update: String) throws {
+    @Test(arguments: ["is_kept=4294967296", "is_sleeping=-1", "is_kept='text'", "is_sleeping=1.5",
+                      "may_reload=4294967296", "may_reload=4294967297", "may_reload='text'", "may_reload=0.5",
+                      "position=4294967296", "position=-4294967296", "position='text'", "position=0.5"])
+    func invalidTabIntegerFieldsAreRejected(_ update: String) throws {
         let url = try temporaryURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let store = try SessionStore(fileURL: url)
@@ -53,6 +55,20 @@ struct SessionStoreTests {
         #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
         defer { sqlite3_close(database) }
         #expect(sqlite3_exec(database, "UPDATE session_tabs SET " + update, nil, nil, nil) == SQLITE_OK)
+        #expect(throws: (any Error).self) { _ = try store.load() }
+    }
+
+    @Test(arguments: ["4294967296", "4294967297", "'text'", "0.5"])
+    func invalidRunningFlagIsRejected(_ value: String) throws {
+        let url = try temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SessionStore(fileURL: url)
+        let tab = SavedTab(id: UUID(), title: "Before", url: nil, mayReload: false)
+        try store.save(SavedSession(tabs: [tab], selectedID: tab.id, wasRunning: false))
+        var database: OpaquePointer?
+        try #require(sqlite3_open(url.path, &database) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        try #require(sqlite3_exec(database, "UPDATE session_meta SET was_running=" + value, nil, nil, nil) == SQLITE_OK)
         #expect(throws: (any Error).self) { _ = try store.load() }
     }
 
@@ -369,9 +385,13 @@ struct SessionStoreTests {
         else { #expect(FileManager.default.fileExists(atPath: url.path) == false) }
     }
 
-    @MainActor @Test(arguments: ["UPDATE session_tabs SET may_reload=2", "DELETE FROM session_tabs; DELETE FROM session_meta"])
+    @MainActor @Test(arguments: ["UPDATE session_tabs SET may_reload=2",
+                                "UPDATE session_tabs SET may_reload=4294967297",
+                                "UPDATE session_tabs SET position=position+4294967296",
+                                "UPDATE session_meta SET was_running=4294967296",
+                                "DELETE FROM session_tabs; DELETE FROM session_meta"])
     func invalidOrEmptyTabDataDoesNotReplaceBackup(_ sql: String) throws {
-        let (url, _) = try recoveryFixture()
+        let (url, saved) = try recoveryFixture()
         let folder = url.deletingLastPathComponent()
         defer { try? FileManager.default.removeItem(at: folder) }
         var database: OpaquePointer?
@@ -379,11 +399,22 @@ struct SessionStoreTests {
         try #require(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
         sqlite3_close(database)
         let before = try Data(contentsOf: url)
+        let backup = try Data(contentsOf: url.appendingPathExtension("backup"))
         let session = BrowserSession.persistentSession(in: folder, dataStore: .nonPersistent())
+        session.activateInitialSelection()
+        #expect(session.loadedPageCount == 0)
+        #expect(session.storageFailure != nil)
         #expect(try Data(contentsOf: url) == before)
+        #expect(try Data(contentsOf: url.appendingPathExtension("backup")) == backup)
         #expect(session.canRestoreSessionBackup)
         #expect(session.restoreSessionBackup())
+        session.activateInitialSelection()
+        #expect(session.recoveryRequired)
+        #expect(session.loadedPageCount == 0)
+        #expect(session.tabs.map(\.id) == saved.tabs.map(\.id))
+        #expect(session.selectedID == saved.selectedID)
         #expect(try Data(contentsOf: url) == before)
+        #expect(try Data(contentsOf: url.appendingPathExtension("backup")) == backup)
     }
 
     @MainActor @Test func newerOriginalAndCorruptBackupAreNeverRestored() throws {

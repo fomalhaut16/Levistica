@@ -134,19 +134,22 @@ final class SessionStore {
         var result = sqlite3_step(rows)
         while result == SQLITE_ROW {
             guard tabs.count < Self.maximumTabCount, let rawID = text(rows, 0), let id = UUID(uuidString: rawID),
-                  ids.insert(id).inserted, sqlite3_column_int(rows, 1) == tabs.count,
+                  ids.insert(id).inserted, sqlite3_column_type(rows, 1) == SQLITE_INTEGER,
+                  sqlite3_column_int64(rows, 1) == Int64(tabs.count),
                   let title = text(rows, 2), title.count <= 512 else { throw Failure.invalidData }
             let rawURL = text(rows, 3)
             let url = rawURL.flatMap(URL.init(string:))
             if rawURL != nil && (url == nil || Self.persistableURL(url) != url) { throw Failure.invalidData }
-            let mayReload = sqlite3_column_int(rows, 4)
+            guard sqlite3_column_type(rows, 4) == SQLITE_INTEGER else { throw Failure.invalidData }
+            let mayReload = sqlite3_column_int64(rows, 4)
             guard mayReload == 0 || mayReload == 1 else { throw Failure.invalidData }
             guard let rawKind = text(rows, 5), let kind = SavedTab.Kind(rawValue: rawKind),
                   kind != .localPDF || (url == nil && mayReload == 0) else { throw Failure.invalidData }
+            guard sqlite3_column_type(rows, 6) == SQLITE_INTEGER,
+                  sqlite3_column_type(rows, 7) == SQLITE_INTEGER else { throw Failure.invalidData }
             let kept = sqlite3_column_int64(rows, 6)
             let sleeping = sqlite3_column_int64(rows, 7)
-            guard sqlite3_column_type(rows, 6) == SQLITE_INTEGER, sqlite3_column_type(rows, 7) == SQLITE_INTEGER,
-                  (kept == 0 || kept == 1), (sleeping == 0 || sleeping == 1),
+            guard (kept == 0 || kept == 1), (sleeping == 0 || sleeping == 1),
                   sleeping == 0 || (kind == .web && url != nil && mayReload == 1) else { throw Failure.invalidData }
             tabs.append(SavedTab(id: id, title: title, url: url, mayReload: mayReload == 1, kind: kind,
                                  isKept: kept == 1, isSleeping: sleeping == 1))
@@ -159,7 +162,8 @@ final class SessionStore {
         if tabs.isEmpty && metaResult == SQLITE_DONE { return nil }
         guard !tabs.isEmpty, metaResult == SQLITE_ROW, let rawSelected = text(meta, 0),
               let selected = UUID(uuidString: rawSelected), ids.contains(selected) else { throw Failure.invalidData }
-        let running = sqlite3_column_int(meta, 1)
+        guard sqlite3_column_type(meta, 1) == SQLITE_INTEGER else { throw Failure.invalidData }
+        let running = sqlite3_column_int64(meta, 1)
         guard running == 0 || running == 1 else { throw Failure.invalidData }
         return SavedSession(tabs: tabs, selectedID: selected, wasRunning: running == 1)
     }
