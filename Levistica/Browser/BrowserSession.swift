@@ -447,14 +447,14 @@ final class BrowserSession {
     }
 
     @discardableResult
-    func newTab() -> BrowserTab? {
+    func newTab(opening destination: URL? = nil) -> BrowserTab? {
         guard allowAdditionalTab() else { return nil }
         let tab = BrowserTab()
         tabs.append(tab)
         selectedID = tab.id
         addressFocusRequest += 1
         persistSession()
-        if let url = preferences.newTabURL { _ = navigate(url.absoluteString) }
+        if let url = destination ?? preferences.newTabURL { _ = navigate(url.absoluteString) }
         return tab
     }
 
