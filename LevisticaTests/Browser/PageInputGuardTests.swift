@@ -13,8 +13,9 @@ struct PageInputGuardTests {
         return base.appendingPathComponent(path)
     }
 
-    @Test func actualHTTPDownloadPreservesTheDisplayedDocumentAndIdentity() async throws {
-        let destination = try httpFixtureURL(path: "download")
+    @Test(arguments: ["download", "redirect-download"])
+    func actualHTTPDownloadPreservesTheDisplayedDocumentAndIdentity(path: String) async throws {
+        let destination = try httpFixtureURL(path: path)
         let runtime = PageRuntime(dataStore: .nonPersistent())
         defer { runtime.onDownload = nil; runtime.stop() }
         let pageURL = try #require(URL(string: "https://www.google.com/"))
@@ -44,6 +45,97 @@ struct PageInputGuardTests {
         #expect(runtime.canRetry)
         #expect(runtime.failure == nil)
         #expect(agentAtDownload == originalAgent)
+    }
+
+    @Test func actualRedirectRecordsAndReloadsTheFinalDocument() async throws {
+        let start = try httpFixtureURL(path: "redirect-two")
+        let final = try httpFixtureURL(path: "two")
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        defer { runtime.onVisit = nil; runtime.stop() }
+        var visits: [URL] = []
+        runtime.onVisit = { url, _, _ in visits.append(url) }
+        runtime.load(start)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while visits.isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(visits == [final])
+        #expect(runtime.webView.title == "Fixture two")
+        #expect(runtime.url == final)
+        #expect(runtime.canRetry)
+        runtime.reload()
+        let reloadDeadline = ContinuousClock.now + .seconds(10)
+        while visits.count < 2, ContinuousClock.now < reloadDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(visits == [final, final])
+        #expect(runtime.url == final)
+    }
+
+    @Test func actualRedirectFailureKeepsTheDocumentAndFinalRetryDestination() async throws {
+        let page = try httpFixtureURL(path: "one")
+        let start = try httpFixtureURL(path: "redirect-failure")
+        let final = try httpFixtureURL(environmentKey: "LEVISTICA_FAILURE_FIXTURE_URL", path: "failure")
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        defer { runtime.stop() }
+        runtime.load(page)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while runtime.webView.title != "Fixture one", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(runtime.webView.title == "Fixture one")
+        runtime.load(start)
+        let failureDeadline = ContinuousClock.now + .seconds(15)
+        while runtime.failure == nil, ContinuousClock.now < failureDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(runtime.failure != nil)
+        #expect(runtime.webView.title == "Fixture one")
+        #expect(runtime.url == final)
+        #expect(runtime.canRetry)
+    }
+
+    @Test(arguments: [303, 307])
+    func actualPOSTRedirectDoesNotReplayTheSubmission(status: Int) async throws {
+        let start = try httpFixtureURL(path: "redirect-\(status)")
+        let final = try httpFixtureURL(path: status == 303 ? "two" : "redirect-post-target")
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        defer { runtime.stop() }
+        var request = URLRequest(url: start)
+        request.httpMethod = "POST"
+        request.httpBody = Data("synthetic=1".utf8)
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        runtime.load(request)
+        let title = status == 303 ? "Fixture two" : "Redirect POST fixture"
+        let deadline = ContinuousClock.now + .seconds(10)
+        while runtime.webView.title != title || runtime.webView.isLoading, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(runtime.webView.title == title)
+        #expect(runtime.url == final)
+        #expect(runtime.canRetry == (status == 303))
+        let revision = runtime.documentRevision
+        runtime.reload()
+        if status == 303 {
+            let reloadDeadline = ContinuousClock.now + .seconds(10)
+            while runtime.documentRevision == revision || runtime.webView.isLoading, ContinuousClock.now < reloadDeadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(runtime.documentRevision > revision)
+            #expect(runtime.failure == nil)
+        } else {
+            #expect(runtime.failure != nil)
+            runtime.retry()
+            #expect(runtime.documentRevision == revision)
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 5
+        configuration.timeoutIntervalForResource = 5
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let (data, _) = try await session.data(from: httpFixtureURL(path: "redirect-post-count"))
+        let counts = try #require(JSONSerialization.jsonObject(with: data) as? [String: Int])
+        #expect(counts["post\(status)"] == 1)
     }
 
     @Test func actualConnectionFailureKeepsTheDocumentAndRetryDestination() async throws {
