@@ -55,8 +55,9 @@ def parse_domain(text, pid, app, creator_name="Levistica"):
     return services
 
 
-def identities(pids):
-    text = run(["/bin/ps", "-p", ",".join(map(str, pids)), "-o", "pid=,lstart=,comm="])
+def identities(pids, query=None):
+    query = run if query is None else query
+    text = query(["/bin/ps", "-p", ",".join(map(str, pids)), "-o", "pid=,lstart=,comm="])
     result = {}
     for line in text.splitlines():
         fields = line.strip().split(None, 6)
@@ -91,11 +92,19 @@ def live_descendants(rows, root):
     return members - exited, exited
 
 
-def snapshot(pid, app=APP, binary=BINARY, chrome_profile=None):
+def snapshot(pid, app=APP, binary=BINARY, chrome_profile=None, deadline=None):
+    def query(args):
+        if deadline is None:
+            return run(args)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('Attribution deadline expired')
+        return run(args, timeout=min(30, remaining))
+
     creator = "Google Chrome" if chrome_profile else "Levistica"
-    services = parse_domain(run(["/bin/launchctl", "print", f"pid/{pid}"]), pid, app, creator)
+    services = parse_domain(query(["/bin/launchctl", "print", f"pid/{pid}"]), pid, app, creator)
     for service in services:
-        text = run(["/bin/launchctl", "print", f"pid/{pid}/{service['service']}"])
+        text = query(["/bin/launchctl", "print", f"pid/{pid}/{service['service']}"])
         if not re.search(rf"^\tdomain = pid/{pid}(?:\s|$)", text, re.M):
             raise ValueError("Service is outside the app's PID domain")
         actual = re.search(r"^\tpid = (\d+)$", text, re.M)
@@ -104,29 +113,29 @@ def snapshot(pid, app=APP, binary=BINARY, chrome_profile=None):
     process_ids = sorted({pid, *(s["pid"] for s in services)})
     exited = set()
     if chrome_profile:
-        root_args = run(["/bin/ps", "-p", str(pid), "-o", "args="])
+        root_args = query(["/bin/ps", "-p", str(pid), "-o", "args="])
         if not has_path_argument(root_args, "--user-data-dir=", chrome_profile):
             raise ValueError("Chrome root does not use the isolated profile")
         rows = []
         detached = []
-        for line in run(["/bin/ps", "-axo", "pid=,ppid=,stat=,comm="]).splitlines():
+        for line in query(["/bin/ps", "-axo", "pid=,ppid=,stat=,comm="]).splitlines():
             fields = line.strip().split(None, 3)
             if len(fields) != 4:
                 raise ValueError("Unrecognized process table")
             child, parent = map(int, fields[:2])
             rows.append((child, parent, fields[2]))
             if not fields[2].startswith("Z") and fields[3].startswith(str(app) + "/") and fields[3].endswith("/chrome_crashpad_handler"):
-                args = run(["/bin/ps", "-p", str(child), "-o", "args="])
+                args = query(["/bin/ps", "-p", str(child), "-o", "args="])
                 if has_path_argument(args, "--database=", chrome_profile / "Crashpad"):
                     detached.append(child)
         children, exited = live_descendants(rows, pid)
-        child_identity = identities(sorted(children))
+        child_identity = identities(sorted(children), query=query)
         unexpected = [item["executable"] for item in child_identity.values()
                       if not item["executable"].startswith(str(app) + "/")]
         if unexpected:
             raise ValueError("Unexpected Chrome descendant executable: " + repr(unexpected))
         process_ids = sorted(set(process_ids) | children | set(detached))
-    identity = identities(process_ids)
+    identity = identities(process_ids, query=query)
     if pathlib.Path(identity[pid]["executable"]).resolve() != binary.resolve():
         raise ValueError("PID no longer refers to this checkout's Release app")
     return {"services": sorted(services, key=lambda s: s["service"]), "identities": identity,
@@ -189,6 +198,60 @@ def attribution_change(before, after):
     stable = not any(change[key] for key in (
         "live_added", "live_removed", "identity_changed", "services_added", "services_removed"))
     return stable, change
+
+
+def wait_for_stable_attribution(read_snapshot, check_conditions, root_pid, seconds, timeout,
+                                evidence, interval=5, clock=None, sleep=None):
+    """Require a continuous live-attribution window within one fixed deadline.
+
+    read_snapshot receives the absolute deadline and must bound its I/O to it.
+    Only successful child/service changes reset the window; failed verification
+    or a changed root aborts. No footprint is taken or retried here.
+    """
+    if not (0 < seconds <= 120 and seconds <= timeout <= 300 and 0 < interval <= seconds):
+        raise ValueError('Invalid attribution readiness bounds')
+    clock = time.monotonic if clock is None else clock
+    sleep = time.sleep if sleep is None else sleep
+    started = clock()
+    deadline = started + timeout
+    evidence.update(status='waiting', checks=0, changes=[], required_seconds=seconds, timeout_seconds=timeout)
+    baseline = None
+    stable_since = started
+    root_identity = None
+    try:
+        while True:
+            check_conditions()
+            current = read_snapshot(deadline)
+            now = clock()
+            evidence['checks'] += 1
+            evidence['elapsed_seconds'] = now - started
+            if now > deadline:
+                raise TimeoutError('Attribution readiness exceeded its deadline')
+            if baseline is None:
+                root_identity = current['identities'].get(root_pid)
+                if root_identity is None:
+                    raise ValueError('Attribution readiness has no root identity')
+                baseline = current
+                stable_since = now
+            else:
+                if current['identities'].get(root_pid) != root_identity:
+                    raise ValueError('Root identity changed during attribution readiness')
+                stable, change = attribution_change(baseline, current)
+                if not stable:
+                    evidence['changes'].append({'elapsed_seconds': now - started, **change})
+                    baseline = current
+                    stable_since = now
+            evidence['stable_seconds'] = now - stable_since
+            if now - stable_since >= seconds:
+                evidence['status'] = 'ready'
+                return current
+            if now >= deadline:
+                raise TimeoutError('Attribution readiness did not stabilize before its deadline')
+            sleep(min(interval, deadline - now, seconds - (now - stable_since)))
+    except (ValueError, OSError, subprocess.SubprocessError):
+        evidence['status'] = 'failed'
+        evidence['elapsed_seconds'] = clock() - started
+        raise
 
 
 @functools.cache
@@ -299,6 +362,10 @@ def main():
     parser.add_argument("--total-tabs", type=int, help="Total tab count, including unloaded tabs; omit if unknown")
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--interval", type=float, default=5)
+    parser.add_argument('--stable-attribution-seconds', type=float, default=0,
+                        help='Optional continuous PID/service stability window (1..120 seconds)')
+    parser.add_argument('--attribution-timeout', type=float, default=90,
+                        help='Fixed readiness deadline, including settling (up to 300 seconds)')
     args = parser.parse_args()
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", args.label):
         parser.error("Use a short lowercase label without URLs or private data")
@@ -310,6 +377,14 @@ def main():
         parser.error("samples must be 1..10; interval must be 0..60 seconds")
     if not 0 <= args.ready_delay <= 600 or (not args.ready_file and args.ready_delay != 60):
         parser.error("ready-delay must be 0..600 seconds and requires ready-file")
+    if not (args.stable_attribution_seconds == 0 or 1 <= args.stable_attribution_seconds <= 120):
+        parser.error('stable-attribution-seconds must be 0 or 1..120')
+    if args.stable_attribution_seconds:
+        if (not args.ready_file or args.browser not in ('chrome', 'levistica-measurement')
+                or not args.stable_attribution_seconds <= args.attribution_timeout <= 300):
+            parser.error('Attribution readiness requires an isolated browser, ready-file, and a bounded timeout')
+    elif args.attribution_timeout != 90:
+        parser.error('attribution-timeout requires stable-attribution-seconds')
     if args.sleeping_documents and not args.sleep_baseline:
         parser.error('sleeping-documents requires sleep-baseline')
     sleeping = args.sleeping_documents.split(',') if args.sleeping_documents else []
@@ -409,7 +484,9 @@ def main():
     output_parent.mkdir(parents=True, exist_ok=True)
     output = pathlib.Path(tempfile.mkdtemp(prefix=args.label + ".", dir=output_parent))
     record = {
-        "schema": 2, "label": args.label, "fixture": fixture, "ready_delay_seconds": args.ready_delay if fixture else None,
+        "schema": 2, "label": args.label,
+        "attribution_readiness_seconds": args.stable_attribution_seconds,
+        "attribution_readiness_timeout_seconds": args.attribution_timeout if args.stable_attribution_seconds else None, "fixture": fixture, "ready_delay_seconds": args.ready_delay if fixture else None,
         "sleep_guard_file": str(sleep_guard_file) if sleep_guard_file else None,
         "loaded_pages": args.loaded_pages, "total_tabs": args.total_tabs,
         "browser": args.browser, "storage_mode": measurement_storage["mode"] if measurement_storage else "launch configuration", "measurement_store_id": measurement_storage["storeID"] if measurement_storage else None, "pid": pid, "source_head_at_sampling": run(["git", "rev-parse", "HEAD"]).strip(),
@@ -446,14 +523,30 @@ def main():
             if args.ready_file:
                 sample['fixture_before'] = read_fixture()
                 check_fixture(sample['fixture_before'], fixture)
+            readiness = None
+            if args.stable_attribution_seconds:
+                sample['attribution_readiness'] = {}
+                readiness = wait_for_stable_attribution(
+                    lambda deadline: snapshot(pid, app, binary, profile, deadline=deadline),
+                    lambda: check_fixture(read_fixture(), fixture), pid,
+                    args.stable_attribution_seconds, args.attribution_timeout,
+                    sample['attribution_readiness'], interval=min(5, args.stable_attribution_seconds))
             before = snapshot(pid, app, binary, profile)
+            sample['attribution_before'] = before
+            if readiness is not None and not attribution_change(readiness, before)[0]:
+                raise ValueError('Attribution changed after the readiness window')
             if measurement_storage and measurement_storage['metadataPersistent']:
                 sample['metadata_before'] = stores.metadata_snapshot(pid, measurement_storage['storeID'])
                 if args.total_tabs is not None and sample['metadata_before']['tabCount'] != args.total_tabs:
                     raise ValueError('Saved tab count differs from the measurement condition')
-            sample["attribution_before"] = before
             pids = sorted(before["identities"])
             raw = output / f"footprint-{index + 1}.json"
+            if readiness is not None:
+                sample['fixture_before'] = read_fixture()
+                check_fixture(sample['fixture_before'], fixture)
+            sample['capture_started_time_utc'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            if fixture:
+                sample['capture_started_seconds_after_ready'] = time.monotonic() - fixture['ready_monotonic']
             # The standard tool accepts explicit positional PID lists. Never query all processes.
             run(["/usr/bin/footprint", "-f", "bytes", "-j", str(raw), *map(str, pids)])
             document = json.loads(raw.read_text())
