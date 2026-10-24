@@ -1981,6 +1981,8 @@ final class BrowserFlowTests: XCTestCase {
 
     @MainActor
     func testFullscreenCanEnterAndExit() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
         let app = XCUIApplication()
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
@@ -1992,33 +1994,126 @@ final class BrowserFlowTests: XCTestCase {
         app.buttons["showBookmarksButton"].click()
         XCTAssertTrue(app.textFields["bookmarkSearchField"].waitForExistence(timeout: 5))
         let beforeFrame = app.webViews.firstMatch.frame
-        attachWindowImage(app, name: "fullscreen-before")
+        XCTAssertTrue(attachWindowImage(app, name: "fullscreen-before"))
         enter.click()
         XCTAssertTrue(app.webViews.staticTexts["fullscreen active"].waitForExistence(timeout: 10))
-        let screenSize = try XCTUnwrap(NSScreen.main?.frame.size)
+        let screen = try XCTUnwrap(NSScreen.main)
+        let screenFrame = screen.frame
+        let screenSize = screenFrame.size
+        let reservedTop = max(screen.safeAreaInsets.top, screenFrame.maxY - screen.visibleFrame.maxY)
         let fillsScreen = NSPredicate { _, _ in
             let frame = app.webViews.firstMatch.frame
-            return frame.width >= screenSize.width - 2 && frame.height >= screenSize.height * 0.9
+            return frame.width >= screenSize.width - 2 && frame.width <= screenSize.width + 2
+                && frame.height >= screenSize.height - reservedTop - 2 && frame.height <= screenSize.height + 2
         }
         let fullscreenGeometry = expectation(for: fillsScreen, evaluatedWith: nil)
         wait(for: [fullscreenGeometry], timeout: 10)
-        let fullImage = XCTAttachment(screenshot: app.screenshot())
-        fullImage.name = "fullscreen-active"
-        fullImage.lifetime = .keepAlways
-        add(fullImage)
-        print("Fullscreen frames: \(app.windows.allElementsBoundByIndex.map(\.frame)); webview: \(app.webViews.firstMatch.frame); before: \(beforeFrame)")
+        let fullscreenFrame = app.webViews.firstMatch.frame
+        if screenFrame.origin == .zero {
+            XCTAssertEqual(fullscreenFrame.minX, 0, accuracy: 2)
+            XCTAssertGreaterThanOrEqual(fullscreenFrame.minY, -2)
+            XCTAssertLessThanOrEqual(fullscreenFrame.minY, reservedTop + 2)
+            XCTAssertEqual(fullscreenFrame.maxY, screenSize.height, accuracy: 2)
+        }
+        for name in ["TOP LEFT", "TOP RIGHT", "BOTTOM LEFT", "BOTTOM RIGHT"] {
+            let marker = app.webViews.staticTexts[name]
+            XCTAssertTrue(marker.exists)
+            XCTAssertFalse(marker.frame.isEmpty)
+            XCTAssertTrue(fullscreenFrame.insetBy(dx: -2, dy: -2).contains(marker.frame))
+        }
+        XCTAssertTrue(attachWindowImage(app, name: "fullscreen-active", knownFrame: fullscreenFrame))
+        print("Fullscreen fixture frames: before=\(beforeFrame); active=\(fullscreenFrame); reservedTop=\(reservedTop)")
         app.webViews.buttons["Exit fullscreen"].click()
         XCTAssertTrue(app.webViews.staticTexts["windowed"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.textFields["addressField"].exists)
+        // DOM fullscreenchange can precede the native Space/window transition.
+        // Restore the fixture app's focus before interacting with native controls.
+        app.activate()
+        XCTAssertTrue(app.textFields["addressField"].waitForExistence(timeout: 5))
+        let restoredGeometry = expectation(for: NSPredicate { _, _ in
+            let frame = app.webViews.firstMatch.frame
+            return abs(frame.width - beforeFrame.width) <= 2 && abs(frame.height - beforeFrame.height) <= 2
+        }, evaluatedWith: nil)
+        wait(for: [restoredGeometry], timeout: 10)
         let afterFrame = app.webViews.firstMatch.frame
         XCTAssertEqual(afterFrame.width, beforeFrame.width, accuracy: 2)
         XCTAssertEqual(afterFrame.height, beforeFrame.height, accuracy: 2)
-        attachWindowImage(app, name: "fullscreen-after")
+        XCTAssertTrue(attachWindowImage(app, name: "fullscreen-after"))
         XCTAssertTrue(app.textFields["bookmarkSearchField"].exists)
-        app.buttons["closeBookmarksButton"].click()
-        XCTAssertFalse(app.textFields["bookmarkSearchField"].exists)
-        XCTAssertGreaterThan(app.webViews.firstMatch.frame.width, beforeFrame.width + 200)
-        attachWindowImage(app, name: "fullscreen-after-bookmarks-closed")
+        let closeBookmarks = app.buttons["closeBookmarksButton"]
+        let readyToClose = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: closeBookmarks)
+        wait(for: [readyToClose], timeout: 5)
+        closeBookmarks.click()
+        XCTAssertTrue(app.textFields["bookmarkSearchField"].waitForNonExistence(timeout: 5))
+        let expandedContent = expectation(for: NSPredicate { _, _ in
+            app.webViews.firstMatch.frame.width > beforeFrame.width + 200
+        }, evaluatedWith: nil)
+        wait(for: [expandedContent], timeout: 5)
+        print("Restored fullscreen fixture frame: \(afterFrame); expanded=\(app.webViews.firstMatch.frame)")
+        XCTAssertTrue(attachWindowImage(app, name: "fullscreen-after-bookmarks-closed"))
+        app.terminate()
+    }
+
+    @MainActor
+    func testNativeWindowFullscreenPreservesDraftAndRestoresLayout() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        submit(base + "/fullscreen", in: app)
+        let draft = app.webViews.textFields["Fullscreen draft"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        draft.click()
+        waitForInputIndicator(in: app)
+        draft.typeText("synthetic fullscreen draft")
+        waitForInputIndicator(in: app)
+        let window = app.windows["browser"]
+        let before = window.frame
+        let screen = try XCTUnwrap(NSScreen.main)
+        let reservedTop = max(screen.safeAreaInsets.top, screen.frame.maxY - screen.visibleFrame.maxY)
+        XCTAssertTrue(attachWindowImage(app, name: "native-fullscreen-before", knownFrame: before))
+        let fullscreenButton = window.buttons["_XCUI:FullScreenWindow"]
+        XCTAssertTrue(fullscreenButton.exists)
+        fullscreenButton.click()
+        let fillsScreen = expectation(for: NSPredicate { _, _ in
+            let frame = window.frame
+            return abs(frame.width - screen.frame.width) <= 2
+                && frame.height >= screen.frame.height - reservedTop - 2 && frame.height <= screen.frame.height + 2
+        }, evaluatedWith: nil)
+        print("Native fullscreen transition frame: before=\(before); current=\(window.frame); screen=\(screen.frame); reservedTop=\(reservedTop)")
+        wait(for: [fillsScreen], timeout: 10)
+        XCTAssertEqual(draft.value as? String, "synthetic fullscreen draft")
+        XCTAssertTrue(app.textFields["addressField"].exists)
+        XCTAssertTrue(app.webViews.staticTexts["windowed"].exists)
+        let content = app.webViews.firstMatch.frame
+        for name in ["TOP LEFT", "TOP RIGHT", "BOTTOM LEFT", "BOTTOM RIGHT"] {
+            let marker = app.webViews.staticTexts[name]
+            XCTAssertTrue(marker.exists)
+            XCTAssertFalse(marker.frame.isEmpty)
+            XCTAssertTrue(content.insetBy(dx: -2, dy: -2).contains(marker.frame))
+        }
+        let active = window.frame
+        let top = screen.frame.origin == .zero ? max(active.minY, reservedTop) : active.minY
+        let crop = CGRect(x: active.minX, y: top, width: active.width, height: active.maxY - top)
+        XCTAssertTrue(attachWindowImage(app, name: "native-fullscreen-active", knownFrame: crop))
+        app.typeKey(.escape, modifierFlags: [])
+        app.activate()
+        let restored = expectation(for: NSPredicate { _, _ in
+            abs(window.frame.width - before.width) <= 2 && abs(window.frame.height - before.height) <= 2
+        }, evaluatedWith: nil)
+        wait(for: [restored], timeout: 10)
+        XCTAssertEqual(draft.value as? String, "synthetic fullscreen draft")
+        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/fullscreen")
+        XCTAssertTrue(app.webViews.staticTexts["windowed"].exists)
+        // Move away from the titlebar control and dismiss its hover popover.
+        // A usable restored page must accept focus without losing the draft.
+        draft.click()
+        waitForInputIndicator(in: app)
+        XCTAssertEqual(draft.value as? String, "synthetic fullscreen draft")
+        XCTAssertTrue(attachWindowImage(app, name: "native-fullscreen-after", knownFrame: window.frame))
+        print("Native fullscreen fixture frames: before=\(before); active=\(active); restored=\(window.frame)")
         app.terminate()
     }
 
@@ -2139,22 +2234,24 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func attachWindowImage(_ app: XCUIApplication, name: String, knownFrame: CGRect? = nil) {
+    @discardableResult
+    private func attachWindowImage(_ app: XCUIApplication, name: String, knownFrame: CGRect? = nil) -> Bool {
         // macOS application screenshots may include other applications. Crop to this
         // fixture window before retaining any image in the test result.
         let image = knownFrame == nil ? app.screenshot().image : XCUIScreen.main.screenshot().image
         let frame = knownFrame ?? app.windows.firstMatch.frame
         guard let screen = NSScreen.main, !frame.isEmpty,
-              let original = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+              let original = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return false }
         let scaleX = CGFloat(original.width) / screen.frame.width
         let scaleY = CGFloat(original.height) / screen.frame.height
         let region = CGRect(x: frame.minX * scaleX, y: frame.minY * scaleY,
                             width: frame.width * scaleX, height: frame.height * scaleY)
-        guard let cropped = original.cropping(to: region) else { return }
+        guard let cropped = original.cropping(to: region) else { return false }
         let attachment = XCTAttachment(image: NSImage(cgImage: cropped, size: frame.size))
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+        return true
     }
 
     @MainActor
