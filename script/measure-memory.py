@@ -348,6 +348,15 @@ def validate_measurement_signing(info, entitlements):
         raise ValueError('Measurement requires the isolated bundle, Sandbox, and no debugger entitlement')
 
 
+def validate_native_build_source(info, checkout_revision, worktree_dirty):
+    revision = info.get('LevisticaSourceRevision')
+    state = info.get('LevisticaSourceState')
+    if (not isinstance(revision, str) or not re.fullmatch(r'[0-9a-f]{40}', revision)
+            or revision != checkout_revision or state != 'clean' or worktree_dirty):
+        raise ValueError('Native app source is unverified or differs from the clean checkout; rebuild with script/build_and_run.sh')
+    return {'revision': revision, 'state': state}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ready-file", type=pathlib.Path, help="Optional synthetic fixture readiness state")
@@ -493,7 +502,7 @@ def main():
         "measurement_metadata_persistent": measurement_storage["metadataPersistent"] if measurement_storage else False,
         "measurement_script_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
-        "worktree_dirty": bool(run(["git", "status", "--porcelain", "--untracked-files=no"]).strip()),
+        "worktree_dirty": bool(run(["git", "status", "--porcelain", "--untracked-files=normal"]).strip()),
         "os_version": run(["/usr/bin/sw_vers", "-productVersion"]).strip(),
         "os_build": run(["/usr/bin/sw_vers", "-buildVersion"]).strip(),
         "architecture": run(["/usr/bin/uname", "-m"]).strip(),
@@ -509,6 +518,8 @@ def main():
     record["bundle"] = {key: info.get(key) for key in (
         "CFBundleIdentifier", "CFBundleVersion", "CFBundleShortVersionString",
         "DTXcodeBuild", "DTSDKName", "LSMinimumSystemVersion")}
+    record['binary_build_source'] = (validate_native_build_source(
+        info, record['source_head_at_sampling'], record['worktree_dirty']) if args.browser != 'chrome' else None)
     record["power_source"] = run(["/usr/bin/pmset", "-g", "batt"]).splitlines()[0]
     record["system_before"] = {
         "swap": run(["/usr/sbin/sysctl", "vm.swapusage"]).strip(),

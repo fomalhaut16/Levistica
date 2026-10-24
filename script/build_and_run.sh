@@ -93,6 +93,22 @@ if [[ "$MEASUREMENT" == 1 ]]; then
         SWIFT_ACTIVE_COMPILATION_CONDITIONS=LEVISTICA_MEASUREMENT)
 fi
 
+# Embed source identity before signing; a direct Xcode build stays unknown.
+SOURCE_REVISION=unknown
+SOURCE_STATE=unknown
+repository_root="$(git -C "$ROOT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ "$repository_root" == "$ROOT_DIR" ]]; then
+    candidate_revision="$(git -C "$ROOT_DIR" rev-parse --verify HEAD 2>/dev/null || true)"
+    if [[ "$candidate_revision" =~ ^[0-9a-f]{40}$ ]]; then
+        SOURCE_REVISION="$candidate_revision"
+        if source_status="$(git -C "$ROOT_DIR" status --porcelain --untracked-files=normal 2>/dev/null)"; then
+            SOURCE_STATE=clean
+            [[ -z "$source_status" ]] || SOURCE_STATE=modified
+        fi
+    fi
+fi
+BUILD_ARGS+=("LEVISTICA_SOURCE_REVISION=$SOURCE_REVISION" "LEVISTICA_SOURCE_STATE=$SOURCE_STATE")
+
 # Stop only this checkout's development app, after matching its executable path.
 for pid in $(/usr/bin/pgrep -x Levistica || true); do
     actual="$(/bin/ps -p "$pid" -o comm= || true)"
@@ -125,6 +141,12 @@ fi
 /usr/bin/codesign --verify --strict "$APP_BUNDLE"
 identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_BUNDLE/Contents/Info.plist")"
 [[ "$identifier" == "$EXPECTED_IDENTIFIER" ]] || { echo 'Unexpected built bundle identifier' >&2; exit 1; }
+built_revision="$(/usr/libexec/PlistBuddy -c 'Print :LevisticaSourceRevision' "$APP_BUNDLE/Contents/Info.plist")"
+built_source_state="$(/usr/libexec/PlistBuddy -c 'Print :LevisticaSourceState' "$APP_BUNDLE/Contents/Info.plist")"
+if [[ "$built_revision" != "$SOURCE_REVISION" || "$built_source_state" != "$SOURCE_STATE" ]]; then
+    echo 'Built source identity does not match the build request' >&2
+    exit 1
+fi
 /usr/bin/codesign -d --entitlements :- "$APP_BUNDLE" >"$LOG_DIR/entitlements-$VARIANT.plist" 2>"$LOG_DIR/signature-$VARIANT.log"
 get_task_allow="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$LOG_DIR/entitlements-$VARIANT.plist" 2>/dev/null || true)"
 if [[ "$PROFILE" == 1 ]]; then

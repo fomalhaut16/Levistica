@@ -22,6 +22,26 @@ class AttributionTests(unittest.TestCase):
             with self.subTest(identifier=identifier), self.assertRaises(ValueError):
                 measure.validate_measurement_signing({'CFBundleIdentifier': identifier}, entitlements)
 
+    def test_native_measurement_requires_the_embedded_clean_revision_to_match(self):
+        revision = 'a' * 40
+        info = {'LevisticaSourceRevision': revision, 'LevisticaSourceState': 'clean'}
+        self.assertEqual(measure.validate_native_build_source(info, revision, False),
+                         {'revision': revision, 'state': 'clean'})
+        for changed, checkout, dirty in [({}, 'b' * 40, False), ({}, revision, True),
+                ({'LevisticaSourceState': 'modified'}, revision, False),
+                ({'LevisticaSourceState': 'unknown'}, revision, False)]:
+            with self.subTest(changed=changed, checkout=checkout, dirty=dirty), self.assertRaises(ValueError):
+                measure.validate_native_build_source({**info, **changed}, checkout, dirty)
+
+    def test_missing_or_malformed_native_revision_is_not_inferred_from_the_checkout(self):
+        revision = 'a' * 40
+        for value in [None, '', 'unknown', 'a' * 39, 'A' * 40, 123, {}]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                measure.validate_native_build_source({'LevisticaSourceRevision': value,
+                                                     'LevisticaSourceState': 'clean'}, revision, False)
+        with self.assertRaises(ValueError):
+            measure.validate_native_build_source({}, revision, False)
+
     def document_set(self):
         return {'kind': 'documents', 'expected_tabs': 5, 'loads': 5, 'ready_monotonic': 10,
                 'url': 'http://127.0.0.1:1/document', 'document_hashes': {'1': 'synthetic'},
