@@ -3,6 +3,57 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testMeasurementDeadlineExit() throws {
+        guard let path = ProcessInfo.processInfo.environment["LEVISTICA_DEADLINE_WORKLOAD"],
+              !path.isEmpty, !path.hasPrefix("$(") else {
+            throw XCTSkip("Run script/test.sh --deadline-ui for the isolated lifetime trial.")
+        }
+        continueAfterFailure = false
+        executionTimeAllowance = 60
+        struct Workload: Decodable { let pid: Int32; let executable: String; let startedEpoch: Double }
+        let file = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        let directory = file.deletingLastPathComponent()
+        let checkout = directory.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        XCTAssertEqual(file.lastPathComponent, "deadline-workload.json")
+        XCTAssertEqual(directory.deletingLastPathComponent().lastPathComponent, "artifacts")
+        XCTAssertEqual(directory.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent, ".local")
+        let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: file))
+        let expected = checkout.appendingPathComponent(
+            ".local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica")
+        XCTAssertEqual(workload.executable, expected.path)
+        let running = try XCTUnwrap(NSRunningApplication(processIdentifier: workload.pid))
+        func identityMatches() -> Bool {
+            let candidates = NSRunningApplication.runningApplications(withBundleIdentifier: "dev.fomalhaut16.Levistica.measurement")
+            guard let launched = running.launchDate else { return false }
+            return !running.isTerminated && candidates.count == 1
+                && candidates.first?.processIdentifier == workload.pid
+                && running.executableURL?.path == expected.path
+                && abs(launched.timeIntervalSince1970 - workload.startedEpoch) < 1
+        }
+        XCTAssertTrue(identityMatches())
+        let app = XCUIApplication(url: expected.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent())
+        let connected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.state == .runningForeground || app.state == .runningBackground
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 5), .completed)
+        XCTAssertTrue(identityMatches())
+        let resultURL = directory.appendingPathComponent("deadline-result.json")
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 30), "Fixed isolated app did not exit")
+        XCTAssertTrue(running.isTerminated)
+        let finished = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            FileManager.default.fileExists(atPath: resultURL.path)
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 5), .completed)
+        struct Result: Decodable { let status: String; let pid: Int32; let elapsedSeconds: Double; let maximumSeconds: Int }
+        let result = try JSONDecoder().decode(Result.self, from: Data(contentsOf: resultURL))
+        XCTAssertEqual(result.status, "deadline_stop_requested")
+        XCTAssertEqual(result.pid, workload.pid)
+        XCTAssertEqual(result.maximumSeconds, 20)
+        XCTAssertGreaterThanOrEqual(result.elapsedSeconds, 20)
+        XCTAssertLessThan(result.elapsedSeconds, 30)
+    }
+
+    @MainActor
     func testProfileTwentyTabIdleRevisit() async throws {
         try await runTwentyTabIdleRevisit(variant: "Profile")
     }

@@ -3,9 +3,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 MODE="${1:---unit}"
-case "$MODE" in --unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui) ;; *) echo "usage: $0 [--unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui]" >&2; exit 2;; esac
+case "$MODE" in --unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui) ;; *) echo "usage: $0 [--unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui]" >&2; exit 2;; esac
 # Diagnostic selection is fixed; never run normal launch-based tests against Profile.
-if [[ ( "$MODE" == --profile-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui ) && -n "${TEST_ONLY:-}" ]]; then
+if [[ ( "$MODE" == --profile-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui ) && -n "${TEST_ONLY:-}" ]]; then
     echo "$MODE does not accept TEST_ONLY" >&2; exit 2
 fi
 case "${LEVISTICA_MALLOC_STACKS:-0}" in 0|1) ;; *) echo 'LEVISTICA_MALLOC_STACKS must be 0 or 1' >&2; exit 2;; esac
@@ -16,12 +16,16 @@ fi
 IDLE_VARIANT=Profile
 IDLE_TEST=testProfileTwentyTabIdleRevisit
 IDLE_BUILD_ENV=(CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=1 LEVISTICA_MEASUREMENT=0)
-if [[ "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui ]]; then
+if [[ "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui ]]; then
     IDLE_VARIANT=Measurement
     IDLE_TEST=testReleaseTwentyTabIdleRevisit
     IDLE_BUILD_ENV=(CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=0 LEVISTICA_MEASUREMENT=1)
 fi
-unset LEVISTICA_PROFILE_WORKLOAD LEVISTICA_PROFILE_IDLE_WORKLOAD
+unset LEVISTICA_PROFILE_WORKLOAD LEVISTICA_PROFILE_IDLE_WORKLOAD LEVISTICA_DEADLINE_WORKLOAD
+if [[ "$MODE" == --deadline-ui ]]; then
+    unset LEVISTICA_MEASUREMENT_STORE_ID LEVISTICA_MEASUREMENT_CLEANUP_REQUEST LEVISTICA_SESSION_TEST_ID
+    export LEVISTICA_MEASUREMENT_PERSIST_METADATA=0
+fi
 # Reuse the canonical entrypoint to stop this checkout's verified development apps first.
 LEVISTICA_MALLOC_STACKS=0 "$ROOT_DIR/script/build_and_run.sh" --build
 python3 "$ROOT_DIR/script/check-app-processes.py" --only Debug
@@ -30,11 +34,13 @@ RUN_DIR="$(mktemp -d "$ROOT_DIR/.local/artifacts/tests.XXXXXX")"
 FIXTURE_PID=""
 COLLECTOR_PID=""
 MEMORY_PID=""
+DEADLINE_PID=""
 cleanup() {
     local result=$?
+    if [[ -n "$DEADLINE_PID" ]]; then kill "$DEADLINE_PID" 2>/dev/null || true; wait "$DEADLINE_PID" 2>/dev/null || true; fi
     if [[ -n "$MEMORY_PID" ]]; then kill "$MEMORY_PID" 2>/dev/null || true; wait "$MEMORY_PID" 2>/dev/null || true; fi
     if [[ -n "$COLLECTOR_PID" ]]; then kill "$COLLECTOR_PID" 2>/dev/null || true; wait "$COLLECTOR_PID" 2>/dev/null || true; fi
-    if [[ "$MODE" == --profile-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui ]]; then
+    if [[ "$MODE" == --profile-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui ]]; then
         # Reuse the verified stop/build path even if XCTest never reaches its defer.
         if python3 "$ROOT_DIR/script/check-app-processes.py" --only "$IDLE_VARIANT"; then
             env "${IDLE_BUILD_ENV[@]}" \
@@ -52,7 +58,20 @@ BUILD_ARGS=(-project "$ROOT_DIR/Levistica.xcodeproj" -scheme Levistica
 if [[ "$MODE" == --unit ]]; then
     if [[ -z "${TEST_ONLY:-}" ]]; then BUILD_ARGS+=(-only-testing:LevisticaTests); fi
 fi
-if [[ "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui ]]; then
+if [[ "$MODE" == --deadline-ui ]]; then
+    if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" build-for-testing >"$RUN_DIR/build-for-testing.log" 2>&1; then
+        tail -n 70 "$RUN_DIR/build-for-testing.log" >&2; exit 1
+    fi
+    TEST_ACTION=test-without-building
+    env "${IDLE_BUILD_ENV[@]}" "$ROOT_DIR/script/build_and_run.sh" --verify
+    python3 "$ROOT_DIR/script/isolated-app-deadline.py" prepare "$RUN_DIR/deadline-workload.json"
+    python3 "$ROOT_DIR/script/isolated-app-deadline.py" monitor "$RUN_DIR/deadline-workload.json" \
+        "$RUN_DIR/deadline-result.json" --seconds 20 >"$RUN_DIR/deadline-monitor.log" 2>&1 &
+    DEADLINE_PID=$!
+    BUILD_ARGS+=("LEVISTICA_DEADLINE_WORKLOAD=$RUN_DIR/deadline-workload.json"
+        -only-testing:LevisticaUITests/BrowserFlowTests/testMeasurementDeadlineExit
+        -test-timeouts-enabled YES -maximum-test-execution-time-allowance 60)
+elif [[ "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui ]]; then
     if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" build-for-testing >"$RUN_DIR/build-for-testing.log" 2>&1; then
         tail -n 70 "$RUN_DIR/build-for-testing.log" >&2; exit 1
     fi
@@ -133,7 +152,7 @@ if [[ -n "${LEVISTICA_FAILURE_FIXTURE_URL:-}" ]]; then BUILD_ARGS+=("LEVISTICA_F
 if [[ -n "${TEST_ONLY:-}" ]]; then BUILD_ARGS+=("-only-testing:$TEST_ONLY"); fi
 BUILD_ARGS+=(-resultBundlePath "$RUN_DIR/Results.xcresult")
 EXPECTED_VARIANT=Debug
-[[ "$MODE" != --profile-ui && "$MODE" != --idle-ui && "$MODE" != --release-idle-ui && "$MODE" != --measure-idle-ui ]] || EXPECTED_VARIANT="$IDLE_VARIANT"
+[[ "$MODE" != --profile-ui && "$MODE" != --idle-ui && "$MODE" != --release-idle-ui && "$MODE" != --measure-idle-ui && "$MODE" != --deadline-ui ]] || EXPECTED_VARIANT="$IDLE_VARIANT"
 python3 "$ROOT_DIR/script/check-app-processes.py" --only "$EXPECTED_VARIANT"
 echo "Test artifacts: $RUN_DIR"
 if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" "$TEST_ACTION" >"$RUN_DIR/xcodebuild.log" 2>&1; then
@@ -166,7 +185,11 @@ if (any(type(value) is not int or value < 0 for value in counts)
     raise SystemExit('No successful test execution in the result bundle; check TEST_ONLY and test results.')
 print(f'Verified test result: {counts[1]} passed of {counts[0]} total, {counts[2]} failed.')
 PYRESULT
-if [[ "$MODE" == --profile-ui ]]; then
+if [[ "$MODE" == --deadline-ui ]]; then
+    wait "$DEADLINE_PID"
+    DEADLINE_PID=""
+    echo 'Isolated app deadline and XCTest completion verified; no browsing or memory comparison.'
+elif [[ "$MODE" == --profile-ui ]]; then
     if [[ -n "$COLLECTOR_PID" ]]; then
         wait "$COLLECTOR_PID"
         COLLECTOR_PID=""
