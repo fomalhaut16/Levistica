@@ -17,7 +17,8 @@ import tempfile
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SUFFIX = '/Levistica.app/Contents/MacOS/Levistica'
+# A user may rename the .app bundle; the executable suffix stays unchanged.
+SUFFIX = '/Contents/MacOS/Levistica'
 spec = importlib.util.spec_from_file_location('bundle_rehearsal', ROOT/'script/rehearse-update.py')
 bundle_rehearsal = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bundle_rehearsal)

@@ -43,6 +43,32 @@ class ArchiveStartupTests(unittest.TestCase):
     def evidence(self):
         return __import__('json').loads(next((self.root/'.local/artifacts').glob('archive-startup.*/result.json')).read_text())
 
+    def test_candidates_include_renamed_bundles_without_matching_bare_process_names(self):
+        rows = b"""101 /Applications/Levistica.app/Contents/MacOS/Levistica
+102 /Applications/Levistica Previous.app/Contents/MacOS/Levistica
+103 /private/tmp/Installed.app/Contents/MacOS/Levistica
+104 /usr/local/bin/Levistica
+105 /Applications/Other.app/Contents/MacOS/Other
+106 /Applications/Other.app/Contents/MacOS/Levistica Helper
+"""
+        with patch.object(s, 'run', return_value=rows):
+            self.assertEqual(s.candidates(), [
+                (101, '/Applications/Levistica.app/Contents/MacOS/Levistica'),
+                (102, '/Applications/Levistica Previous.app/Contents/MacOS/Levistica'),
+                (103, '/private/tmp/Installed.app/Contents/MacOS/Levistica')])
+
+    def test_renamed_app_blocks_launch_without_identity_lookup_or_signal(self):
+        def command(arguments):
+            if arguments == ['/bin/ps', '-axo', 'pid=,comm=']:
+                return b'777 /Applications/Levistica Previous.app/Contents/MacOS/Levistica\n'
+            return self.run_command(arguments)
+        with patch.object(s, 'run', side_effect=command), patch.object(s, 'identity') as identify, patch.object(s.os, 'kill') as kill:
+            result = s.verify(self.archive)
+        self.assertFalse(result['success'])
+        self.assertFalse(any(arguments[0] == '/usr/bin/open' for arguments in self.commands))
+        identify.assert_not_called()
+        kill.assert_not_called()
+
     def test_success_launches_only_requested_archive_and_stops_only_verified_process(self):
         with patch.object(s, 'run', side_effect=self.run_command), patch.object(s, 'candidates', side_effect=[[], [(123456,str(self.executable))], [(123456,str(self.executable))]]), patch.object(s, 'identity', return_value=self.process), patch.object(s, 'stop_owned') as stop, patch.object(s.time, 'sleep'):
             result = s.verify(self.archive)
