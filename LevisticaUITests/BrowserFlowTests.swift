@@ -1415,6 +1415,28 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testScriptLoginAfterEditingDoesNotAskToDiscardInput() throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        defer { app.terminate() }
+        app.activate()
+        submit(base + "/login-flow", in: app)
+        let field = app.webViews.textFields["Synthetic login input"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.click()
+        waitForInputIndicator(in: app)
+        field.typeText("synthetic login fixture")
+        waitForInputIndicator(in: app)
+        XCTAssertTrue(app.images.matching(identifier: "入力操作あり").firstMatch.waitForExistence(timeout: 5))
+        app.webViews.buttons["Complete synthetic login"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Synthetic login completed"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.sheets.buttons["ページに戻る"].exists)
+    }
+
+    @MainActor
     func testEditedTabRequiresDiscardAndCancelPreservesItsDraft() throws {
         continueAfterFailure = false
         executionTimeAllowance = 120
