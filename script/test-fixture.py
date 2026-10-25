@@ -47,6 +47,28 @@ def silent_audio_data():
     return 'data:audio/wav;base64,' + base64.b64encode(output.getvalue()).decode()
 
 
+def selection_matches_fixture(payload):
+    """Accept only the generated pair, never echo names, contents, or paths."""
+    try:
+        data = json.loads(payload)
+        if not isinstance(data, dict) or set(data) != {'kind', 'files'}:
+            return False
+        kind = data['kind']
+        if kind not in ('files', 'folder') or not isinstance(data['files'], list):
+            return False
+        prefix = 'SelectedFolder/' if kind == 'folder' else ''
+        expected = [
+            {'name': 'a.txt', 'path': prefix + 'a.txt' if prefix else '', 'text': 'synthetic A\n'},
+            {'name': 'b.txt', 'path': prefix + 'nested/b.txt' if prefix else '', 'text': 'synthetic B\n'}]
+        files = data['files']
+        if len(files) != 2 or any(not isinstance(item, dict) or set(item) != {'name', 'path', 'text'}
+                                  or any(not isinstance(v, str) for v in item.values()) for item in files):
+            return False
+        return sorted(files, key=lambda item: (item['path'], item['name'])) == expected
+    except (ValueError, TypeError, RecursionError):
+        return False
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     popup_posts = 0
     redirect_303_posts = 0
@@ -155,6 +177,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 <input type="file" aria-label="Attachment" id="attachment" onchange="document.getElementById('selected').textContent=this.files[0]?.name || 'No selection'">
                 <p id="selected">No selection</p><p id="upload-result"></p>
                 <button onclick="fetch('/upload-fixture',{method:'POST',body:document.getElementById('attachment').files[0]}).then(r=>r.text()).then(t=>document.getElementById('upload-result').textContent=t)">Upload synthetic fixture</button>''',
+            "/upload-selection": '''<title>Selection fixture</title><h1>Selection fixture</h1>
+                <input type="file" multiple aria-label="Multiple attachments" id="files" onchange="describe('files')">
+                <p id="files-summary">No file selection</p>
+                <button onclick="send('files')">Upload selected files</button>
+                <input type="file" multiple webkitdirectory aria-label="Folder attachment" id="folder" onchange="describe('folder')">
+                <p id="folder-summary">No folder selection</p>
+                <button onclick="send('folder')">Upload selected folder</button>
+                <p id="selection-result"></p>
+                <script>
+                function describe(kind) {
+                  document.getElementById(kind+'-summary').textContent =
+                    [...document.getElementById(kind).files].map(f=>f.webkitRelativePath||f.name).sort().join(' | ')
+                    || (kind==='files'?'No file selection':'No folder selection');
+                }
+                async function send(kind) {
+                  const files=await Promise.all([...document.getElementById(kind).files].map(async f=>
+                    ({name:f.name,path:f.webkitRelativePath,text:await f.text()})));
+                  const response=await fetch('/upload-selection',{method:'POST',headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({kind,files})});
+                  document.getElementById('selection-result').textContent=await response.text();
+                }
+                </script>''',
             "/related": '''<title>Related page opener</title><h1>Related page opener</h1>
                 <input aria-label="Draft"><p id="result">Waiting for related page</p>
                 <a href="/two">Ordinary link</a>
@@ -220,6 +264,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if self.path == '/upload-selection':
+            expected_origin = f'http://127.0.0.1:{self.server.server_port}'
+            if self.headers.get('Origin') != expected_origin:
+                self.send_error(403)
+                return
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+            except ValueError:
+                self.send_error(400)
+                return
+            if not 0 < length <= 8192:
+                self.send_error(413)
+                return
+            accepted = selection_matches_fixture(self.rfile.read(length))
+            body = b'Selected synthetic files received' if accepted else b'Unexpected synthetic selection'
+            self.send_response(200 if accepted else 400)
+            self.send_header('Content-Type', 'text/plain')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         received = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         if self.path in ["/redirect-303", "/redirect-307"]:
             if self.path == "/redirect-303":
@@ -281,19 +346,24 @@ class DisconnectHandler(socketserver.BaseRequestHandler):
         self.request.shutdown(socket.SHUT_RDWR)
 
 
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-failed = socketserver.ThreadingTCPServer(("127.0.0.1", 0), DisconnectHandler)
-threading.Thread(target=failed.serve_forever, daemon=True).start()
-tls_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-for fixture_server in (server, tls_server):
-    fixture_server.fixture_failure_url = f"http://127.0.0.1:{failed.server_address[1]}"
-context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-context.load_cert_chain(sys.argv[2], sys.argv[3])
-tls_server.socket = context.wrap_socket(tls_server.socket, server_side=True)
-threading.Thread(target=tls_server.serve_forever, daemon=True).start()
-pathlib.Path(sys.argv[1]).write_text(json.dumps({
-    "url": f"http://127.0.0.1:{server.server_port}",
-    "tlsUrl": f"https://127.0.0.1:{tls_server.server_port}",
-    "failureUrl": f"http://127.0.0.1:{failed.server_address[1]}",
-}))
-server.serve_forever()
+def main():
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    failed = socketserver.ThreadingTCPServer(("127.0.0.1", 0), DisconnectHandler)
+    threading.Thread(target=failed.serve_forever, daemon=True).start()
+    tls_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    for fixture_server in (server, tls_server):
+        fixture_server.fixture_failure_url = f"http://127.0.0.1:{failed.server_address[1]}"
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(sys.argv[2], sys.argv[3])
+    tls_server.socket = context.wrap_socket(tls_server.socket, server_side=True)
+    threading.Thread(target=tls_server.serve_forever, daemon=True).start()
+    pathlib.Path(sys.argv[1]).write_text(json.dumps({
+        "url": f"http://127.0.0.1:{server.server_port}",
+        "tlsUrl": f"https://127.0.0.1:{tls_server.server_port}",
+        "failureUrl": f"http://127.0.0.1:{failed.server_address[1]}",
+    }))
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
