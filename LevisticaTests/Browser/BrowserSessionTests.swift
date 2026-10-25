@@ -8,6 +8,63 @@ import WebKit
 @Suite(.serialized)
 @MainActor
 struct BrowserSessionTests {
+    @Test(arguments: [false, true])
+    func quitDoesNotMarkTheSessionCleanWithNewHistoryPending(queuedDuringConfirmation: Bool) async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try SessionStore(fileURL: folder.appendingPathComponent("session.sqlite3"))
+        let session = BrowserSession(dataStore: .nonPersistent(), store: store)
+        let before = try #require(try store.load())
+        try #require(before.wasRunning)
+        if queuedDuringConfirmation == false { session.history.load() }
+        var confirmations = 0
+        let accepted = BrowserAppDelegate.prepareTermination(of: session) {
+            confirmations += 1
+            // Represents work arriving while NSAlert runs its nested event loop.
+            if queuedDuringConfirmation { session.history.load() }
+            return true
+        }
+        #expect(accepted == false)
+        #expect(confirmations == (queuedDuringConfirmation ? 1 : 0))
+        #expect(try store.load() == before)
+        #expect(FileManager.default.fileExists(atPath: store.backupURL.path) == false)
+        await session.history.flush()
+        try #require(session.history.isBusy == false)
+        #expect(BrowserAppDelegate.prepareTermination(of: session) { true })
+        #expect(try store.load()?.wasRunning == false)
+    }
+
+    @Test func cancellingQuitKeepsTheRunningSessionAndItsPendingWork() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try SessionStore(fileURL: folder.appendingPathComponent("session.sqlite3"))
+        let session = BrowserSession(dataStore: .nonPersistent(), store: store)
+        let before = try #require(try store.load())
+        var confirmations = 0
+        #expect(BrowserAppDelegate.prepareTermination(of: session) {
+            confirmations += 1
+            return false
+        } == false)
+        #expect(confirmations == 1)
+        #expect(try store.load() == before)
+        #expect(FileManager.default.fileExists(atPath: store.backupURL.path) == false)
+    }
+
+    @Test func cleanQuitConfirmsOnceAndWritesTheSessionBackup() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try SessionStore(fileURL: folder.appendingPathComponent("session.sqlite3"))
+        let session = BrowserSession(dataStore: .nonPersistent(), store: store)
+        var confirmations = 0
+        #expect(BrowserAppDelegate.prepareTermination(of: session) {
+            confirmations += 1
+            return true
+        })
+        #expect(confirmations == 1)
+        #expect(try store.load()?.wasRunning == false)
+        #expect(FileManager.default.fileExists(atPath: store.backupURL.path))
+    }
+
     @Test(arguments: ["", "2", "true"])
     func measurementMetadataRejectsInvalidModes(_ mode: String) {
         #expect(throws: MeasurementWebsiteStorage.Failure.self) {

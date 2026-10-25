@@ -390,7 +390,7 @@ final class BrowserSession {
     }
 
     func prepareToQuit() -> Bool {
-        if downloads.hasActive || isDeletingSiteData { return false }
+        if downloads.hasActive || isDeletingSiteData || history.isBusy { return false }
         pendingSave?.cancel()
         pendingSave = nil
         guard let store, !persistenceDisabled, !discardUnsavedChangesOnQuit else {
