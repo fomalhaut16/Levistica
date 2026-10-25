@@ -175,6 +175,22 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func load(_ request: URLRequest) {
+        // WKNavigationType.other also covers a page's own JavaScript navigation.
+        // Confirm browser-owned loads here, before they become indistinguishable
+        // from a successful login's location change in the navigation delegate.
+        guard committedRequest != nil, inputGuard.hasEditedInput else {
+            beginLoad(request)
+            return
+        }
+        let generation = documentGeneration
+        dialogs.confirmDeparture(window: webView.window) { [weak self] allowed in
+            guard let self, self.documentGeneration == generation else { return }
+            guard allowed else { self.restoreCommittedLocation(); return }
+            self.beginLoad(request)
+        }
+    }
+
+    private func beginLoad(_ request: URLRequest) {
         invalidateFindResult()
         failure = nil
         // Keep the committed page as the session/URL source while an edited
@@ -218,8 +234,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         if localPDF != nil { loadLocalPDF(); return }
         // Retrying a POST could send a purchase or message twice. Never do it here.
         guard canRetry, let lastRequest else { return }
-        failure = nil
-        activeNavigation = webView.load(lastRequest)
+        load(lastRequest)
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
@@ -296,7 +311,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     static func requiresDepartureConfirmation(type: WKNavigationType, current: URL?, destination: URL?) -> Bool {
         // Submitting a form is the explicit send action, not an abandoned draft.
-        if type == .formSubmitted || type == .formResubmitted { return false }
+        if type == .formSubmitted || type == .formResubmitted || type == .other { return false }
         if type == .linkActivated,
            let current, let destination, current != destination,
            var from = URLComponents(url: current, resolvingAgainstBaseURL: false),

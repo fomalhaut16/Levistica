@@ -397,3 +397,69 @@ extension WebKitIntegrationTests {
         }
     }
 }
+
+extension WebKitIntegrationTests {
+    @MainActor
+    struct PageLoginNavigationTests {
+        private func preparedRuntime() async throws -> PageRuntime {
+            let base = try #require(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+            let address = try #require(URL(string: base + "/login-flow"))
+            let runtime = PageRuntime(dataStore: .nonPersistent())
+            runtime.load(address)
+            let deadline = ContinuousClock.now + .seconds(10)
+            while runtime.webView.title != "Login flow fixture", ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try #require(runtime.webView.title == "Login flow fixture")
+            // Set up edited-input state through the app-owned isolated world.
+            // This models the native guard boundary; it is not a trusted-input test.
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                runtime.webView.evaluateJavaScript(
+                    "window.webkit.messageHandlers.levisticaInputActivity.postMessage(true); true",
+                    in: nil, in: .world(name: "LevisticaInputActivity")) { result in
+                        continuation.resume(with: result.map { _ in () })
+                    }
+            }
+            let inputDeadline = ContinuousClock.now + .seconds(3)
+            while !runtime.inputGuard.hasEditedInput, ContinuousClock.now < inputDeadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try #require(runtime.inputGuard.hasEditedInput)
+            return runtime
+        }
+
+        @Test func successfulScriptLoginCanNavigateAfterInput() async throws {
+            let runtime = try await preparedRuntime()
+            defer { runtime.stop() }
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                runtime.webView.evaluateJavaScript("document.getElementById('login').requestSubmit(); true") { _, error in
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume() }
+                }
+            }
+            let deadline = ContinuousClock.now + .seconds(5)
+            while runtime.webView.title != "Login flow completed", ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(runtime.webView.title == "Login flow completed")
+            #expect(runtime.url?.path == "/login-flow-done")
+            #expect(runtime.inputGuard.hasEditedInput == false)
+        }
+
+        @Test func browserLoadIsCancelledSafelyWhenConfirmationCannotBeShown() async throws {
+            let runtime = try await preparedRuntime()
+            defer { runtime.stop() }
+            let original = runtime.url
+            let destination = try #require(original?.deletingLastPathComponent().appendingPathComponent("two"))
+            runtime.load(destination)
+            let deadline = ContinuousClock.now + .seconds(3)
+            while runtime.dialogs.notice == nil, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(runtime.url == original)
+            #expect(runtime.webView.title == "Login flow fixture")
+            #expect(runtime.dialogs.notice != nil)
+            #expect(runtime.inputGuard.hasEditedInput)
+        }
+    }
+}

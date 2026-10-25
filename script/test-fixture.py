@@ -206,6 +206,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(page.encode())
             return
         pages = {
+            '/login-flow': '''<title>Login flow fixture</title>
+                <form id="login"><input aria-label="Synthetic login input" autocomplete="off">
+                <button>Complete synthetic login</button></form>
+                <script>document.getElementById('login').addEventListener('submit',async event=>{
+                    event.preventDefault();
+                    const response=await fetch('/two');
+                    if(response.ok) location.assign('/login-flow-done');
+                });</script>''',
+            '/login-flow-done': '<title>Login flow completed</title><h1>Synthetic login completed</h1>',
             '/ime-check': '''<title>IME input check</title>
                 <style>body{font:14px system-ui;margin:16px}h1{font-size:22px}.row{display:grid;grid-template-columns:100px 1fr 150px;gap:12px;align-items:center;margin:12px 0}input,textarea,[contenteditable]{font:18px system-ui;border:1px solid #888;padding:8px;min-height:28px}pre{font:11px monospace;max-height:180px;overflow:auto;background:#eee;padding:8px;white-space:pre-wrap}</style>
                 <h1>日本語IMEの確定を確認</h1>
