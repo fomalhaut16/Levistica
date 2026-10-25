@@ -427,6 +427,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/tab-state": '<title>State tab</title><h1>State tab</h1><input aria-label="Draft"><p id="loads"></p><script>const n=+(sessionStorage.getItem("loads")||0)+1;sessionStorage.setItem("loads",n);document.getElementById("loads").textContent="Document loads: "+n;</script>',
             "/post-form": '<h1>Post fixture</h1><form action="/submitted" method="post"><input name="draft" value="synthetic"><button>Submit fixture</button></form>',
             "/submitted": '<h1>Unexpected GET replay</h1>',
+            "/web-menu": '''<title>Web menu fixture</title><h1>Nested web menu</h1>
+                <style>body{padding:24px}button{padding:12px;margin:6px}[hidden]{display:none}
+                [role=menu]{padding:12px;border:1px solid #555;width:240px}</style>
+                <button onclick="result.textContent='Wrong settings'">Settings</button>
+                <button id="settings" aria-haspopup="menu" aria-expanded="false"
+                  onclick="menu.hidden=!menu.hidden;this.setAttribute('aria-expanded',String(!menu.hidden))">Settings</button>
+                <div id="menu" role="menu" hidden>
+                  <button role="menuitem" aria-haspopup="menu" aria-expanded="false"
+                    onclick="levels.hidden=false;this.setAttribute('aria-expanded','true')">Quality Auto (480p)</button>
+                </div>
+                <div id="levels" role="menu" hidden>
+                  <button role="menuitemradio" aria-checked="false"
+                    onclick="this.setAttribute('aria-checked','true');result.textContent='Selected 720p60'">720p60</button>
+                </div><p id="result" role="status">No selection</p>''',
             "/one": '<title>Fixture one</title><h1>Levistica fixture one</h1><a href="/two">Second page</a><a href="levistica-test-native:blocked">Blocked native link</a>',
             "/two": '<title>Fixture two</title><h1>Levistica fixture two</h1><a href="/one">First page</a><input aria-label="Draft">',
             "/fullscreen": '''<style>
