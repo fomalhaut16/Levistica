@@ -7,7 +7,7 @@ struct PrivacySettingsView: View {
     @Binding var section: BrowserSession.SettingsSection
     var body: some View {
         TabView(selection: $section) {
-            NewTabPreferencesView(preferences: preferences)
+            GeneralPreferencesView(preferences: preferences)
                 .tabItem { Label("一般", systemImage: "gearshape") }.tag(BrowserSession.SettingsSection.general)
             HistoryPreferencesView(history: history).tabItem { Label("履歴", systemImage: "clock") }.tag(BrowserSession.SettingsSection.history)
             SiteDataSettingsView(library: siteData).tabItem { Label("サイトデータ", systemImage: "externaldrive") }.tag(BrowserSession.SettingsSection.siteData)
@@ -15,30 +15,45 @@ struct PrivacySettingsView: View {
     }
 }
 
-private struct NewTabPreferencesView: View {
+private struct GeneralPreferencesView: View {
     let preferences: BrowserPreferences
     @State private var draft = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("新しいタブで開くページ").font(.title2)
-            TextField("URL（空欄で空白ページ）", text: $draft)
-                .textFieldStyle(.roundedBorder).accessibilityIdentifier("newTabPageField")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("新しいタブで開くページ").font(.title2)
+                TextField("URL（空欄で空白ページ）", text: $draft)
+                    .textFieldStyle(.roundedBorder).accessibilityIdentifier("newTabPageField")
+                    .disabled(!preferences.canSave)
+                HStack {
+                    Button("Google") { draft = "https://www.google.com/" }.accessibilityIdentifier("useGoogleNewTabButton")
+                    Button("空白ページ") { draft = "" }.accessibilityIdentifier("useBlankNewTabButton")
+                    Spacer()
+                    Button("保存") { if preferences.saveNewTabPage(draft) { draft = preferences.newTabURL?.absoluteString ?? "" } }
+                        .accessibilityIdentifier("saveNewTabPageButton")
+                }.disabled(!preferences.canSave)
+                Text("＋やCmd-Tでタブを追加するときに開きます。空欄ではページを読み込みません。前回のタブの復元には影響しません。")
+                    .font(.callout).foregroundStyle(.secondary)
+                Divider()
+                Picker("URL欄の検索先", selection: Binding(
+                    get: { preferences.searchEngine },
+                    set: { _ = preferences.saveSearchEngine($0) }
+                )) {
+                    ForEach(SearchEngine.allCases, id: \.self) { engine in
+                        Text(engine.displayName).tag(engine)
+                    }
+                }
+                .accessibilityIdentifier("addressSearchEnginePicker")
                 .disabled(!preferences.canSave)
-            HStack {
-                Button("Google") { draft = "https://www.google.com/" }.accessibilityIdentifier("useGoogleNewTabButton")
-                Button("空白ページ") { draft = "" }.accessibilityIdentifier("useBlankNewTabButton")
-                Spacer()
-                Button("保存") { if preferences.saveNewTabPage(draft) { draft = preferences.newTabURL?.absoluteString ?? "" } }
-                    .accessibilityIdentifier("saveNewTabPageButton")
-            }.disabled(!preferences.canSave)
-            Text("＋やCmd-Tでタブを追加するときに開きます。空欄ではページを読み込みません。前回のタブの復元には影響しません。")
-                .font(.callout).foregroundStyle(.secondary)
-            if let notice = preferences.notice { Text(notice).accessibilityIdentifier("newTabPageNotice") }
-            if !preferences.isPersistent { Text("この起動だけの設定です。終了すると消えます。").font(.caption) }
-            Spacer(minLength: 0)
+                Text("URL欄に検索語を入力してReturnを押すと、選んだ検索先を開きます。入力中の候補取得は行いません。新規タブのページや開いているタブは変わりません。")
+                    .font(.callout).foregroundStyle(.secondary)
+                if let notice = preferences.notice { Text(notice).accessibilityIdentifier("newTabPageNotice") }
+                if !preferences.isPersistent { Text("この起動だけの設定です。終了すると消えます。").font(.caption) }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { draft = preferences.newTabURL?.absoluteString ?? "" }
     }

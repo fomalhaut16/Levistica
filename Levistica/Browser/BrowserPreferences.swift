@@ -3,9 +3,14 @@ import Observation
 
 @MainActor @Observable
 final class BrowserPreferences {
-    private struct Saved: Codable { let version: Int; let newTabURL: String? }
+    private struct Saved: Codable {
+        let version: Int
+        let newTabURL: String?
+        let searchEngine: SearchEngine?
+    }
     private let fileURL: URL?
     private(set) var newTabURL: URL?
+    private(set) var searchEngine: SearchEngine = .duckDuckGo
     private(set) var canSave = true
     private(set) var notice: String?
     var isPersistent: Bool { fileURL != nil }
@@ -28,9 +33,10 @@ final class BrowserPreferences {
                 guard url?.absoluteString == value else { throw CocoaError(.fileReadCorruptFile) }
                 newTabURL = url
             }
+            searchEngine = saved.searchEngine ?? .duckDuckGo
         } catch {
             canSave = false
-            notice = "新しいタブの設定を読み込めませんでした。元の保存ファイルを残しています。"
+            notice = "一般設定を読み込めませんでした。元の保存ファイルを残しています。"
         }
     }
 
@@ -60,6 +66,18 @@ final class BrowserPreferences {
             notice = "HTTPまたはHTTPSのURLを入力してください。空欄にすると空白ページになります。"
             return false
         }
+        return save(page: page, engine: searchEngine,
+                    message: "設定を保存しました。次に追加するタブから適用します。")
+    }
+
+    @discardableResult
+    func saveSearchEngine(_ engine: SearchEngine) -> Bool {
+        guard canSave else { return false }
+        return save(page: newTabURL, engine: engine,
+                    message: "検索先を保存しました。次にURL欄で検索するときから適用します。")
+    }
+
+    private func save(page: URL?, engine: SearchEngine, message: String) -> Bool {
         do {
             if let fileURL {
                 let manager = FileManager.default
@@ -69,7 +87,7 @@ final class BrowserPreferences {
                    attributes[.type] as? FileAttributeType != .typeRegular { throw CocoaError(.fileWriteUnknown) }
                 let temporary = fileURL.deletingLastPathComponent().appendingPathComponent(".browser-preferences-" + UUID().uuidString)
                 defer { try? manager.removeItem(at: temporary) }
-                let data = try JSONEncoder().encode(Saved(version: 1, newTabURL: page?.absoluteString))
+                let data = try JSONEncoder().encode(Saved(version: 1, newTabURL: page?.absoluteString, searchEngine: engine))
                 guard manager.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
                     throw CocoaError(.fileWriteUnknown)
                 }
@@ -78,7 +96,8 @@ final class BrowserPreferences {
                 } else { try manager.moveItem(at: temporary, to: fileURL) }
             }
             newTabURL = page
-            notice = "設定を保存しました。次に追加するタブから適用します。"
+            searchEngine = engine
+            notice = message
             return true
         } catch {
             notice = "設定を保存できませんでした。これまでの設定を使います。"

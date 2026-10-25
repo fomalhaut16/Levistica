@@ -854,7 +854,7 @@ final class BrowserSession {
 
     func navigate(_ input: String) -> Bool {
         do {
-            let url = try AddressResolver.resolve(input)
+            let url = try AddressResolver.resolve(input, searchEngine: preferences.searchEngine)
             let tab = activeTab
             tab.inputError = nil
             tab.isSleeping = false

@@ -14,7 +14,7 @@ CONFIGURATION=Release ./script/build_and_run.sh
 
 ## 操作
 
-アドレス欄へURLや検索語を入力し、Returnを押してください。検索にはDuckDuckGoを使います。
+アドレス欄へURLや検索語を入力し、Returnを押してください。検索先は設定の「一般」でDuckDuckGo／Googleから選べます。
 
 | 操作 | ショートカット |
 |---|---|

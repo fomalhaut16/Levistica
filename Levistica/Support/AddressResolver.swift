@@ -16,8 +16,27 @@ enum AddressError: Error, Equatable, LocalizedError {
     }
 }
 
+enum SearchEngine: String, Codable, CaseIterable, Hashable, Sendable {
+    case duckDuckGo, google
+
+    var displayName: String { self == .google ? "Google" : "DuckDuckGo" }
+
+    func searchURL(for query: String) throws -> URL {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = self == .google ? "www.google.com" : "duckduckgo.com"
+        components.path = self == .google ? "/search" : "/"
+        components.queryItems = [URLQueryItem(name: "q", value: query)]
+        // Search servers decode query strings as form data. A literal '+' must
+        // be escaped even though URLComponents permits it in a URL query.
+        components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        guard let url = components.url else { throw AddressError.invalid }
+        return url
+    }
+}
+
 enum AddressResolver {
-    static func resolve(_ input: String) throws -> URL {
+    static func resolve(_ input: String, searchEngine: SearchEngine = .duckDuckGo) throws -> URL {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw AddressError.empty }
         guard !text.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
@@ -42,13 +61,7 @@ enum AddressResolver {
             return try webURL("https://" + text)
         }
 
-        var search = URLComponents()
-        search.scheme = "https"
-        search.host = "duckduckgo.com"
-        search.path = "/"
-        search.queryItems = [URLQueryItem(name: "q", value: text)]
-        guard let url = search.url else { throw AddressError.invalid }
-        return url
+        return try searchEngine.searchURL(for: text)
     }
 
     private static func webURL(_ text: String) throws -> URL {
