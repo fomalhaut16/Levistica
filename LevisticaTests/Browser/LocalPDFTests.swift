@@ -3,6 +3,7 @@ import Testing
 import WebKit
 @testable import Levistica
 
+extension WebKitIntegrationTests {
 @MainActor
 struct LocalPDFTests {
     private func fixture(encrypted: Bool = false) throws -> URL {
@@ -131,4 +132,5 @@ struct LocalPDFTests {
         #expect(view == nil)
         session.closeTab(session.selectedID)
     }
+}
 }
