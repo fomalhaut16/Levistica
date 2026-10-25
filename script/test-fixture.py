@@ -73,9 +73,11 @@ def ime_metadata(payload):
     """Accept event categories and bounded counts only, never typed text."""
     try:
         value = json.loads(payload)
-        controls = {'ime-input', 'ime-textarea', 'ime-editor'}
+        basic = {'ime-input', 'ime-textarea', 'ime-editor'}
+        rich = {'ime-plain-editor', 'ime-legacy-model', 'ime-engine-model'}
+        controls = basic | rich
         types = {'compositionstart', 'compositionupdate', 'compositionend', 'beforeinput', 'input', 'keydown', 'keyup'}
-        if not isinstance(value, dict) or set(value) != {'events', 'fields'}:
+        if not isinstance(value, dict) or set(value) not in ({'events', 'fields'}, {'events', 'fields', 'classification'}):
             return None
         if not isinstance(value['events'], list) or len(value['events']) > 240:
             return None
@@ -109,6 +111,16 @@ def ime_metadata(payload):
             seen.add(name)
             if any(type(row[k]) is not int or not 0 <= row[k] <= 1000000 for k in ('sends', 'lastLength', 'currentLength')):
                 return None
+        if seen not in (basic, rich) or any(row['control'] not in seen for row in value['events']):
+            return None
+        if seen == rich:
+            flags = value.get('classification')
+            if not isinstance(flags, dict) or set(flags) != {'legacySafari', 'webkit'}:
+                return None
+            if any(type(flag) is not bool for flag in flags.values()):
+                return None
+        elif 'classification' in value:
+            return None
         return value
     except (ValueError, TypeError, RecursionError):
         return None
@@ -206,6 +218,62 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(page.encode())
             return
         pages = {
+            '/ime-rich-check': '''<title>Rich editor IME check</title>
+                <style>body{font:15px system-ui;max-width:780px;margin:24px auto;padding:0 18px}h1{font-size:24px}.editor{font:22px system-ui;border:1px solid #888;padding:12px;min-height:32px;margin:8px 0}section{margin:24px 0}output{font-weight:600}pre{max-height:160px;overflow:auto;background:#eee;padding:10px;font:11px monospace;white-space:pre-wrap}</style>
+                <h1>文字の確定を3つの編集方法で比較</h1>
+                <p>各欄へ日本語IMEで「こんにちは」を入力し、Enterを1回だけ押して確定してください。貼り付けや追加のEnterは不要です。最後に「結果を記録」を押してください。</p>
+                <p>このページに送信機能はありません。ブラウザの標準編集と、文字を独自に管理する編集を比べます。Discordの実装そのものを再現したページではありません。</p>
+                <p id="classification"></p>
+                <section><label for="ime-plain-editor">1. ブラウザの標準編集</label><div class="editor" id="ime-plain-editor" contenteditable="true" role="textbox" aria-label="Plain IME editor" spellcheck="false"></div><output id="ime-plain-editor-result">入力文字数0</output></section>
+                <section><label for="ime-legacy-model">2. 旧方式のブラウザ判定を使う編集</label><div class="editor" id="ime-legacy-model" contenteditable="true" role="textbox" aria-label="Legacy model IME editor" spellcheck="false"></div><output id="ime-legacy-model-result">入力文字数0</output></section>
+                <section><label for="ime-engine-model">3. エンジンを判定する編集</label><div class="editor" id="ime-engine-model" contenteditable="true" role="textbox" aria-label="Engine model IME editor" spellcheck="false"></div><output id="ime-engine-model-result">入力文字数0</output></section>
+                <button id="record">結果を記録</button> <span id="record-status"></span>
+                <p>記録はイベント分類・文字数・ブラウザ判定の真偽だけです。入力本文は含めず、このMacの確認用サーバーへ保存します。</p><pre id="events">[]</pre>
+                <script>(()=>{
+                    const classification={legacySafari:/Version\\/[\\d.]+.*Safari/.test(navigator.userAgent),webkit:/AppleWebKit(?!.*Chrome)/i.test(navigator.userAgent)};
+                    const firefox=/Firefox/i.test(navigator.userAgent);
+                    document.getElementById('classification').textContent='旧方式のSafari判定: '+classification.legacySafari+' / WebKit判定: '+classification.webkit;
+                    const controls=[...document.querySelectorAll('.editor')], log=[];
+                    for(const editor of controls){
+                        const modelled=editor.id!=='ime-plain-editor';
+                        const nativeCommit=editor.id==='ime-legacy-model'?classification.legacySafari:classification.webkit;
+                        let model='';
+                        // Reduced comparison of two commit paths, not a bundled editor library.
+                        // Historical reference: Slate 788a8ce, environment.ts and editable.tsx.
+                        if(modelled){
+                            editor.addEventListener('compositionstart',()=>{model=editor.textContent;});
+                            editor.addEventListener('beforeinput',event=>{
+                                if(event.inputType==='insertFromComposition'){
+                                    event.preventDefault(); model+=event.data||'';
+                                }
+                            });
+                            editor.addEventListener('compositionend',event=>{
+                                if(!nativeCommit&&!firefox) model+=event.data||'';
+                                editor.textContent=model;
+                                const selection=getSelection(),range=document.createRange();
+                                range.selectNodeContents(editor);range.collapse(false);
+                                selection.removeAllRanges();selection.addRange(range);
+                            });
+                        }
+                        const update=()=>{document.getElementById(editor.id+'-result').textContent='入力文字数'+editor.textContent.length;};
+                        for(const type of ['compositionstart','compositionupdate','compositionend','beforeinput','input','keydown','keyup']){
+                            editor.addEventListener(type,event=>{
+                                const row={control:editor.id,type,trusted:event.isTrusted};
+                                if(event instanceof KeyboardEvent){row.enter=event.key==='Enter';row.isComposing=event.isComposing;row.processKey=event.keyCode===229;}
+                                if(event instanceof InputEvent){row.isComposing=event.isComposing;row.inputType=['insertCompositionText','insertText','deleteCompositionText','insertFromComposition'].includes(event.inputType)?event.inputType:'other';}
+                                log.push(row);if(log.length>240)log.shift();
+                                update();document.getElementById('events').textContent=JSON.stringify(log,null,2);
+                            });
+                        }
+                        editor.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.isComposing)event.preventDefault();});
+                    }
+                    document.getElementById('record').onclick=()=>{
+                        const fields=controls.map(editor=>({control:editor.id,sends:0,lastLength:0,currentLength:editor.textContent.length}));
+                        fetch('/ime-result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({events:log,fields,classification})})
+                            .then(response=>document.getElementById('record-status').textContent=response.ok?'記録しました':'記録できませんでした')
+                            .catch(()=>document.getElementById('record-status').textContent='記録できませんでした');
+                    };
+                })();</script>''',
             '/login-flow': '''<title>Login flow fixture</title>
                 <form id="login"><input aria-label="Synthetic login input" autocomplete="off">
                 <button>Complete synthetic login</button></form>

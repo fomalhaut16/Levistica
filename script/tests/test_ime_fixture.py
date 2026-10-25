@@ -19,6 +19,32 @@ def metadata():
 
 
 class IMEMetadataTests(unittest.TestCase):
+    def test_rich_editor_accepts_only_its_complete_profile_and_boolean_flags(self):
+        names = ['ime-plain-editor', 'ime-legacy-model', 'ime-engine-model']
+        data = metadata()
+        data['events'][0]['control'] = names[0]
+        for row, name in zip(data['fields'], names):
+            row['control'] = name
+        data['classification'] = {'legacySafari': False, 'webkit': True}
+        self.assertEqual(fixture.ime_metadata(json.dumps(data)), data)
+        for kind in ('missing', 'text', 'not-bool', 'mixed', 'wrong-event'):
+            invalid = copy.deepcopy(data)
+            if kind == 'missing': del invalid['classification']
+            elif kind == 'text': invalid['classification']['userAgent'] = 'PRIVATE-TEXT'
+            elif kind == 'not-bool': invalid['classification']['webkit'] = 'true'
+            elif kind == 'mixed': invalid['fields'][0]['control'] = 'ime-input'
+            else: invalid['events'][0]['control'] = 'ime-input'
+            with self.subTest(kind=kind):
+                self.assertIsNone(fixture.ime_metadata(json.dumps(invalid)))
+
+    def test_basic_profile_cannot_include_classifier_or_other_profile_events(self):
+        data = metadata()
+        data['classification'] = {'legacySafari': False, 'webkit': True}
+        self.assertIsNone(fixture.ime_metadata(json.dumps(data)))
+        del data['classification']
+        data['events'][0]['control'] = 'ime-legacy-model'
+        self.assertIsNone(fixture.ime_metadata(json.dumps(data)))
+
     def test_accepts_categories_and_counts_without_input_text(self):
         value = metadata()
         self.assertEqual(fixture.ime_metadata(json.dumps(value)), value)

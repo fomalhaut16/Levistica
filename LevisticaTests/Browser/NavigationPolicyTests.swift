@@ -57,3 +57,24 @@ struct NavigationPolicyTests {
         #expect(NavigationPolicy.allows(nil, isMainFrame: false) == false)
     }
 }
+
+struct WebKitBrowserIdentityTests {
+    @Test(arguments: ["26.6", "27.0", "18.6.1"])
+    func compatibilityVersionComesFromValidatedMetadata(version: String) {
+        let name = WebKitBrowserIdentity.applicationName(safariVersion: version, appVersion: "0.1.0")
+        #expect(name == "Version/\(version) Safari/605.1.15 Levistica/0.1.0")
+        #expect(name.contains("Chrome") == false)
+    }
+
+    @Test(arguments: [nil, "", "26.6\n", "26.6\r\nInjected: value", "２６.６", "26..6", "26.6 beta", "1.2.3.4.5",
+                      String(repeating: "1", count: 33)] as [String?])
+    func missingOrMalformedMetadataDoesNotInventCompatibility(version: String?) {
+        #expect(WebKitBrowserIdentity.applicationName(safariVersion: version, appVersion: "0.1.0") == "Levistica/0.1.0")
+    }
+
+    @Test func invalidApplicationMetadataCannotAddHeaderTokens() {
+        #expect(WebKitBrowserIdentity.applicationName(safariVersion: nil, appVersion: nil) == "Levistica")
+        #expect(WebKitBrowserIdentity.applicationName(safariVersion: "26.6", appVersion: "1 Fake/99")
+                == "Version/26.6 Safari/605.1.15 Levistica")
+    }
+}

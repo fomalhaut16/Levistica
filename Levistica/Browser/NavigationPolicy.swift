@@ -1,4 +1,29 @@
 import Foundation
+import AppKit
+
+enum WebKitBrowserIdentity {
+    // Use installed compatibility metadata, not an invented Safari release.
+    // This selects WebKit editor paths; it does not grant Safari-only APIs.
+    @MainActor static let applicationName: String = {
+        let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari")
+            .flatMap { Bundle(url: $0) }
+        let version = safari?.bundleIdentifier == "com.apple.Safari"
+            ? safari?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String : nil
+        return applicationName(safariVersion: version,
+                               appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
+    }()
+
+    static func applicationName(safariVersion: String?, appVersion: String?) -> String {
+        func valid(_ value: String?) -> String? {
+            guard let value, value.count <= 32,
+                  value.range(of: #"\A[0-9]+(?:\.[0-9]+){0,3}\z"#, options: .regularExpression) != nil else { return nil }
+            return value
+        }
+        let app = valid(appVersion).map { "Levistica/" + $0 } ?? "Levistica"
+        guard let version = valid(safariVersion) else { return app }
+        return "Version/\(version) Safari/605.1.15 \(app)"
+    }
+}
 
 enum NavigationPolicy {
     // Google serves its legacy homepage to the bare macOS WKWebView identity.

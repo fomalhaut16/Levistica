@@ -261,7 +261,7 @@ struct PageInputGuardTests {
             if let expected = NavigationPolicy.userAgent(for: destination) {
                 #expect(agent == expected)
             } else {
-                #expect(agent.contains("Levistica") == false)
+                #expect(agent.contains(WebKitBrowserIdentity.applicationName))
             }
         }
     }
@@ -280,6 +280,7 @@ struct PageInputGuardTests {
         #expect(parent.inputGuard !== child.inputGuard)
         #expect(parentController !== childController)
         #expect(child.webView.configuration.websiteDataStore === store)
+        #expect(child.webView.configuration.applicationNameForUserAgent == parent.webView.configuration.applicationNameForUserAgent)
         #expect(childController.userScripts.contains { $0.source == marker })
         #expect(childController.userScripts.count == parentController.userScripts.count)
     }
@@ -460,6 +461,59 @@ extension WebKitIntegrationTests {
             #expect(runtime.webView.title == "Login flow fixture")
             #expect(runtime.dialogs.notice != nil)
             #expect(runtime.inputGuard.hasEditedInput)
+        }
+    }
+}
+
+extension WebKitIntegrationTests {
+    @MainActor
+    struct ManagedEditorIdentityTests {
+        @Test func actualWebKitIdentitySelectsTheCorrespondingCommitPath() async throws {
+            let base = try #require(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+            let address = try #require(URL(string: base + "/ime-rich-check"))
+            let runtime = PageRuntime(dataStore: .nonPersistent())
+            defer { runtime.stop() }
+            runtime.load(address)
+            let deadline = ContinuousClock.now + .seconds(10)
+            while runtime.webView.title != "Rich editor IME check", ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try #require(runtime.webView.title == "Rich editor IME check")
+            // Replay the known commit sequence with generated text. The prior
+            // manual fixture is the real-IME evidence; these events are synthetic.
+            let script = """
+            (() => {
+                const editor = document.getElementById('ime-legacy-model');
+                editor.dispatchEvent(new CompositionEvent('compositionstart', {bubbles:true}));
+                editor.textContent = '';
+                const event = new InputEvent('beforeinput', {bubbles:true,cancelable:true,
+                    inputType:'insertFromComposition',data:'こんにちは',isComposing:true});
+                editor.dispatchEvent(event);
+                if (!event.defaultPrevented) editor.textContent += 'こんにちは';
+                editor.dispatchEvent(new CompositionEvent('compositionend', {bubbles:true,data:'こんにちは'}));
+                return JSON.stringify({length:editor.textContent.length,
+                    legacy:/Version\\/[\\d.]+.*Safari/.test(navigator.userAgent),
+                    webkit:/AppleWebKit(?!.*Chrome)/i.test(navigator.userAgent),
+                    app:navigator.userAgent.includes('Levistica'),
+                    chrome:navigator.userAgent.includes('Chrome/')});
+            })();
+            """
+            let json: String = try await withCheckedThrowingContinuation { continuation in
+                runtime.webView.evaluateJavaScript(script) { value, error in
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume(returning: value as? String ?? "") }
+                }
+            }
+            let data = try #require(json.data(using: .utf8))
+            let result = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let compatibilityAvailable = WebKitBrowserIdentity.applicationName.hasPrefix("Version/")
+            print("Managed editor generated-event replay: compatibility=\(compatibilityAvailable), length=\(result["length"] as? Int ?? -1)")
+            #expect(result["length"] as? Int == (compatibilityAvailable ? 5 : 10))
+            #expect(result["legacy"] as? Bool == compatibilityAvailable)
+            #expect(result["webkit"] as? Bool == true)
+            #expect(result["app"] as? Bool == true)
+            #expect(result["chrome"] as? Bool == false)
+            #expect(runtime.webView.configuration.applicationNameForUserAgent == WebKitBrowserIdentity.applicationName)
         }
     }
 }

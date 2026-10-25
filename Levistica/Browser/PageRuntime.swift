@@ -52,6 +52,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     init(configuration: WKWebViewConfiguration, permitsInitialBlankPage: Bool = false, localPDF: LocalPDF? = nil) {
         self.localPDF = localPDF
+        configuration.applicationNameForUserAgent = WebKitBrowserIdentity.applicationName
         if localPDF != nil { configuration.defaultWebpagePreferences.allowsContentJavaScript = false }
         self.permitsInitialBlankPage = permitsInitialBlankPage
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
