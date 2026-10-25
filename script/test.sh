@@ -26,6 +26,10 @@ if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui ]]; then
     unset LEVISTICA_MEASUREMENT_STORE_ID LEVISTICA_MEASUREMENT_CLEANUP_REQUEST LEVISTICA_SESSION_TEST_ID
     export LEVISTICA_MEASUREMENT_PERSIST_METADATA=0
 fi
+# UI workloads require a known unlocked screen before any app is stopped or built.
+if [[ "$MODE" != --unit ]]; then
+    python3 "$ROOT_DIR/script/check-ui-session.py"
+fi
 # Reuse the canonical entrypoint to stop this checkout's verified development apps first.
 LEVISTICA_MALLOC_STACKS=0 "$ROOT_DIR/script/build_and_run.sh" --build
 python3 "$ROOT_DIR/script/check-app-processes.py" --only Debug
