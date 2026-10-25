@@ -109,6 +109,34 @@ class SessionUpdateTests(unittest.TestCase):
         with patch.object(self.trial, 'owned'), patch.object(self.trial, 'run', side_effect=command), patch.object(self.trial, 'apps', return_value=[(3, path)]), patch.object(s.stores, 'runtime_flags', return_value={}), self.assertRaises(ValueError):
             self.trial.identity(3, self.baseline)
 
+    def test_each_start_requires_a_new_app_commit_before_metadata_is_ready(self):
+        trial = self.trial
+        home = self.root / 'synthetic-home'
+        trial.store_id = 'generated-uuid'
+        folder = home / 'Library/Containers' / s.BUNDLE_ID / 'Data/Library/Application Support/LevisticaMeasurementProfiles' / trial.store_id
+        folder.mkdir(parents=True)
+        trial.metadata_folder = folder
+        with sqlite3.connect(folder / 'session.sqlite3') as db:
+            db.execute('CREATE TABLE session_tabs (id TEXT,position INTEGER,title TEXT,url TEXT,may_reload INTEGER,kind TEXT,is_kept INTEGER,is_sleeping INTEGER)')
+            db.execute('CREATE TABLE session_meta (id INTEGER,selected_id TEXT,was_running INTEGER)')
+            db.execute("INSERT INTO session_tabs VALUES ('generated',0,'Generated',NULL,0,'web',0,0)")
+            db.execute("INSERT INTO session_meta VALUES (1,'generated',1)")
+            db.execute('PRAGMA user_version=3')
+        trial.active = (self.baseline, {'pid': 3})
+        calls = []
+        def listing(args):
+            calls.append(args)
+            if len(calls) == 2:
+                with sqlite3.connect(folder / 'session.sqlite3') as db:
+                    db.execute('UPDATE session_meta SET was_running=1')
+            return ('n' + str(folder / 'session.sqlite3') + '\n').encode()
+        with patch.object(s.pathlib.Path, 'home', return_value=home), patch.object(trial, 'owned'), patch.object(trial, 'apps', return_value=[]), patch.object(trial, 'identity'), patch.object(trial, 'run', side_effect=listing), patch.object(s.time, 'sleep'):
+            trial.arm_startup()
+            self.assertEqual(s.read_session(folder / 'session.sqlite3')[1], ('generated', 0))
+            self.assertEqual(trial.folder(3), folder)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(s.read_session(folder / 'session.sqlite3')[1], ('generated', 1))
+
     def test_timeout_rejects_commands_and_cleanup_keeps_unknown_process(self):
         self.trial.deadline = time.monotonic() - 1
         with patch.object(s.subprocess, 'check_output') as command, self.assertRaises(TimeoutError):

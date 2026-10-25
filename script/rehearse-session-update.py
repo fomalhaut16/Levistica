@@ -90,6 +90,7 @@ class Trial:
         self.active = None
         self.store_id = None
         self.marker_digest = None
+        self.metadata_folder = None
         self.result = {'success': False, 'normalDataUsed': False, 'cookiesTested': False,
                        'distributionUpdateTested': False, 'checkpoints': []}
 
@@ -147,6 +148,7 @@ class Trial:
         self.owned()
         if self.inspect(app) != expected:
             raise ValueError('Changed input bundle')
+        self.arm_startup()
         self.run(['/usr/bin/open', '-n', '--env', 'LEVISTICA_EPHEMERAL=1', '--env',
                   stores.STORE_KEY + '=' + self.store_id, '--env', stores.METADATA_KEY + '=1', str(app)])
         limit = min(self.deadline, time.monotonic() + 15)
@@ -199,11 +201,30 @@ class Trial:
                 try:
                     rows, meta = read_session(path)
                     if rows and meta is not None and meta[1] == 1:
+                        self.metadata_folder = path.parent
                         return path.parent
                 except (sqlite3.Error, ValueError):
                     pass  # The process can exist before its first transaction commits.
             time.sleep(.1)
         raise TimeoutError('Owned metadata did not finish startup')
+
+    def arm_startup(self):
+        if self.metadata_folder is None:
+            return  # The first bootstrap must create its database itself.
+        self.owned()
+        base = pathlib.Path.home() / 'Library/Containers' / BUNDLE_ID / 'Data/Library/Application Support/LevisticaMeasurementProfiles'
+        folder = real_path(self.metadata_folder, base)
+        if folder.parent != base or folder.name != self.store_id or self.apps():
+            raise ValueError('Unowned or running metadata cannot be armed')
+        metadata_digest(folder, self.deadline)
+        rows, meta = read_session(folder / 'session.sqlite3')
+        if not rows or len(rows) > 2 or any(row[3] is not None for row in rows) or meta is None:
+            raise ValueError('Only this trial\'s blank-URL fixture can be armed')
+        # An inherited was_running=1 would make an open file look like a completed
+        # startup. Require the app to commit a fresh 0 -> 1 transition each time.
+        with closing(sqlite3.connect(folder / 'session.sqlite3')) as db:
+            db.execute('UPDATE session_meta SET was_running=0 WHERE id=1')
+            db.commit()
 
     def copy(self, source, target):
         before = metadata_digest(source, self.deadline)
@@ -310,7 +331,8 @@ class Trial:
             raise ValueError('Retained data or source bundles changed')
         self.result['checkpoints'].append('old_revision_reopened_its_corresponding_session')
         self.result.update(success=True, generatedTabCount=2, externalPageURLs=0, applicationLaunchCount=5,
-                           newerSnapshotRetained=True, sourceBundlesUnchanged=True, storeID=self.store_id)
+                           newerSnapshotRetained=True, sourceBundlesUnchanged=True, startupCommitRequired=True,
+                           storeID=self.store_id)
 
     def finish(self):
         try:
