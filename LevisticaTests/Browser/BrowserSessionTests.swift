@@ -8,6 +8,35 @@ import WebKit
 @Suite(.serialized)
 @MainActor
 struct BrowserSessionTests {
+    @MainActor private final class SearchNavigationCapture: NSObject, WKNavigationDelegate {
+        var url: URL?
+        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                     decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+            url = action.request.url
+            // Verify the real navigation request without contacting a search site.
+            decisionHandler(.cancel)
+        }
+    }
+
+    @Test(arguments: SearchEngine.allCases)
+    func submittedSearchUsesTheChosenEngineWithoutSendingNetworkRequests(_ engine: SearchEngine) async throws {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        #expect(session.preferences.saveSearchEngine(engine))
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        let capture = SearchNavigationCapture()
+        runtime.webView.navigationDelegate = capture
+        session.activeTab.page = runtime
+        defer { runtime.stop(); runtime.webView.navigationDelegate = nil }
+        #expect(session.navigate("native browser C++"))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while capture.url == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let url = try #require(capture.url)
+        #expect(url == (try engine.searchURL(for: "native browser C++")))
+        #expect(session.activeTab.addressDraft == url.absoluteString)
+    }
+
     @Test(arguments: [false, true])
     func quitDoesNotMarkTheSessionCleanWithNewHistoryPending(queuedDuringConfirmation: Bool) async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -201,6 +230,74 @@ struct BrowserSessionTests {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder.appendingPathComponent("browser-preferences.json")
+    }
+
+    @Test func oldPreferencesKeepTheirNewTabPageAndDefaultSearch() throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let original = Data(#"{"version":1,"newTabURL":"https://example.org/"}"#.utf8)
+        try original.write(to: file)
+        let preferences = BrowserPreferences(fileURL: file)
+        #expect(preferences.searchEngine == .duckDuckGo && preferences.canSave)
+        #expect(preferences.newTabURL?.absoluteString == "https://example.org/")
+        #expect(try Data(contentsOf: file) == original)
+        #expect(preferences.saveSearchEngine(.google))
+        let restored = BrowserPreferences(fileURL: file)
+        #expect(restored.searchEngine == .google && restored.newTabURL == preferences.newTabURL)
+    }
+
+    @Test func searchAndNewTabChoicesPersistIndependentlyWithoutLoadingPages() throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let session = BrowserSession(dataStore: .nonPersistent(), preferencesFileURL: file)
+        let selection = session.selectedID
+        #expect(session.preferences.saveSearchEngine(.google))
+        #expect(session.preferences.saveNewTabPage("https://example.org/"))
+        let restored = BrowserPreferences(fileURL: file)
+        #expect(restored.searchEngine == .google)
+        #expect(restored.saveNewTabPage(""))
+        #expect(BrowserPreferences(fileURL: file).searchEngine == .google)
+        #expect(restored.saveSearchEngine(.duckDuckGo))
+        #expect(BrowserPreferences(fileURL: file).newTabURL == nil)
+        #expect(session.selectedID == selection && session.tabs.count == 1 && session.loadedPageCount == 0)
+        let permissions = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+        #expect(permissions?.intValue == 0o600)
+    }
+
+    @Test(arguments: [#""unknown-engine""#, "17", "[]"])
+    func unknownSearchPreferencesCannotOverwriteTheOriginal(_ value: String) throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let original = Data((#"{"version":1,"newTabURL":"https://example.org/","searchEngine":\#(value)}"#).utf8)
+        try original.write(to: file)
+        let preferences = BrowserPreferences(fileURL: file)
+        #expect(preferences.canSave == false)
+        #expect(preferences.saveSearchEngine(.google) == false)
+        #expect(preferences.saveNewTabPage("") == false)
+        #expect(try Data(contentsOf: file) == original)
+    }
+
+    @Test func failedSearchSaveKeepsBothExistingChoices() throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let preferences = BrowserPreferences(fileURL: file)
+        #expect(preferences.saveNewTabPage("https://example.org/"))
+        #expect(preferences.saveSearchEngine(.google))
+        let retained = file.appendingPathExtension("previous")
+        try FileManager.default.moveItem(at: file, to: retained)
+        let before = try Data(contentsOf: retained)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        #expect(preferences.saveSearchEngine(.duckDuckGo) == false)
+        #expect(preferences.searchEngine == .google)
+        #expect(preferences.newTabURL?.absoluteString == "https://example.org/")
+        #expect(try Data(contentsOf: retained) == before)
+    }
+
+    @Test func inMemorySearchChoiceDoesNotAffectAnotherSession() {
+        let first = BrowserPreferences()
+        #expect(first.saveSearchEngine(.google))
+        #expect(first.searchEngine == .google && first.isPersistent == false)
+        #expect(BrowserPreferences().searchEngine == .duckDuckGo)
     }
 
     @Test func newTabPageDefaultsToBlankWithoutCreatingASettingsFile() throws {

@@ -3,6 +3,31 @@ import Testing
 @testable import Levistica
 
 struct AddressResolverTests {
+    @Test(arguments: SearchEngine.allCases)
+    func chosenSearchEnginePreservesUnicodeAndQuerySymbols(_ engine: SearchEngine) throws {
+        for query in ["大学 資料", "C++", "a&b#c%20"] {
+            let url = try AddressResolver.resolve(query, searchEngine: engine)
+            let parts = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+            #expect(parts.scheme == "https")
+            #expect(parts.host == (engine == .google ? "www.google.com" : "duckduckgo.com"))
+            #expect(parts.path == (engine == .google ? "/search" : "/"))
+            #expect(parts.queryItems == [URLQueryItem(name: "q", value: query)])
+            #expect(parts.percentEncodedQuery?.contains("+") == false)
+        }
+    }
+
+    @Test(arguments: SearchEngine.allCases)
+    func searchChoicePreservesAddressValidation(_ engine: SearchEngine) throws {
+        #expect(try AddressResolver.resolve("example.com/path?q=a+b", searchEngine: engine).absoluteString
+                == "https://example.com/path?q=a+b")
+        #expect(throws: AddressError.unsupportedScheme) {
+            try AddressResolver.resolve("javascript:alert(1)", searchEngine: engine)
+        }
+        #expect(throws: AddressError.invalid) {
+            try AddressResolver.resolve("https://user:password@example.com/", searchEngine: engine)
+        }
+    }
+
     @Test(arguments: [
         ("example.com", "https://example.com"),
         (" http://example.com/path ", "http://example.com/path"),

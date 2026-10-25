@@ -169,6 +169,68 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testAddressSearchChoicePersistsWithoutChangingTheNewTabPage() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launch()
+        app.activate()
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        func openGeneral() {
+            app.typeKey(",", modifierFlags: .command)
+            XCTAssertTrue(app.buttons["一般"].waitForExistence(timeout: 10))
+            app.buttons["一般"].click()
+            XCTAssertTrue(app.textFields["newTabPageField"].waitForExistence(timeout: 5))
+        }
+        func closeSettings() {
+            app.typeKey("w", modifierFlags: .command)
+            XCTAssertTrue(settings.waitForNonExistence(timeout: 5))
+        }
+        openGeneral()
+        let field = app.textFields["newTabPageField"]
+        field.click()
+        waitForInputIndicator(in: app)
+        field.typeText(base + "/one")
+        waitForInputIndicator(in: app)
+        app.buttons["saveNewTabPageButton"].click()
+        let picker = app.popUpButtons["addressSearchEnginePicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        picker.click()
+        app.menuItems["Google"].click()
+        XCTAssertTrue(app.staticTexts["検索先を保存しました。次にURL欄で検索するときから適用します。"].waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, base + "/one")
+        attachWindowImage(app, name: "address-search-settings", knownFrame: settings.frame)
+        closeSettings()
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].exists)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch()
+        app.activate()
+        openGeneral()
+        XCTAssertEqual(field.value as? String, base + "/one")
+        XCTAssertEqual(picker.value as? String, "Google")
+        picker.click()
+        app.menuItems["DuckDuckGo"].click()
+        XCTAssertTrue(app.staticTexts["検索先を保存しました。次にURL欄で検索するときから適用します。"].waitForExistence(timeout: 5))
+        closeSettings()
+        app.typeKey("t", modifierFlags: .command)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch()
+        app.activate()
+        openGeneral()
+        XCTAssertEqual(picker.value as? String, "DuckDuckGo")
+        XCTAssertEqual(field.value as? String, base + "/one")
+        closeSettings()
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
+    @MainActor
     func testNewTabPageSettingAppliesToPlusAndCommandTAndSurvivesRestart() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180
