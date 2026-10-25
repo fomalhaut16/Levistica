@@ -69,6 +69,51 @@ def selection_matches_fixture(payload):
         return False
 
 
+def ime_metadata(payload):
+    """Accept event categories and bounded counts only, never typed text."""
+    try:
+        value = json.loads(payload)
+        controls = {'ime-input', 'ime-textarea', 'ime-editor'}
+        types = {'compositionstart', 'compositionupdate', 'compositionend', 'beforeinput', 'input', 'keydown', 'keyup'}
+        if not isinstance(value, dict) or set(value) != {'events', 'fields'}:
+            return None
+        if not isinstance(value['events'], list) or len(value['events']) > 240:
+            return None
+        for row in value['events']:
+            if not isinstance(row, dict) or row.get('control') not in controls or row.get('type') not in types:
+                return None
+            keys = {'control', 'type', 'trusted'}
+            if type(row.get('trusted')) is not bool:
+                return None
+            if row['type'] in ('keydown', 'keyup'):
+                keys |= {'enter', 'isComposing', 'processKey'}
+                if any(type(row.get(k)) is not bool for k in ('enter', 'isComposing', 'processKey')):
+                    return None
+            elif row['type'] in ('input', 'beforeinput'):
+                keys |= {'isComposing', 'inputType'}
+                if type(row.get('isComposing')) is not bool or row.get('inputType') not in (
+                        'insertCompositionText', 'insertText', 'deleteCompositionText', 'insertFromComposition', 'other'):
+                    return None
+            if set(row) != keys:
+                return None
+        fields = value['fields']
+        if not isinstance(fields, list) or len(fields) != 3:
+            return None
+        seen = set()
+        for row in fields:
+            if not isinstance(row, dict) or set(row) != {'control', 'sends', 'lastLength', 'currentLength'}:
+                return None
+            name = row['control']
+            if name not in controls or name in seen:
+                return None
+            seen.add(name)
+            if any(type(row[k]) is not int or not 0 <= row[k] <= 1000000 for k in ('sends', 'lastLength', 'currentLength')):
+                return None
+        return value
+    except (ValueError, TypeError, RecursionError):
+        return None
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     popup_posts = 0
     redirect_303_posts = 0
@@ -83,6 +128,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        if self.path == '/ime-result':
+            value = self.server.ime_result
+            body = json.dumps({'status': 'waiting'} if value is None else {'status': 'recorded', 'result': value}).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == '/address-route-wait':
             body = json.dumps({'changed': self.server.address_route_event.wait(timeout=30)}).encode()
             self.send_response(200)
@@ -151,6 +206,51 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(page.encode())
             return
         pages = {
+            '/ime-check': '''<title>IME input check</title>
+                <style>body{font:14px system-ui;margin:16px}h1{font-size:22px}.row{display:grid;grid-template-columns:100px 1fr 150px;gap:12px;align-items:center;margin:12px 0}input,textarea,[contenteditable]{font:18px system-ui;border:1px solid #888;padding:8px;min-height:28px}pre{font:11px monospace;max-height:180px;overflow:auto;background:#eee;padding:8px;white-space:pre-wrap}</style>
+                <h1>日本語IMEの確定を確認</h1>
+                <p>指定の「こんにちは」だけを各欄に入力し、未確定の文字をEnterで確定してください。まだ送信用のEnterは押さないでください。</p>
+                <p>各欄はEnterで送る単純なチャットの再現です。実際のメッセージ送信は行いません。</p>
+                <div class="row"><label for="ime-input">input</label><input id="ime-input" data-ime-probe aria-label="IME input" autocomplete="off"><output id="ime-input-result">送信0回・文字数0</output></div>
+                <div class="row"><label for="ime-textarea">textarea</label><textarea id="ime-textarea" data-ime-probe aria-label="IME textarea" rows="1"></textarea><output id="ime-textarea-result">送信0回・文字数0</output></div>
+                <div class="row"><span>contenteditable</span><div id="ime-editor" data-ime-probe contenteditable="true" role="textbox" aria-label="IME editor" spellcheck="false"></div><output id="ime-editor-result">送信0回・文字数0</output></div>
+                <button id="reset">確認をやり直す</button> <button id="record">結果を記録</button><span id="record-status"></span>
+                <p>記録するのはイベントの種類・IME状態・回数・文字数です。入力本文やキーの文字は含めず、このMac内の確認用サーバーだけへ送ります。</p>
+                <pre id="events" aria-label="IME event metadata">[]</pre>
+                <script>(()=>{
+                    const log=[], counts=new Map(), lengths=new Map();
+                    const controls=[...document.querySelectorAll('[data-ime-probe]')];
+                    for(const control of controls){
+                        counts.set(control.id,0);lengths.set(control.id,0);
+                        for(const type of ['compositionstart','compositionupdate','compositionend','beforeinput','input','keydown','keyup']){
+                            control.addEventListener(type,event=>{
+                                const row={control:control.id,type,trusted:event.isTrusted};
+                                if(event instanceof KeyboardEvent){row.enter=event.key==='Enter';row.isComposing=event.isComposing;row.processKey=event.keyCode===229;}
+                                if(event instanceof InputEvent){row.isComposing=event.isComposing;row.inputType=['insertCompositionText','insertText','deleteCompositionText','insertFromComposition'].includes(event.inputType)?event.inputType:'other';}
+                                log.push(row);if(log.length>240)log.shift();document.getElementById('events').textContent=JSON.stringify(log,null,1);
+                            },true);
+                        }
+                        control.addEventListener('keydown',event=>{
+                            if(event.key!=='Enter'||event.shiftKey||event.isComposing)return;
+                            event.preventDefault();
+                            const length=(control.isContentEditable?control.textContent:control.value).length;
+                            lengths.set(control.id,length);
+                            counts.set(control.id,counts.get(control.id)+1);
+                            document.getElementById(control.id+'-result').textContent='送信'+counts.get(control.id)+'回・文字数'+length;
+                            if(control.isContentEditable)control.textContent='';else control.value='';
+                        });
+                    }
+                    document.getElementById('reset').onclick=()=>{
+                        for(const control of controls){counts.set(control.id,0);lengths.set(control.id,0);if(control.isContentEditable)control.textContent='';else control.value='';document.getElementById(control.id+'-result').textContent='送信0回・文字数0';}
+                        log.length=0;document.getElementById('events').textContent='[]';
+                    };
+                    document.getElementById('record').onclick=()=>{
+                        const fields=controls.map(c=>({control:c.id,sends:counts.get(c.id),lastLength:lengths.get(c.id),currentLength:(c.isContentEditable?c.textContent:c.value).length}));
+                        fetch('/ime-result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({events:log,fields})})
+                            .then(r=>document.getElementById('record-status').textContent=r.ok?'記録しました':'記録できませんでした')
+                            .catch(()=>document.getElementById('record-status').textContent='記録できませんでした');
+                    };
+                })();</script>''',
             '/address-route': '''<title>Address route fixture</title><h1>Address route fixture</h1>
                 <p id="status">Route ready</p><script>
                 fetch('/address-route-wait',{cache:'no-store'}).then(r=>r.json()).then(state=>{
@@ -280,6 +380,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if self.path == '/ime-result':
+            if self.headers.get('Origin') != f'http://127.0.0.1:{self.server.server_port}':
+                self.send_error(403)
+                return
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+            except ValueError:
+                self.send_error(400)
+                return
+            if not 0 < length <= 65536:
+                self.send_error(413)
+                return
+            value = ime_metadata(self.rfile.read(length))
+            if value is None:
+                self.send_error(400)
+                return
+            self.server.ime_result = value
+            self.send_response(204)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
         if self.path in ('/address-route-reset', '/address-route-trigger'):
             if self.headers.get('Origin') != f'http://127.0.0.1:{self.server.server_port}':
                 self.send_error(403)
@@ -381,6 +502,7 @@ class FixtureHTTPServer(http.server.ThreadingHTTPServer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.address_route_event = threading.Event()
+        self.ime_result = None
 
 
 def main():

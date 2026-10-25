@@ -57,6 +57,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.preferences.isElementFullscreenEnabled = true
         inputGuard = PageInputGuard(configuration: configuration)
+        PageIMECompatibility.install(in: configuration.userContentController)
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
         inputGuard.bind(to: webView)

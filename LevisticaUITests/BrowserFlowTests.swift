@@ -1408,7 +1408,7 @@ final class BrowserFlowTests: XCTestCase {
         waitForInputIndicator(in: app)
         draft.typeText("synthetic send")
         waitForInputIndicator(in: app)
-        app.webViews.buttons["Send draft"].click()
+        draft.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(app.webViews.staticTexts["Submission received"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.sheets.buttons["ページに戻る"].exists)
         app.terminate()
