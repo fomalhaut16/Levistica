@@ -3,6 +3,9 @@ import Testing
 import WebKit
 @testable import Levistica
 
+// Bound concurrent WebKit work within this suite; MainActor alone permits
+// async tests to overlap while awaiting WebContent and Network processes.
+@Suite(.serialized)
 @MainActor struct SiteDataLibraryTests {
     private func cookie(_ domain: String, name: String) throws -> HTTPCookie {
         try #require(HTTPCookie(properties: [.domain: domain, .path: "/", .name: name,

@@ -2,6 +2,9 @@ import Testing
 import WebKit
 @testable import Levistica
 
+// Bound concurrent WebKit work within this suite; MainActor alone permits
+// async tests to overlap while awaiting WebContent and Network processes.
+@Suite(.serialized)
 @MainActor
 struct PageInputGuardTests {
     private func httpFixtureURL(environmentKey: String = "LEVISTICA_FIXTURE_URL", path: String) throws -> URL {
