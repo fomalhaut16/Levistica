@@ -1804,6 +1804,66 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testMultipleUploadsContainOnlyTheSelectedSyntheticFiles() throws {
+        try verifyGeneratedUploadSelection(folderUpload: false)
+    }
+
+    @MainActor
+    func testFolderUploadPreservesNestedPathsAndExcludesTheSiblingFile() throws {
+        try verifyGeneratedUploadSelection(folderUpload: true)
+    }
+
+    @MainActor
+    private func verifyGeneratedUploadSelection(folderUpload: Bool) throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let (app, root) = try fileTestApplication()
+        defer { app.terminate(); try? FileManager.default.removeItem(at: root) }
+        let selected = root.appendingPathComponent(folderUpload ? "SelectedFolder" : "SelectedFiles", isDirectory: true)
+        let nested = folderUpload ? selected.appendingPathComponent("nested", isDirectory: true) : selected
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try Data("synthetic A\n".utf8).write(to: selected.appendingPathComponent("a.txt"))
+        try Data("synthetic B\n".utf8).write(to: nested.appendingPathComponent("b.txt"))
+        let sibling = root.appendingPathComponent("unselected-sibling.txt")
+        try Data("unselected synthetic sibling\n".utf8).write(to: sibling)
+        app.launch()
+        app.activate()
+        submit(base + "/upload-selection", in: app)
+        let input = app.webViews.buttons[folderUpload ? "Folder attachment" : "Multiple attachments"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        input.click()
+        let choose = app.sheets.buttons["選択"].firstMatch
+        XCTAssertTrue(choose.waitForExistence(timeout: 10))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(choose.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.webViews.staticTexts[folderUpload ? "No folder selection" : "No file selection"].exists)
+        input.click()
+        XCTAssertTrue(choose.waitForExistence(timeout: 10))
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(selected.path + "/")
+        waitForInputIndicator(in: app)
+        app.typeKey(.return, modifierFlags: [])
+        waitForInputIndicator(in: app)
+        if folderUpload == false {
+            let firstFile = app.sheets.descendants(matching: .any).matching(
+                NSPredicate(format: "label == %@ OR value == %@", "a.txt", "a.txt")).firstMatch
+            XCTAssertTrue(firstFile.waitForExistence(timeout: 10))
+            firstFile.click()
+            app.typeKey("a", modifierFlags: .command)
+        }
+        choose.click()
+        XCTAssertTrue(choose.waitForNonExistence(timeout: 10))
+        let expected = folderUpload ? "SelectedFolder/a.txt | SelectedFolder/nested/b.txt" : "a.txt | b.txt"
+        XCTAssertTrue(app.webViews.staticTexts[expected].waitForExistence(timeout: 10))
+        app.webViews.buttons[folderUpload ? "Upload selected folder" : "Upload selected files"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Selected synthetic files received"].waitForExistence(timeout: 10))
+        XCTAssertEqual(try String(contentsOf: sibling, encoding: .utf8), "unselected synthetic sibling\n")
+        XCTAssertTrue(attachWindowImage(app, name: folderUpload ? "folder-upload-complete" : "multiple-upload-complete",
+                                        knownFrame: app.windows["browser"].frame))
+    }
+
+    @MainActor
     func testDownloadAndSelectOnlyTheSyntheticUpload() throws {
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
         let id = UUID()
