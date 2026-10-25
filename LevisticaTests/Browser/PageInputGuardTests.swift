@@ -2,9 +2,12 @@ import Testing
 import WebKit
 @testable import Levistica
 
-// Bound concurrent WebKit work within this suite; MainActor alone permits
-// async tests to overlap while awaiting WebContent and Network processes.
+// WebKit suites share a process and its services. Serialize the suites
+// together, including async suspension points; unrelated pure tests stay parallel.
 @Suite(.serialized)
+struct WebKitIntegrationTests {}
+
+extension WebKitIntegrationTests {
 @MainActor
 struct PageInputGuardTests {
     private func httpFixtureURL(environmentKey: String = "LEVISTICA_FIXTURE_URL", path: String) throws -> URL {
@@ -62,7 +65,8 @@ struct PageInputGuardTests {
         runtime.onVisit = { url, _, _ in visits.append(url) }
         runtime.load(start)
         let deadline = ContinuousClock.now + .seconds(10)
-        while visits.isEmpty, ContinuousClock.now < deadline {
+        while visits.isEmpty || runtime.webView.title != "Fixture two" || runtime.webView.isLoading,
+              ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
         try #require(visits == [final])
@@ -71,7 +75,8 @@ struct PageInputGuardTests {
         #expect(runtime.canRetry)
         runtime.reload()
         let reloadDeadline = ContinuousClock.now + .seconds(10)
-        while visits.count < 2, ContinuousClock.now < reloadDeadline {
+        while visits.count < 2 || runtime.webView.title != "Fixture two" || runtime.webView.isLoading,
+              ContinuousClock.now < reloadDeadline {
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(visits == [final, final])
@@ -303,4 +308,5 @@ struct PageInputGuardTests {
         }
         #expect(controller == nil)
     }
+}
 }
