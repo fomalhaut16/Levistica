@@ -13,8 +13,16 @@ case "$PERSIST_METADATA" in 0|1) ;; *) echo 'MEASUREMENT_PERSIST_METADATA must b
 if [[ "$PERSIST_METADATA" == 1 && ( "$MEASUREMENT" != 1 || -z "$STORE_ID" ) ]]; then
     echo 'Persistent metadata requires Measurement and an owned store UUID' >&2; exit 2
 fi
-case "$MODE" in run|--build|--verify|--debug|--logs|--telemetry) ;; *) echo "usage: $0 [--build|--verify|--debug|--logs|--telemetry]" >&2; exit 2;; esac
+case "$MODE" in run|--build|--verify|--debug|--logs|--telemetry|--archive-local) ;; *) echo "usage: $0 [--build|--verify|--debug|--logs|--telemetry|--archive-local]" >&2; exit 2;; esac
 case "$CONFIGURATION" in Debug|Release) ;; *) echo 'CONFIGURATION must be Debug or Release' >&2; exit 2;; esac
+ARCHIVE_LOCAL=0
+if [[ "$MODE" == --archive-local ]]; then
+    if [[ "$CONFIGURATION" != Release || "$PROFILE" != 0 || "$MEASUREMENT" != 0 || "$MALLOC_STACKS" != 0 || "${LEVISTICA_EPHEMERAL:-0}" != 0 || -n "$STORE_ID" || "$PERSIST_METADATA" != 0 || -n "${LEVISTICA_SESSION_TEST_ID:-}" ]]; then
+        echo 'Local archiving requires ordinary Release without test or diagnostic flags' >&2
+        exit 2
+    fi
+    ARCHIVE_LOCAL=1
+fi
 case "$PROFILE" in 0|1) ;; *) echo 'LEVISTICA_PROFILE must be 0 or 1' >&2; exit 2;; esac
 if [[ "$PROFILE" == 1 && ( "$CONFIGURATION" != Release || "${LEVISTICA_EPHEMERAL:-0}" != 1 || -n "${LEVISTICA_SESSION_TEST_ID:-}" ) ]]; then
     echo 'PROFILE requires Release, EPHEMERAL=1, and no SESSION_TEST_ID' >&2
@@ -65,16 +73,37 @@ if [[ "$MEASUREMENT" == 1 ]]; then
     VARIANT=Measurement
     EXPECTED_IDENTIFIER="dev.fomalhaut16.Levistica.measurement"
 fi
+if [[ "$ARCHIVE_LOCAL" == 1 ]]; then
+    if [[ -L "$ROOT_DIR/.local" || -L "$ROOT_DIR/.local/archives" ]]; then
+        echo 'Local archive directories must not be symbolic links' >&2; exit 2
+    fi
+    mkdir -p "$ROOT_DIR/.local/archives"
+    ARCHIVE_CONTAINER="$(mktemp -d "$ROOT_DIR/.local/archives/local-XXXXXXXX")"
+    DERIVED_DATA="$ARCHIVE_CONTAINER/DerivedData"
+    ARCHIVE_PATH="$ARCHIVE_CONTAINER/Levistica.xcarchive"
+    VARIANT=LocalArchive
+fi
 APP_BUNDLE="$DERIVED_DATA/Build/Products/$CONFIGURATION/Levistica.app"
+if [[ "$ARCHIVE_LOCAL" == 1 ]]; then
+    APP_BUNDLE="$ARCHIVE_PATH/Products/Applications/Levistica.app"
+fi
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/Levistica"
 BUILD_ARGS=(-project "$ROOT_DIR/Levistica.xcodeproj" -scheme Levistica
     -configuration "$CONFIGURATION" -destination 'platform=macOS' -derivedDataPath "$DERIVED_DATA")
 LOG_DIR="$ROOT_DIR/.local/artifacts"
+BUILD_ACTION=build
+if [[ "$ARCHIVE_LOCAL" == 1 ]]; then
+    BUILD_ACTION=archive
+    BUILD_ARGS+=(-archivePath "$ARCHIVE_PATH" CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO)
+    LOG_DIR="$ARCHIVE_CONTAINER"
+fi
 # Discover by executable path first. A renamed process must not bypass the stop checks.
-if [[ "$MEASUREMENT" == 1 ]]; then
-    python3 "$ROOT_DIR/script/check-app-processes.py" --only Measurement
-else
-    python3 "$ROOT_DIR/script/check-app-processes.py"
+if [[ "$ARCHIVE_LOCAL" != 1 ]]; then
+    if [[ "$MEASUREMENT" == 1 ]]; then
+        python3 "$ROOT_DIR/script/check-app-processes.py" --only Measurement
+    else
+        python3 "$ROOT_DIR/script/check-app-processes.py"
+    fi
 fi
 mkdir -p "$LOG_DIR"
 if [[ "$PROFILE" == 1 ]]; then
@@ -110,31 +139,33 @@ fi
 BUILD_ARGS+=("LEVISTICA_SOURCE_REVISION=$SOURCE_REVISION" "LEVISTICA_SOURCE_STATE=$SOURCE_STATE")
 
 # Stop only this checkout's development app, after matching its executable path.
-for pid in $(/usr/bin/pgrep -x Levistica || true); do
-    actual="$(/bin/ps -p "$pid" -o comm= || true)"
-    case "$actual" in
-        "$ROOT_DIR/.local/DerivedData/Build/Products/Debug/Levistica.app/Contents/MacOS/Levistica") identifier_to_stop=dev.fomalhaut16.Levistica.debug ;;
-        "$ROOT_DIR/.local/DerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica") identifier_to_stop=dev.fomalhaut16.Levistica ;;
-        "$ROOT_DIR/.local/ProfileDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica") identifier_to_stop=dev.fomalhaut16.Levistica.profile ;;
-        "$ROOT_DIR/.local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica") identifier_to_stop=dev.fomalhaut16.Levistica.measurement ;;
-        *) continue ;;
-    esac
-    bundle="${actual%/Contents/MacOS/Levistica}"
-    identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$bundle/Contents/Info.plist" 2>/dev/null || true)"
-    if [[ "$identifier" == "$identifier_to_stop" ]]; then
-        /bin/kill -TERM "$pid"
-        for ((attempt=0; attempt<50; attempt++)); do
-            /bin/kill -0 "$pid" 2>/dev/null || break
-            sleep 0.1
-        done
-        if /bin/kill -0 "$pid" 2>/dev/null; then
-            echo 'Levistica is still running; close it before rebuilding.' >&2
-            exit 1
+if [[ "$ARCHIVE_LOCAL" != 1 ]]; then
+    for pid in $(/usr/bin/pgrep -x Levistica || true); do
+        actual="$(/bin/ps -p "$pid" -o comm= || true)"
+        case "$actual" in
+            "$ROOT_DIR/.local/DerivedData/Build/Products/Debug/Levistica.app/Contents/MacOS/Levistica") identifier_to_stop=dev.fomalhaut16.Levistica.debug ;;
+            "$ROOT_DIR/.local/DerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica") identifier_to_stop=dev.fomalhaut16.Levistica ;;
+            "$ROOT_DIR/.local/ProfileDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica") identifier_to_stop=dev.fomalhaut16.Levistica.profile ;;
+            "$ROOT_DIR/.local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica") identifier_to_stop=dev.fomalhaut16.Levistica.measurement ;;
+            *) continue ;;
+        esac
+        bundle="${actual%/Contents/MacOS/Levistica}"
+        identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$bundle/Contents/Info.plist" 2>/dev/null || true)"
+        if [[ "$identifier" == "$identifier_to_stop" ]]; then
+            /bin/kill -TERM "$pid"
+            for ((attempt=0; attempt<50; attempt++)); do
+                /bin/kill -0 "$pid" 2>/dev/null || break
+                sleep 0.1
+            done
+            if /bin/kill -0 "$pid" 2>/dev/null; then
+                echo 'Levistica is still running; close it before rebuilding.' >&2
+                exit 1
+            fi
         fi
-    fi
-done
+    done
+fi
 
-if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" build >"$LOG_DIR/build-$VARIANT.log" 2>&1; then
+if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" "$BUILD_ACTION" >"$LOG_DIR/build-$VARIANT.log" 2>&1; then
     tail -n 70 "$LOG_DIR/build-$VARIANT.log" >&2
     exit 1
 fi
@@ -158,6 +189,10 @@ fi
 echo "Built $APP_BUNDLE"
 case "$MODE" in
     --build) exit 0 ;;
+    --archive-local)
+        echo "Local archive: $ARCHIVE_PATH"
+        echo 'Local validation only; Developer ID distribution and notarization are not performed.'
+        exit 0 ;;
     --debug) exec /usr/bin/xcrun lldb -- "$APP_BINARY" ;;
 esac
 if [[ "${LEVISTICA_EPHEMERAL:-0}" == 1 ]]; then
