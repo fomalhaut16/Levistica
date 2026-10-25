@@ -109,7 +109,7 @@ def checked_exchange(installed, prepared, old, new, inspect, exchange=exchange_d
     # A failed syscall has no rename/delete fallback. Untouched references remain.
     try:
         exchange(installed, prepared)
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         try:
             unchanged = (tree_digest(installed, deadline) == old['treeSHA256']
                          and tree_digest(prepared, deadline) == new['treeSHA256'])
@@ -123,7 +123,7 @@ def checked_exchange(installed, prepared, old, new, inspect, exchange=exchange_d
             raise RecoveryUncertain('Exchange did not leave the two expected payloads')
         if inspect(installed) != new or inspect(prepared) != old:
             raise ValueError('Post-exchange validation failed')
-    except Exception as error:
+    except (Exception, KeyboardInterrupt) as error:
         # Never blindly exchange paths after an unknown state or a damaged payload.
         try:
             proven = (tree_digest(installed, deadline) == new['treeSHA256']
@@ -238,9 +238,9 @@ def rehearse(archive):
             raise ValueError('An untouched source/reference or synthetic data changed')
         record.update(success=True, syntheticDataUnchanged=True, sourceBundlesUnchanged=True,
                       elapsedSeconds=120-(deadline-time.monotonic()))
-    except Exception as error:
+    except (Exception, KeyboardInterrupt) as error:
         # Never include command stderr or arbitrary bundle strings in the report.
-        record.update(errorType=type(error).__name__, manualInspectionRequired=isinstance(error,RecoveryUncertain))
+        record.update(errorType=type(error).__name__, manualInspectionRequired=isinstance(error,(RecoveryUncertain,KeyboardInterrupt)))
     finally:
         record['elapsedSeconds'] = 120-(deadline-time.monotonic())
         result = work/'result.json'

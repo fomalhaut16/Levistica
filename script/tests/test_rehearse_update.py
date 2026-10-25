@@ -72,6 +72,15 @@ class RehearsalTests(unittest.TestCase):
         self.assertEqual(self.inspect(self.installed),self.old)
         self.assertEqual(self.inspect(self.prepared),self.new)
 
+    def test_interrupted_post_check_restores_proven_original_slots(self):
+        def interrupted(path):
+            value=self.inspect(path)
+            if path==self.installed and value==self.new:raise KeyboardInterrupt()
+            return value
+        with self.assertRaises(ValueError):self.apply(inspect=interrupted)
+        self.assertEqual(self.inspect(self.installed),self.old)
+        self.assertEqual(self.inspect(self.prepared),self.new)
+
     def test_rollback_failure_keeps_both_payloads_for_manual_inspection(self):
         calls=[]
         def fail_second(a,b):
