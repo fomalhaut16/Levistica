@@ -5,6 +5,8 @@
 	objectVersion = "56";
 	archiveVersion = "1";
 	objects = {
+		A44BA613BD917FF6D99A5E09 = { isa = PBXFileReference; path = "Levistica/Browser/PageIMECompatibility.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		37E9F6DA2BB2D3B5DDA6BD0A = { isa = PBXBuildFile; fileRef = A44BA613BD917FF6D99A5E09; };
 		13C2358D0BF6452185C06B94 = { isa = PBXFileReference; path = "Levistica/Browser/BrowserPreferences.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
 		EDCB70469BEE48E4946C32B0 = { isa = PBXBuildFile; fileRef = 13C2358D0BF6452185C06B94; };
 		C395928155409B06FDBA497B = { isa = PBXFileReference; path = "LevisticaTests/Stores/SiteDataLibraryTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
@@ -364,6 +366,7 @@
 				F43D16DC67425203EFE20A61,
 				8F4ECCE5361DED8B3717E5ED,
 				E85EEDCFF88FE696E6D2BB8B,
+				37E9F6DA2BB2D3B5DDA6BD0A,
 				531523C49D1CED91823661FC,
 				14B0EABA98C3249E344A5DA8,
 				52F654CBC2DCBF35AC1192FF,
@@ -443,6 +446,7 @@
 				0CB0CBC9EEEFB6A369F74041,
 				C19C986FD8A407F599F8841B,
 				0A9E5745B540B1CF63B276FB,
+				A44BA613BD917FF6D99A5E09,
 				51D258F1AF38742F6DAE5EBC,
 				95E31F79A967BFD83967C278,
 				4A487D8BB8AF9CDC4C4542E5,

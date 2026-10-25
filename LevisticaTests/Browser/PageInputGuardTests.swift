@@ -1,5 +1,6 @@
 import Testing
 import WebKit
+import JavaScriptCore
 @testable import Levistica
 
 // WebKit suites share a process and its services. Serialize the suites
@@ -309,4 +310,90 @@ struct PageInputGuardTests {
         #expect(controller == nil)
     }
 }
+}
+
+// These tests exercise the shipped script's event filtering, not a real IME.
+@MainActor
+struct PageIMECompatibilityTests {
+    private func context() throws -> JSContext {
+        let context = try #require(JSContext())
+        context.evaluateScript("""
+        const handlers = {};
+        const window = { addEventListener(type, handler) {
+            (handlers[type] ||= []).push(handler);
+        }};
+        function press(type, options = {}) {
+            const event = Object.assign({isTrusted: true, key: 'Enter', code: 'Enter',
+                location: 0, keyCode: 13, isComposing: false,
+                stopped: false, cancelled: false,
+                stopImmediatePropagation() { this.stopped = true; },
+                preventDefault() { this.cancelled = true; }}, options);
+            for (const handler of handlers[type] || []) {
+                handler(event);
+                if (event.stopped) break;
+            }
+            if (event.cancelled) throw new Error('Default editing must remain enabled');
+            return event.stopped;
+        }
+        """)
+        context.evaluateScript(PageIMECompatibility.source)
+        try #require(context.exception == nil)
+        return context
+    }
+
+    @Test func confirmationIsFilteredButTheFollowingSendIsPreserved() throws {
+        let js = try context()
+        #expect(js.evaluateScript("press('keydown', {keyCode:229})")?.toBool() == true)
+        #expect(js.evaluateScript("press('keypress')")?.toBool() == true)
+        #expect(js.evaluateScript("press('keyup')")?.toBool() == true)
+        #expect(js.evaluateScript("press('keydown')")?.toBool() == false)
+        #expect(js.evaluateScript("press('keypress')")?.toBool() == false)
+        #expect(js.evaluateScript("press('keyup')")?.toBool() == false)
+        #expect(js.exception == nil)
+    }
+
+    @Test(arguments: ["{isTrusted:false,keyCode:229}",
+                      "{isComposing:true,keyCode:229}",
+                      "{key:'a',keyCode:229}", "{shiftKey:true}"])
+    func unrelatedEventsArePreserved(options: String) throws {
+        let js = try context()
+        #expect(js.evaluateScript("press('keydown', \(options))")?.toBool() == false)
+        #expect(js.exception == nil)
+    }
+
+    @Test func newOrdinaryPressClearsAnUnmatchedConfirmation() throws {
+        let js = try context()
+        #expect(js.evaluateScript("press('keydown', {keyCode:229})")?.toBool() == true)
+        #expect(js.evaluateScript("press('keydown')")?.toBool() == false)
+        #expect(js.evaluateScript("press('keyup')")?.toBool() == false)
+    }
+
+    @Test func blurClearsAnUnmatchedConfirmation() throws {
+        let js = try context()
+        #expect(js.evaluateScript("press('keydown', {keyCode:229})")?.toBool() == true)
+        js.evaluateScript("press('blur')")
+        #expect(js.evaluateScript("press('keyup')")?.toBool() == false)
+    }
+
+    @Test func numpadEnterIsMatchedIndependently() throws {
+        let js = try context()
+        #expect(js.evaluateScript("press('keydown', {keyCode:229,code:'NumpadEnter'})")?.toBool() == true)
+        #expect(js.evaluateScript("press('keyup')")?.toBool() == false)
+        #expect(js.evaluateScript("press('keyup', {code:'NumpadEnter'})")?.toBool() == true)
+        #expect(js.evaluateScript("press('keydown', {code:'NumpadEnter'})")?.toBool() == false)
+    }
+}
+
+extension WebKitIntegrationTests {
+    @MainActor
+    struct PageIMEInstallationTests {
+        @Test func configurationInheritanceDoesNotDuplicateTheAllFrameScript() {
+            let controller = WKUserContentController()
+            PageIMECompatibility.install(in: controller)
+            PageIMECompatibility.install(in: controller)
+            #expect(controller.userScripts.count == 1)
+            #expect(controller.userScripts.first?.injectionTime == .atDocumentStart)
+            #expect(controller.userScripts.first?.isForMainFrameOnly == false)
+        }
+    }
 }
