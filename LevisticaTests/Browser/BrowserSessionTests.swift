@@ -3,6 +3,9 @@ import AppKit
 import WebKit
 @testable import Levistica
 
+// Bound concurrent WebKit work within this suite; MainActor alone permits
+// async tests to overlap while awaiting WebContent and Network processes.
+@Suite(.serialized)
 @MainActor
 struct BrowserSessionTests {
     @Test(arguments: ["", "2", "true"])
