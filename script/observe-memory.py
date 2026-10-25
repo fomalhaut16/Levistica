@@ -3,6 +3,8 @@
 
 Never launches, controls or stops an application. No page or profile data is read.
 This observes an unclassified workload; it does not establish comparison conditions.
+Schema 2 adds optional, system-wide context after each valid app footprint.
+Context and app validity are counted separately within the same sample deadline.
 """
 import argparse
 import datetime
@@ -98,6 +100,88 @@ def checked_build(info):
         raise ValueError('Application build source is unavailable')
     # Observation records the running binary independently of the collector checkout.
     return {'revision': revision, 'state': state}
+
+
+def parse_system_context(vm, swap, pressure, power):
+    """Select bounded system metrics; never retain raw command output."""
+    if any(not isinstance(value, str) or len(value) > 65536 for value in (vm, swap, pressure, power)):
+        raise ValueError('Invalid system context')
+    header = re.match(r'\AMach Virtual Memory Statistics: \(page size of ([0-9]+) bytes\)\n', vm)
+    if not header:
+        raise ValueError('Unrecognised VM statistics')
+    page_size = int(header[1])
+    if not 1024 <= page_size <= 1048576 or page_size & (page_size - 1):
+        raise ValueError('Invalid VM page size')
+    def pages(label):
+        values = re.findall(r'^' + re.escape(label) + r':[ \t]+([0-9]+)\.$', vm, re.M)
+        if len(values) != 1 or int(values[0]) > (2**63 - 1) // page_size:
+            raise ValueError('Invalid compressor count')
+        return int(values[0]) * page_size
+    occupied = pages('Pages occupied by compressor')
+    uncompressed = pages('Pages stored in compressor')
+    # sysctl's S_xswusage divides byte counters by 1024**2 and prints %.2fM.
+    number = r'([0-9]{1,12}\.[0-9]{2})M'
+    match = re.fullmatch(r'total\s*=\s*' + number + r'\s+used\s*=\s*' + number
+                         + r'\s+free\s*=\s*' + number + r'\s*(?:\(encrypted\))?', swap.strip())
+    if not match:
+        raise ValueError('Unrecognised swap statistics')
+    total_cents, used_cents, free_cents = (int(value.replace('.', '')) for value in match.groups())
+    # Separate rounding of the displayed MiB counters can differ by 0.01 MiB.
+    if used_cents > total_cents + 2 or free_cents > total_cents + 2 or abs(used_cents + free_cents - total_cents) > 2:
+        raise ValueError('Inconsistent swap statistics')
+    if not re.fullmatch(r'[0-9]{1,10}', pressure.strip()) or int(pressure) > 2**31 - 1:
+        raise ValueError('Invalid pressure level')
+    sources = {"Now drawing from 'AC Power'": 'ac', "Now drawing from 'Battery Power'": 'battery',
+               "Now drawing from 'UPS Power'": 'ups'}
+    lines = power.splitlines()
+    if not lines or lines[0] not in sources:
+        raise ValueError('Unknown power source')
+    return {'scope': 'system-wide', 'available': True, 'memoryPressureLevel': int(pressure),
+            'vmPageSizeBytes': page_size, 'compressorOccupiedBytes': occupied,
+            'compressorUncompressedBytes': uncompressed,
+            'swapTotalMiB': total_cents / 100, 'swapUsedMiB': used_cents / 100, 'swapFreeMiB': free_cents / 100,
+            'swapDisplayResolutionMiB': 0.01, 'powerSource': sources[lines[0]]}
+
+
+def system_context(deadline, query=None, clock=time.monotonic):
+    """Use the sample's existing deadline; context failure does not erase app data."""
+    query = m.run if query is None else query
+    started = clock()
+    phase = 'start'
+    def read(command):
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise TimeoutError()
+        # The existing runner fixes LC_ALL=C for each child, not user settings.
+        return query(command, timeout=min(5, remaining))
+    try:
+        phase = 'pressure'
+        pressure = read(['/usr/sbin/sysctl', '-n', 'kern.memorystatus_vm_pressure_level'])
+        phase = 'vm'
+        vm = read(['/usr/bin/vm_stat'])
+        phase = 'swap'
+        swap = read(['/usr/sbin/sysctl', '-n', 'vm.swapusage'])
+        phase = 'power'
+        power = read(['/usr/bin/pmset', '-g', 'batt'])
+        if clock() > deadline:
+            raise TimeoutError()
+        phase = 'parse'
+        result = parse_system_context(vm, swap, pressure, power)
+        if clock() > deadline:
+            raise TimeoutError()
+    except (TimeoutError, subprocess.TimeoutExpired):
+        result = {'scope': 'system-wide', 'available': False, 'reason': 'deadline_exceeded', 'phase': phase}
+    except (ValueError, OSError, subprocess.SubprocessError):
+        result = {'scope': 'system-wide', 'available': False, 'reason': 'unavailable', 'phase': phase}
+    result['durationSeconds'] = max(0, clock() - started)
+    return result
+
+
+def sample_with_context(pid, identity, helper, deadline):
+    sample = collect(pid, identity, helper, deadline=deadline)
+    if sample['valid']:
+        sample['systemContext'] = system_context(deadline)
+    return sample
 
 
 def collect(pid, identity, helper, clock=time.monotonic, deadline=None):
@@ -200,7 +284,7 @@ def main():
     parent.mkdir(parents=True, exist_ok=True)
     output = pathlib.Path(tempfile.mkdtemp(prefix=args.label + '.', dir=parent))
     output.chmod(0o700)
-    record = {'schema': 1, 'startedUTC': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    record = {'schema': 2, 'startedUTC': datetime.datetime.now(datetime.timezone.utc).isoformat(),
               'pid': args.pid, 'rootStarted': identity['started'], 'applicationBuild': build,
               'collectorRevision': m.run(['git', 'rev-parse', 'HEAD']).strip(),
               'collectorDirty': bool(m.run(['git', 'status', '--porcelain', '--untracked-files=normal']).strip()),
@@ -211,7 +295,9 @@ def main():
               'limits': ['Not a controlled comparison or a performance acceptance result.',
                          'Build revision comes from signed bundle metadata, not an independently inspected process image.',
                          'Attributed process sums may double-count shared memory; not exclusive RAM.',
-                         'Services outside the verified PID domain are excluded.'], 'samples': []}
+                         'Services outside the verified PID domain are excluded.',
+                         'System context is sequentially sampled, system-wide, and not part of browser totals.',
+                         'validSamples counts app footprints; validSystemContextSamples counts available context.'], 'samples': []}
     stopping = [False]
     previous = {}
     def stop(_signal, _frame):
@@ -220,7 +306,9 @@ def main():
         previous[signum] = signal.signal(signum, stop)
     def save(rows, reason):
         record.update(samples=rows, endReason=reason,
-                      validSamples=sum(row['valid'] for row in rows))
+                      validSamples=sum(row['valid'] for row in rows),
+                      validSystemContextSamples=sum(row.get('systemContext', {}).get('available') is True
+                                                    for row in rows if row['valid']))
         path = output / 'result.json'
         temporary = output / 'result.partial.json'
         temporary.write_text(json.dumps(record, indent=2) + '\n')
@@ -233,7 +321,7 @@ def main():
             raise RootChanged() from None
         if current_info != original_info:
             raise RootChanged()
-        return collect(args.pid, identity, helper, deadline=deadline)
+        return sample_with_context(args.pid, identity, helper, deadline)
     try:
         rows, reason = schedule(args.samples, args.interval, take, save, lambda: stopping[0])
     finally:

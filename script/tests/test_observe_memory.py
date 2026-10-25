@@ -202,3 +202,157 @@ class NativeResourceTests(unittest.TestCase):
                 result = subprocess.run([str(self.helper), *args], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 2)
                 self.assertEqual(result.stdout, '')
+
+
+def system_fixture(page_size=16384, occupied=10, uncompressed=30):
+    return (f'Mach Virtual Memory Statistics: (page size of {page_size} bytes)\n'
+            f'Pages occupied by compressor: {occupied}.\n'
+            f'Pages stored in compressor: {uncompressed}.\n')
+
+
+class SystemContextTests(unittest.TestCase):
+    swap = 'total = 4096.00M  used = 1024.25M  free = 3071.75M  (encrypted)\n'
+    power = "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=PRIVATE-ID) secret text\n"
+
+    def parse(self, **changes):
+        values = {'vm': system_fixture(), 'swap': self.swap, 'pressure': '1\n', 'power': self.power}
+        values.update(changes)
+        return o.parse_system_context(**values)
+
+    def test_selects_global_metrics_with_explicit_units_and_no_device_text(self):
+        result = self.parse()
+        self.assertEqual(result, {'scope': 'system-wide', 'available': True, 'memoryPressureLevel': 1,
+            'vmPageSizeBytes': 16384, 'compressorOccupiedBytes': 163840,
+            'compressorUncompressedBytes': 491520, 'swapTotalMiB': 4096.0,
+            'swapUsedMiB': 1024.25, 'swapFreeMiB': 3071.75,
+            'swapDisplayResolutionMiB': 0.01, 'powerSource': 'battery'})
+        self.assertNotIn('PRIVATE', json.dumps(result))
+        for source, expected in [('AC Power', 'ac'), ('UPS Power', 'ups')]:
+            self.assertEqual(self.parse(power=f"Now drawing from '{source}'\n")['powerSource'], expected)
+        self.assertEqual(self.parse(vm=system_fixture(page_size=4096))['compressorOccupiedBytes'], 40960)
+
+    def test_missing_duplicate_overflow_and_unrecognised_data_fail_without_echo(self):
+        variants = [
+            {'vm': 'PRIVATE-TEXT'}, {'vm': system_fixture(0)}, {'vm': system_fixture(12345)},
+            {'vm': system_fixture(occupied=-1)}, {'vm': system_fixture(uncompressed=2**64)},
+            {'vm': system_fixture() + 'Pages occupied by compressor: 1.\n'},
+            {'vm': system_fixture().replace('Pages stored in compressor: 30.\n', '')},
+            {'swap': 'PRIVATE-TEXT'}, {'swap': self.swap.replace('1024.25', 'nan')},
+            {'swap': self.swap.replace('M', 'G')}, {'swap': self.swap.replace('3071.75', '3070.00')},
+            {'pressure': '-1'}, {'pressure': str(2**31)}, {'pressure': 'PRIVATE-TEXT'},
+            {'power': "Now drawing from 'PRIVATE-DEVICE'\n"}, {'power': ''}, {'vm': 'x' * 65537}]
+        for invalid in variants:
+            with self.subTest(fields=tuple(invalid)), self.assertRaises(ValueError) as caught:
+                self.parse(**invalid)
+            self.assertNotIn('PRIVATE', str(caught.exception))
+
+    def test_zero_usage_is_valid_and_pressure_values_are_not_assigned_labels(self):
+        result = self.parse(vm=system_fixture(occupied=0, uncompressed=0),
+                            swap='total = 0.00M  used = 0.00M  free = 0.00M', pressure='3')
+        self.assertEqual(result['swapUsedMiB'], 0)
+        self.assertEqual(result['compressorOccupiedBytes'], 0)
+        self.assertEqual(result['memoryPressureLevel'], 3)
+        self.assertEqual(self.parse(swap='total = 1.00M used = 0.51M free = 0.51M')['swapTotalMiB'], 1)
+
+    def test_context_capture_uses_fixed_commands_within_shared_deadline(self):
+        calls = []
+        def query(command, timeout):
+            calls.append((command, timeout))
+            return {'kern.memorystatus_vm_pressure_level': '1', 'vm.swapusage': self.swap,
+                    '/usr/bin/vm_stat': system_fixture(), 'batt': self.power}[command[-1]]
+        result = o.system_context(12, query=query, clock=lambda: 10)
+        self.assertTrue(result['available'])
+        self.assertEqual(len(calls), 4)
+        self.assertTrue(all(timeout == 2 for _, timeout in calls))
+        self.assertEqual([c for c, _ in calls], [
+            ['/usr/sbin/sysctl', '-n', 'kern.memorystatus_vm_pressure_level'], ['/usr/bin/vm_stat'],
+            ['/usr/sbin/sysctl', '-n', 'vm.swapusage'], ['/usr/bin/pmset', '-g', 'batt']])
+
+    def test_deadline_and_query_failures_are_missing_context_not_raw_errors(self):
+        from unittest.mock import Mock
+        query = Mock()
+        result = o.system_context(10, query=query, clock=lambda: 10)
+        query.assert_not_called()
+        self.assertFalse(result['available'])
+        self.assertEqual(result['reason'], 'deadline_exceeded')
+        for error in [OSError('PRIVATE-TEXT'), subprocess.CalledProcessError(1, ['PRIVATE-TEXT'], output='PRIVATE-TEXT'),
+                      subprocess.TimeoutExpired('PRIVATE-TEXT', 1), ValueError('PRIVATE-TEXT')]:
+            with self.subTest(error=type(error).__name__):
+                result = o.system_context(12, query=Mock(side_effect=error), clock=lambda: 10)
+                self.assertFalse(result['available'])
+                self.assertNotIn('PRIVATE', json.dumps(result))
+                self.assertNotIn('swapUsedMiB', result)
+
+    def test_late_context_result_is_unavailable_and_partial_app_data_is_preserved(self):
+        responses = iter(['1', system_fixture(), self.swap, self.power])
+        times = iter([0, 0, 0, 0, 0, 11, 11])
+        result = o.system_context(10, query=lambda *a, **kw: next(responses), clock=lambda: next(times))
+        self.assertFalse(result['available'])
+        self.assertEqual(result['reason'], 'deadline_exceeded')
+        responses = iter(['1', system_fixture(), self.swap, self.power])
+        times = iter([0, 0, 0, 0, 0, 0, 11, 11])
+        result = o.system_context(10, query=lambda *a, **kw: next(responses), clock=lambda: next(times))
+        self.assertFalse(result['available'])
+        self.assertEqual(result['phase'], 'parse')
+        missing = {'available': False, 'scope': 'system-wide', 'reason': 'unavailable'}
+        app = {'valid': True, 'sumAttributedBytes': 123, 'processes': []}
+        with patch.object(o, 'collect', return_value=app), patch.object(o, 'system_context', return_value=missing):
+            sample = o.sample_with_context(10, {}, pathlib.Path('/tmp/helper'), 12)
+        self.assertTrue(sample['valid'])
+        self.assertEqual(sample['sumAttributedBytes'], 123)
+        self.assertEqual(sample['systemContext'], missing)
+        with patch.object(o, 'collect', return_value={'valid': False, 'reason': 'attribution_changed'}), \
+                patch.object(o, 'system_context') as context:
+            self.assertFalse(o.sample_with_context(10, {}, pathlib.Path('/tmp/helper'), 12)['valid'])
+            context.assert_not_called()
+        with patch.object(o, 'collect', side_effect=o.RootChanged), patch.object(o, 'system_context') as context:
+            with self.assertRaises(o.RootChanged): o.sample_with_context(10, {}, pathlib.Path('/tmp/helper'), 12)
+            context.assert_not_called()
+
+
+class ObserverRecordTests(unittest.TestCase):
+    def test_schema_and_counts_keep_context_availability_separate_from_app_validity(self):
+        import contextlib
+        import io
+        import plistlib
+        import tempfile
+        for available in (True, False):
+            with self.subTest(context_available=available), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                app = root / 'App'
+                (app / 'Contents').mkdir(parents=True)
+                (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+                    'CFBundleIdentifier': 'dev.fomalhaut16.Levistica',
+                    'LevisticaSourceRevision': 'a' * 40, 'LevisticaSourceState': 'clean'}))
+                helper = root / 'helper'
+                helper.write_bytes(b'fixture')
+                sample = {'valid': True, 'sumAttributedBytes': 123, 'processes': [],
+                          'systemContext': {'available': available, 'scope': 'system-wide'}}
+                def query(command, **kwargs):
+                    return 'b' * 40 if command == ['git', 'rev-parse', 'HEAD'] else ''
+                with patch.object(o, 'ROOT', root), patch.object(o.m, 'APP', app), \
+                        patch.object(o, 'prepare_helper', return_value=(helper, 'a' * 64)), \
+                        patch.object(o, 'root_identity', return_value={'started': 'original'}), \
+                        patch.object(o.m, 'run', side_effect=query), \
+                        patch.object(o, 'sample_with_context', return_value=sample) as take, \
+                        patch.object(sys, 'argv', ['observe-memory.py', '--pid', '10', '--samples', '1']), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    o.main()
+                result = json.loads(next((root / '.local/artifacts/observations').glob('*/result.json')).read_text())
+                self.assertEqual(result['schema'], 2)
+                self.assertEqual(result['validSamples'], 1)
+                self.assertEqual(result['validSystemContextSamples'], int(available))
+                self.assertEqual(result['endReason'], 'completed')
+                self.assertGreater(take.call_args.args[-1], time.monotonic() - 1)
+
+
+@unittest.skipUnless(sys.platform == 'darwin', 'macOS system context integration')
+class NativeSystemContextTests(unittest.TestCase):
+    def test_system_only_read_is_bounded_numeric_and_has_no_raw_command_output(self):
+        result = o.system_context(time.monotonic() + 20)
+        self.assertTrue(result['available'], result)
+        self.assertGreater(result['vmPageSizeBytes'], 0)
+        self.assertIn(result['powerSource'], ['ac', 'battery', 'ups'])
+        self.assertNotIn('InternalBattery', json.dumps(result))
+        self.assertNotIn('vm_stat', json.dumps(result))
+        self.assertLess(result['durationSeconds'], 20)
