@@ -83,6 +83,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        if self.path == '/address-route-wait':
+            body = json.dumps({'changed': self.server.address_route_event.wait(timeout=30)}).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path in ["/redirect-two", "/redirect-download", "/redirect-failure"]:
             target = {"/redirect-two": "/two", "/redirect-download": "/download",
                       "/redirect-failure": self.server.fixture_failure_url + "/failure"}[self.path]
@@ -142,6 +151,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(page.encode())
             return
         pages = {
+            '/address-route': '''<title>Address route fixture</title><h1>Address route fixture</h1>
+                <p id="status">Route ready</p><script>
+                fetch('/address-route-wait',{cache:'no-store'}).then(r=>r.json()).then(state=>{
+                    if(state.changed){history.pushState({},'', '/address-route/changed');
+                        document.title='Address route changed';document.getElementById('status').textContent='Route changed';}
+                    else{document.getElementById('status').textContent='Route wait expired';}
+                });</script>''',
             "/spa": '''<title>SPA start</title><h1>SPA fixture</h1>
                 <button onclick="history.pushState({},'', '/spa/second');document.title='SPA second';statusLine.textContent='Second route'">Push route</button>
                 <button onclick="history.replaceState({},'', '/spa/replaced');document.title='SPA replaced';statusLine.textContent='Replaced route'">Replace route</button>
@@ -264,6 +280,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if self.path in ('/address-route-reset', '/address-route-trigger'):
+            if self.headers.get('Origin') != f'http://127.0.0.1:{self.server.server_port}':
+                self.send_error(403)
+                return
+            if self.headers.get('Content-Length', '0') != '0':
+                self.send_error(400)
+                return
+            if self.path.endswith('reset'):
+                self.server.address_route_event.clear()
+            else:
+                self.server.address_route_event.set()
+            self.send_response(204)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
         if self.path == '/upload-selection':
             expected_origin = f'http://127.0.0.1:{self.server.server_port}'
             if self.headers.get('Origin') != expected_origin:
@@ -346,11 +377,17 @@ class DisconnectHandler(socketserver.BaseRequestHandler):
         self.request.shutdown(socket.SHUT_RDWR)
 
 
+class FixtureHTTPServer(http.server.ThreadingHTTPServer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.address_route_event = threading.Event()
+
+
 def main():
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = FixtureHTTPServer(("127.0.0.1", 0), Handler)
     failed = socketserver.ThreadingTCPServer(("127.0.0.1", 0), DisconnectHandler)
     threading.Thread(target=failed.serve_forever, daemon=True).start()
-    tls_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    tls_server = FixtureHTTPServer(("127.0.0.1", 0), Handler)
     for fixture_server in (server, tls_server):
         fixture_server.fixture_failure_url = f"http://127.0.0.1:{failed.server_address[1]}"
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

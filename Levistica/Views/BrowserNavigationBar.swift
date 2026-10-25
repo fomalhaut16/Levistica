@@ -48,8 +48,10 @@ struct BrowserNavigationBar: View {
         }
         .onChange(of: session.addressFocusRequest) { addressFocused = true }
         .onChange(of: tab.page?.url) { _, url in
+            // Page redirects and same-document routes must not replace an
+            // unfinished address. Successful submission or Escape ends editing.
+            guard !tab.hasEditedAddress else { return }
             tab.addressDraft = (url ?? tab.pendingURL)?.absoluteString ?? ""
-            tab.hasEditedAddress = false
         }
         .onChange(of: addressFocused) { _, focused in
             if !focused, !tab.hasEditedAddress, tab.inputError == nil, let url = tab.page?.url { tab.addressDraft = url.absoluteString }

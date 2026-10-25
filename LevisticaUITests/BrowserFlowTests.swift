@@ -851,6 +851,63 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testAddressDraftSurvivesAPageRouteChangeWhileFocused() async throws {
+        try await verifyAddressDraftSurvivesRouteChange(blurAddress: false)
+    }
+
+    @MainActor
+    func testAddressDraftSurvivesAPageRouteChangeAfterLosingFocus() async throws {
+        try await verifyAddressDraftSurvivesRouteChange(blurAddress: true)
+    }
+
+    @MainActor
+    private func verifyAddressDraftSurvivesRouteChange(blurAddress: Bool) async throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 90
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let network = URLSession(configuration: .ephemeral)
+        defer { network.invalidateAndCancel() }
+        func control(_ path: String) async throws {
+            var request = URLRequest(url: try XCTUnwrap(URL(string: base + path)))
+            request.httpMethod = "POST"
+            request.httpBody = Data()
+            request.setValue(base, forHTTPHeaderField: "Origin")
+            request.timeoutInterval = 5
+            let (_, response) = try await network.data(for: request)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 204)
+        }
+        try await control("/address-route-reset")
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        defer { app.terminate() }
+        app.activate()
+        submit(base + "/address-route", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Route ready"].waitForExistence(timeout: 10))
+        let address = app.textFields["addressField"]
+        app.typeKey("l", modifierFlags: .command)
+        waitForInputIndicator(in: app)
+        address.typeKey("a", modifierFlags: .command)
+        address.typeText("unfinished synthetic address")
+        waitForInputIndicator(in: app)
+        XCTAssertEqual(address.value as? String, "unfinished synthetic address")
+        if blurAddress { app.webViews.staticTexts["Route ready"].firstMatch.click() }
+        try await control("/address-route-trigger")
+        XCTAssertTrue(app.webViews.staticTexts["Route changed"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Address route changed"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(address.value as? String, "unfinished synthetic address")
+        XCTAssertTrue(attachWindowImage(app, name: blurAddress ? "address-draft-blurred" : "address-draft-focused",
+                                        knownFrame: app.windows["browser"].frame))
+        app.typeKey("l", modifierFlags: .command)
+        waitForInputIndicator(in: app)
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertEqual(address.value as? String, base + "/address-route/changed")
+        submit(base + "/two", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        XCTAssertEqual(address.value as? String, base + "/two")
+    }
+
+    @MainActor
     func testSameDocumentRoutesAreRecordedWithoutResurrectingDeletedHistory() throws {
         continueAfterFailure = false
         executionTimeAllowance = 120
