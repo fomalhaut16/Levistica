@@ -80,16 +80,32 @@ final class BrowserAppDelegate: NSObject, NSApplicationDelegate {
             if alert.runModal() == .alertSecondButtonReturn { session.downloads.cancelAllAndQuit() }
             return .terminateCancel
         }
-        if session?.confirmEditedInputForQuit() == false { return .terminateCancel }
         if let session, session.history.isBusy {
             flushingHistory = true
             Task { [weak self] in
                 await session.history.flush()
-                self?.flushingHistory = false
-                sender.reply(toApplicationShouldTerminate: session.prepareToQuit())
+                // Keep repeated quit requests blocked through the confirmation's
+                // nested event loop and the final AppKit reply.
+                defer { self?.flushingHistory = false }
+                sender.reply(toApplicationShouldTerminate: Self.prepareTermination(of: session) {
+                    session.confirmEditedInputForQuit()
+                })
             }
             return .terminateLater
         }
-        return session?.prepareToQuit() == false ? .terminateCancel : .terminateNow
+        guard let session else { return .terminateNow }
+        return Self.prepareTermination(of: session) {
+            session.confirmEditedInputForQuit()
+        } ? .terminateNow : .terminateCancel
+    }
+
+    static func prepareTermination(of session: BrowserSession, confirmInput: () -> Bool) -> Bool {
+        // flush() waits for the queue observed at its call site. New work may
+        // have arrived while awaiting it; never mark that session as clean.
+        guard !session.history.isBusy else { return false }
+        guard confirmInput() else { return false }
+        // prepareToQuit rechecks pending history, transfers and deletion after
+        // the confirmation's nested event loop, before saving a clean snapshot.
+        return session.prepareToQuit()
     }
 }
