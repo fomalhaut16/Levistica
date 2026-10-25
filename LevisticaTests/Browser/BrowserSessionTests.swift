@@ -3,9 +3,7 @@ import AppKit
 import WebKit
 @testable import Levistica
 
-// Bound concurrent WebKit work within this suite; MainActor alone permits
-// async tests to overlap while awaiting WebContent and Network processes.
-@Suite(.serialized)
+extension WebKitIntegrationTests {
 @MainActor
 struct BrowserSessionTests {
     @MainActor private final class SearchNavigationCapture: NSObject, WKNavigationDelegate {
@@ -799,4 +797,5 @@ struct BrowserSessionTests {
         session.moveTabs(from: IndexSet(integer: 99), to: 0)
         #expect(session.tabs.count == 3)
     }
+}
 }
