@@ -151,11 +151,18 @@ class SessionUpdateTests(unittest.TestCase):
     def test_generated_pair_is_restored_with_the_old_revision_and_newer_data_retained(self):
         self.exercise_pair()
 
+    def test_recovery_pointer_database_and_backup_return_together(self):
+        self.exercise_pair(recovered=True)
+
+    def test_failed_recovered_pair_restore_does_not_launch_the_old_app(self):
+        self.exercise_pair(fail_data_exchange=True, recovered=True)
+
     def test_failed_data_exchange_retains_newer_data_and_does_not_launch_old_revision(self):
         self.exercise_pair(fail_data_exchange=True)
 
-    def exercise_pair(self, fail_data_exchange=False):
+    def exercise_pair(self, fail_data_exchange=False, recovered=False):
         trial = self.trial
+        trial.recovered = recovered
         (self.baseline / 'generated-revision').write_text('a' * 40)
         trial.new.mkdir(parents=True)
         (trial.new / 'generated-revision').write_text('b' * 40)
@@ -175,7 +182,7 @@ class SessionUpdateTests(unittest.TestCase):
         starts = []
         def start(app, expected):
             starts.append(expected['source'])
-            with sqlite3.connect(folder / 'session.sqlite3') as db:
+            with sqlite3.connect(s.session_file(folder)) as db:
                 db.execute('UPDATE session_meta SET was_running=1')
             return 123456
         def command(args):
@@ -197,20 +204,58 @@ class SessionUpdateTests(unittest.TestCase):
                     trial.execute()
                 self.assertFalse(trial.result['success'])
                 self.assertEqual(starts, ['a' * 40, 'a' * 40, 'b' * 40, 'b' * 40])
-                rows, _ = s.read_session(folder / 'session.sqlite3')
+                rows, _ = s.read_session(s.session_file(folder))
                 self.assertEqual([r[2] for r in rows], ['Synthetic newer 0', 'Synthetic newer 1'])
-                self.assertTrue((trial.work / 'BaselineData/session.sqlite3').exists())
-                self.assertTrue((trial.work / 'NewerData/session.sqlite3').exists())
+                self.assertTrue(s.session_file(trial.work / 'BaselineData').exists())
+                self.assertTrue(s.session_file(trial.work / 'NewerData').exists())
                 return
             trial.execute()
         self.assertTrue(trial.result['success'])
         self.assertEqual(starts, ['a' * 40, 'a' * 40, 'b' * 40, 'b' * 40, 'a' * 40])
-        rows, _ = s.read_session(folder / 'session.sqlite3')
+        rows, _ = s.read_session(s.session_file(folder))
         self.assertEqual([r[2] for r in rows], ['Synthetic baseline 0', 'Synthetic baseline 1'])
-        newer, _ = s.read_session(trial.work / 'NewerData/session.sqlite3')
+        newer, _ = s.read_session(s.session_file(trial.work / 'NewerData'))
         self.assertEqual([r[2] for r in newer], ['Synthetic newer 0', 'Synthetic newer 1'])
         self.assertEqual(json.loads((folder / 'browser-preferences.json').read_bytes()), {'version': 1, 'newTabURL': None})
         self.assertEqual(json.loads((trial.work / 'NewerData/browser-preferences.json').read_bytes())['searchEngine'], 'google')
+        if recovered:
+            old_name = s.session_file(trial.work / 'BaselineData').name
+            new_name = s.session_file(trial.work / 'NewerData').name
+            self.assertNotEqual(old_name, new_name)
+            self.assertEqual(s.session_file(folder).name, old_name)
+            self.assertEqual(s.read_session(folder / (old_name + '.backup'))[1][1], 0)
+
+    def test_pointer_rejects_unsupported_values_links_missing_targets_and_paths(self):
+        folder = self.data()
+        pointer = folder / 'current-session.json'
+        name = 'recovered-session-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE.sqlite3'
+        target = folder / name
+        target.write_bytes(b'generated recovery database')
+        pointer.write_text(json.dumps({'version': 1, 'fileName': name}))
+        self.assertEqual(s.session_file(folder), target)
+        for value in [{'version': 2, 'fileName': name}, {'version': True, 'fileName': name},
+                      {'version': 1, 'fileName': '../outside.sqlite3'}, {'version': 1, 'fileName': name, 'extra': 1}, []]:
+            pointer.write_text(json.dumps(value))
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                s.session_file(folder)
+        pointer.write_text(json.dumps({'version': 1, 'fileName': name}))
+        target.unlink()
+        with self.assertRaises(ValueError):s.session_file(folder)
+        target.symlink_to(folder / 'session.sqlite3')
+        with self.assertRaises(ValueError):s.session_file(folder)
+        pointer.unlink()
+        pointer.symlink_to(folder / 'session.sqlite3')
+        with self.assertRaises(ValueError):s.session_file(folder)
+
+    def test_snapshot_rejects_an_unselected_recovery_database(self):
+        folder = self.data()
+        name = 'recovered-session-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE.sqlite3'
+        (folder / name).write_bytes(b'generated')
+        (folder / 'current-session.json').write_text(json.dumps({'version': 1, 'fileName': name}))
+        (folder / (name + '.backup')).write_bytes(b'generated backup')
+        s.metadata_digest(folder, self.trial.deadline)
+        (folder / 'recovered-session-FFFFFFFF-BBBB-CCCC-DDDD-EEEEEEEEEEEE.sqlite3').write_bytes(b'unselected')
+        with self.assertRaises(ValueError):s.metadata_digest(folder, self.trial.deadline)
 
 
 class SessionUpdateEntryTests(unittest.TestCase):
@@ -227,6 +272,13 @@ class SessionUpdateEntryTests(unittest.TestCase):
             result = subprocess.run(args, env=env, capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 0)
             self.assertEqual(record.read_text().splitlines(), [str(ROOT / 'script/rehearse-session-update.py'), '/generated/baseline'])
+            result = subprocess.run(args + ['--recovered'], env=env, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(record.read_text().splitlines()[-1], '--recovered')
+            record.unlink()
+            result = subprocess.run(args + ['--unknown'], env=env, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 2)
+            self.assertFalse(record.exists())
             for key, value in [('LEVISTICA_EPHEMERAL', '0'), ('LEVISTICA_MEASUREMENT', '0'), ('LEVISTICA_PROFILE', '1'), ('LEVISTICA_MEASUREMENT_STORE_ID', 'caller-store'), ('LEVISTICA_MEASUREMENT_PERSIST_METADATA', '1'), ('LEVISTICA_MEASUREMENT_CLEANUP_REQUEST', '')]:
                 record.unlink(missing_ok=True)
                 result = subprocess.run(args, env={**env, key: value}, capture_output=True, timeout=5)
