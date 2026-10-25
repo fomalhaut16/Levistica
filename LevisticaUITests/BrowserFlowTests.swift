@@ -3,6 +3,81 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testPublicPDFReadiness() throws {
+        guard let path = ProcessInfo.processInfo.environment["LEVISTICA_DEADLINE_WORKLOAD"],
+              !path.isEmpty, !path.hasPrefix("$(") else {
+            throw XCTSkip("Run script/test.sh --public-pdf-ui for the opt-in public-PDF trial.")
+        }
+        continueAfterFailure = false
+        executionTimeAllowance = 90
+        struct Workload: Decodable { let pid: Int32; let executable: String; let startedEpoch: Double }
+        let file = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        let directory = file.deletingLastPathComponent()
+        let checkout = directory.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        XCTAssertEqual(file.lastPathComponent, "deadline-workload.json")
+        XCTAssertEqual(directory.deletingLastPathComponent().lastPathComponent, "artifacts")
+        XCTAssertEqual(directory.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent, ".local")
+        let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: file))
+        let expected = checkout.appendingPathComponent(
+            ".local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica")
+        XCTAssertEqual(workload.executable, expected.path)
+        let running = try XCTUnwrap(NSRunningApplication(processIdentifier: workload.pid))
+        func identityMatches() -> Bool {
+            let candidates = NSRunningApplication.runningApplications(withBundleIdentifier: "dev.fomalhaut16.Levistica.measurement")
+            guard let launched = running.launchDate else { return false }
+            return !running.isTerminated && candidates.count == 1
+                && candidates.first?.processIdentifier == workload.pid
+                && running.executableURL?.path == expected.path
+                && abs(launched.timeIntervalSince1970 - workload.startedEpoch) < 1
+        }
+        XCTAssertTrue(identityMatches())
+        let app = XCUIApplication(url: expected.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent())
+        let connected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.state == .runningForeground || app.state == .runningBackground
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 5), .completed)
+        XCTAssertTrue(identityMatches())
+        let began = ProcessInfo.processInfo.systemUptime
+        func check() throws {
+            guard identityMatches(), ProcessInfo.processInfo.systemUptime - began < 80 else {
+                throw NSError(domain: "PublicPDFTrial", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "Owned process changed or trial deadline expired"])
+            }
+        }
+        defer { if identityMatches() && app.state != .notRunning { app.terminate() } }
+        try check()
+        XCTAssertTrue(running.activate(options: []))
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        try check()
+        XCTAssertTrue(app.staticTexts["webPDFNotice"].waitForExistence(timeout: 30))
+        try check()
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].waitForExistence(timeout: 10))
+        try check()
+        app.typeKey("f", modifierFlags: .command)
+        let find = app.textFields["pageFindField"]
+        XCTAssertTrue(find.waitForExistence(timeout: 5))
+        try check()
+        waitForInputIndicator(in: app)
+        try check()
+        find.click()
+        waitForInputIndicator(in: app)
+        try check()
+        find.typeText("Attention Is All You Need")
+        waitForInputIndicator(in: app)
+        try check()
+        find.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.staticTexts["見つかりました"].waitForExistence(timeout: 10))
+        try check()
+        let summary: [String: Any] = ["pdfViewerFound": true, "expectedTextFound": true,
+            "loadedPages": 1, "totalTabs": 1, "comparisonSamplesTaken": 0, "mixedWorkload": false]
+        let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: summary, options: .sortedKeys),
+                                      uniformTypeIdentifier: "public.json")
+        attachment.name = "public-pdf-readiness"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
     func testMeasurementDeadlineExit() throws {
         guard let path = ProcessInfo.processInfo.environment["LEVISTICA_DEADLINE_WORKLOAD"],
               !path.isEmpty, !path.hasPrefix("$(") else {
