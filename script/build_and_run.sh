@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Archive smoke checks do not rebuild or stop an existing app. The helper refuses
+# any pre-existing Levistica and launches only the validated archive, ephemerally.
+if [[ "${1:-}" == --verify-archive-local ]]; then
+    if [[ $# != 2 || "${CONFIGURATION:-Debug}" != Release || "${LEVISTICA_EPHEMERAL:-0}" != 1 ]]; then
+        echo 'Use CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 with --verify-archive-local ARCHIVE' >&2
+        exit 2
+    fi
+    exec python3 "$ROOT_DIR/script/verify-archive-startup.py" "$2"
+fi
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 MODE="${1:-run}"
 CONFIGURATION="${CONFIGURATION:-Debug}"
