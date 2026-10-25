@@ -31,6 +31,7 @@ struct BrowserNavigationBar: View {
                 .onExitCommand {
                     tab.addressDraft = (tab.page?.url ?? tab.pendingURL)?.absoluteString ?? ""
                     tab.hasEditedAddress = false
+                    tab.inputError = nil
                     addressFocused = false
                 }
             if tab.page?.isLoading == true {

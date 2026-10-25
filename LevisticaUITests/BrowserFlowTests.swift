@@ -2126,6 +2126,44 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testEscapeCancelsAnInvalidAddressButPreservesCertificateErrors() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 90
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let tls = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_TLS_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        defer { app.terminate() }
+        app.activate()
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        submit("javascript:alert(1)", in: app)
+        let error = app.staticTexts["errorMessage"]
+        XCTAssertTrue(error.waitForExistence(timeout: 5))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(error.waitForNonExistence(timeout: 5))
+        let address = app.textFields["addressField"]
+        XCTAssertEqual(address.value as? String, base + "/one")
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].exists)
+        submit(tls + "/one", in: app)
+        XCTAssertTrue(error.waitForExistence(timeout: 15))
+        let certificateMessage = error.value as? String ?? error.label
+        XCTAssertTrue(certificateMessage.contains("安全な接続"))
+        app.typeKey("l", modifierFlags: .command)
+        waitForInputIndicator(in: app)
+        address.typeKey("a", modifierFlags: .command)
+        address.typeText("unfinished certificate fixture address")
+        waitForInputIndicator(in: app)
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertEqual(address.value as? String, tls + "/one")
+        XCTAssertTrue(error.exists)
+        XCTAssertEqual(error.value as? String ?? error.label, certificateMessage)
+        XCTAssertTrue(attachWindowImage(app, name: "address-cancel-certificate-preserved",
+                                        knownFrame: app.windows["browser"].frame))
+    }
+
+    @MainActor
     func testUntrustedCertificateIsRejected() throws {
         let url = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_TLS_FIXTURE_URL"])
         XCTAssertTrue(url.hasPrefix("https://127.0.0.1:"))
