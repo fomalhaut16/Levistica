@@ -3,9 +3,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 MODE="${1:---unit}"
-case "$MODE" in --unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui) ;; *) echo "usage: $0 [--unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui]" >&2; exit 2;; esac
+case "$MODE" in --unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui) ;; *) echo "usage: $0 [--unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui]" >&2; exit 2;; esac
 # Diagnostic selection is fixed; never run normal launch-based tests against Profile.
-if [[ ( "$MODE" == --profile-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui ) && -n "${TEST_ONLY:-}" ]]; then
+if [[ ( "$MODE" == --profile-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui ) && -n "${TEST_ONLY:-}" ]]; then
     echo "$MODE does not accept TEST_ONLY" >&2; exit 2
 fi
 case "${LEVISTICA_MALLOC_STACKS:-0}" in 0|1) ;; *) echo 'LEVISTICA_MALLOC_STACKS must be 0 or 1' >&2; exit 2;; esac
@@ -16,13 +16,13 @@ fi
 IDLE_VARIANT=Profile
 IDLE_TEST=testProfileTwentyTabIdleRevisit
 IDLE_BUILD_ENV=(CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=1 LEVISTICA_MEASUREMENT=0)
-if [[ "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui ]]; then
+if [[ "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui ]]; then
     IDLE_VARIANT=Measurement
     IDLE_TEST=testReleaseTwentyTabIdleRevisit
     IDLE_BUILD_ENV=(CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=0 LEVISTICA_MEASUREMENT=1)
 fi
 unset LEVISTICA_PROFILE_WORKLOAD LEVISTICA_PROFILE_IDLE_WORKLOAD LEVISTICA_DEADLINE_WORKLOAD
-if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui ]]; then
+if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui ]]; then
     unset LEVISTICA_MEASUREMENT_STORE_ID LEVISTICA_MEASUREMENT_CLEANUP_REQUEST LEVISTICA_SESSION_TEST_ID
     export LEVISTICA_MEASUREMENT_PERSIST_METADATA=0
 fi
@@ -40,7 +40,7 @@ cleanup() {
     if [[ -n "$DEADLINE_PID" ]]; then kill "$DEADLINE_PID" 2>/dev/null || true; wait "$DEADLINE_PID" 2>/dev/null || true; fi
     if [[ -n "$MEMORY_PID" ]]; then kill "$MEMORY_PID" 2>/dev/null || true; wait "$MEMORY_PID" 2>/dev/null || true; fi
     if [[ -n "$COLLECTOR_PID" ]]; then kill "$COLLECTOR_PID" 2>/dev/null || true; wait "$COLLECTOR_PID" 2>/dev/null || true; fi
-    if [[ "$MODE" == --profile-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui ]]; then
+    if [[ "$MODE" == --profile-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui ]]; then
         # Reuse the verified stop/build path even if XCTest never reaches its defer.
         if python3 "$ROOT_DIR/script/check-app-processes.py" --only "$IDLE_VARIANT"; then
             env "${IDLE_BUILD_ENV[@]}" \
@@ -58,7 +58,7 @@ BUILD_ARGS=(-project "$ROOT_DIR/Levistica.xcodeproj" -scheme Levistica
 if [[ "$MODE" == --unit ]]; then
     if [[ -z "${TEST_ONLY:-}" ]]; then BUILD_ARGS+=(-only-testing:LevisticaTests); fi
 fi
-if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui ]]; then
+if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui ]]; then
     if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" build-for-testing >"$RUN_DIR/build-for-testing.log" 2>&1; then
         tail -n 70 "$RUN_DIR/build-for-testing.log" >&2; exit 1
     fi
@@ -68,9 +68,9 @@ if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui ]]; then
     DEADLINE_SECONDS=20
     DEADLINE_TEST=testMeasurementDeadlineExit
     DEADLINE_ALLOWANCE=60
-    if [[ "$MODE" == --public-pdf-ui ]]; then
-        # Fixed public document only; keep normal profiles and arbitrary URLs out of this trial.
-        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" <<'PYPDF'
+    if [[ "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui ]]; then
+        # Fixed public workloads only; keep normal profiles and arbitrary URLs out of these trials.
+        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" <<'PYPDF'
 import importlib.util
 import json
 import pathlib
@@ -83,13 +83,20 @@ spec.loader.exec_module(guard)
 record = json.loads(workload.read_text())
 guard.verify_owned(record)
 app = pathlib.Path(record['executable']).parents[2]
-subprocess.run(['/usr/bin/open', '-a', str(app), 'https://arxiv.org/pdf/1706.03762v7'],
+urls = {'--public-pdf-ui': 'https://arxiv.org/pdf/1706.03762v7',
+        '--public-video-ui': 'https://www.youtube.com/watch?v=aqz-KE-bpKQ&hl=en'}
+subprocess.run(['/usr/bin/open', '-a', str(app), urls[sys.argv[3]]],
                check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 guard.verify_owned(record)
 PYPDF
         DEADLINE_SECONDS=120
         DEADLINE_TEST=testPublicPDFReadiness
         DEADLINE_ALLOWANCE=90
+        if [[ "$MODE" == --public-video-ui ]]; then
+            DEADLINE_SECONDS=180
+            DEADLINE_TEST=testPublicVideoReadiness
+            DEADLINE_ALLOWANCE=150
+        fi
     fi
     python3 "$ROOT_DIR/script/isolated-app-deadline.py" monitor "$RUN_DIR/deadline-workload.json" \
         "$RUN_DIR/deadline-result.json" --seconds "$DEADLINE_SECONDS" >"$RUN_DIR/deadline-monitor.log" 2>&1 &
@@ -178,7 +185,7 @@ if [[ -n "${LEVISTICA_FAILURE_FIXTURE_URL:-}" ]]; then BUILD_ARGS+=("LEVISTICA_F
 if [[ -n "${TEST_ONLY:-}" ]]; then BUILD_ARGS+=("-only-testing:$TEST_ONLY"); fi
 BUILD_ARGS+=(-resultBundlePath "$RUN_DIR/Results.xcresult")
 EXPECTED_VARIANT=Debug
-[[ "$MODE" != --profile-ui && "$MODE" != --idle-ui && "$MODE" != --release-idle-ui && "$MODE" != --measure-idle-ui && "$MODE" != --deadline-ui && "$MODE" != --public-pdf-ui ]] || EXPECTED_VARIANT="$IDLE_VARIANT"
+[[ "$MODE" != --profile-ui && "$MODE" != --idle-ui && "$MODE" != --release-idle-ui && "$MODE" != --measure-idle-ui && "$MODE" != --deadline-ui && "$MODE" != --public-pdf-ui && "$MODE" != --public-video-ui ]] || EXPECTED_VARIANT="$IDLE_VARIANT"
 python3 "$ROOT_DIR/script/check-app-processes.py" --only "$EXPECTED_VARIANT"
 echo "Test artifacts: $RUN_DIR"
 if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" "$TEST_ACTION" >"$RUN_DIR/xcodebuild.log" 2>&1; then
@@ -215,7 +222,7 @@ if [[ "$MODE" == --deadline-ui ]]; then
     wait "$DEADLINE_PID"
     DEADLINE_PID=""
     echo 'Isolated app deadline and XCTest completion verified; no browsing or memory comparison.'
-elif [[ "$MODE" == --public-pdf-ui ]]; then
+elif [[ "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui ]]; then
     # The successful UI test terminates its verified app. Cancel its remaining watchdog.
     kill "$DEADLINE_PID" 2>/dev/null || true
     MONITOR_STATUS=0
@@ -231,7 +238,7 @@ if result.get('status') != 'identity_changed_no_signal':
 PYPDFEND
     fi
     DEADLINE_PID=""
-    echo 'One public PDF displayed and its expected text found; no memory comparison.'
+    echo 'Public workload UI conditions verified; no memory comparison.'
 elif [[ "$MODE" == --profile-ui ]]; then
     if [[ -n "$COLLECTOR_PID" ]]; then
         wait "$COLLECTOR_PID"
