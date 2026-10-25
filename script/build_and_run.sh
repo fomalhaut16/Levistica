@@ -4,11 +4,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Run two existing isolated revisions against newly generated metadata only.
 # This mode never builds or stops an app that was already running.
 if [[ "${1:-}" == --rehearse-session-update ]]; then
-    if [[ $# != 2 || "${CONFIGURATION:-Debug}" != Release || "${LEVISTICA_EPHEMERAL:-0}" != 1 || "${LEVISTICA_MEASUREMENT:-0}" != 1 || "${LEVISTICA_PROFILE:-0}" != 0 || "${LEVISTICA_MALLOC_STACKS:-0}" != 0 || -n "${LEVISTICA_MEASUREMENT_STORE_ID:-}" || -n "${LEVISTICA_SESSION_TEST_ID:-}" || "${LEVISTICA_MEASUREMENT_PERSIST_METADATA:-0}" != 0 || -n "${LEVISTICA_MEASUREMENT_CLEANUP_REQUEST+x}" ]]; then
+    if [[ $# -lt 2 || $# -gt 3 || ( $# == 3 && "$3" != --recovered ) || "${CONFIGURATION:-Debug}" != Release || "${LEVISTICA_EPHEMERAL:-0}" != 1 || "${LEVISTICA_MEASUREMENT:-0}" != 1 || "${LEVISTICA_PROFILE:-0}" != 0 || "${LEVISTICA_MALLOC_STACKS:-0}" != 0 || -n "${LEVISTICA_MEASUREMENT_STORE_ID:-}" || -n "${LEVISTICA_SESSION_TEST_ID:-}" || "${LEVISTICA_MEASUREMENT_PERSIST_METADATA:-0}" != 0 || -n "${LEVISTICA_MEASUREMENT_CLEANUP_REQUEST+x}" ]]; then
         echo 'Session update rehearsal requires isolated Release Measurement without caller-supplied stores' >&2
         exit 2
     fi
-    exec python3 "$ROOT_DIR/script/rehearse-session-update.py" "$2"
+    exec python3 "$ROOT_DIR/script/rehearse-session-update.py" "${@:2}"
 fi
 # Archive smoke checks do not rebuild or stop an existing app. The helper refuses
 # any pre-existing Levistica and launches only the validated archive, ephemerally.

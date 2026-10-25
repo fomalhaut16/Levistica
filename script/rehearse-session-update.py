@@ -68,11 +68,36 @@ def read_session(path):
     return rows, meta
 
 
+def session_file(folder):
+    pointer = folder / 'current-session.json'
+    if not pointer.exists() and not pointer.is_symlink():
+        target = folder / 'session.sqlite3'
+        if target.is_symlink() or not target.is_file():
+            raise ValueError('Generated default database is missing or linked')
+        return target
+    if pointer.is_symlink() or not pointer.is_file() or pointer.stat().st_size > 4096:
+        raise ValueError('Invalid generated session pointer')
+    value = json.loads(pointer.read_bytes())
+    if (not isinstance(value, dict) or set(value) != {'version', 'fileName'}
+            or type(value['version']) is not int or value['version'] != 1):
+        raise ValueError('Unsupported generated pointer')
+    name = value['fileName']
+    if not isinstance(name, str) or not re.fullmatch(r'recovered-session-[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\.sqlite3', name):
+        raise ValueError('Pointer must name one generated recovery database')
+    target = folder / name
+    if target.is_symlink() or not target.is_file():
+        raise ValueError('Generated recovery database is missing or linked')
+    return target
+
+
 def metadata_digest(folder, deadline):
     # This fresh namespace contains browser metadata, never WebKit's website store.
     allowed = {'session.sqlite3', 'session.sqlite3.backup', 'browser-preferences.json'}
+    selected = session_file(folder)
+    if selected.name != 'session.sqlite3':
+        allowed.update({'current-session.json', selected.name, selected.name + '.backup'})
     entries = list(folder.iterdir())
-    if not entries or len(entries) > 3 or any(p.name not in allowed or p.is_symlink() or not p.is_file() for p in entries):
+    if not entries or len(entries) > len(allowed) or any(p.name not in allowed or p.is_symlink() or not p.is_file() for p in entries):
         raise ValueError('Unexpected fixture files; no restore attempted')
     if sum(p.stat().st_size for p in entries) > 1024 * 1024:
         raise ValueError('Fixture exceeds one MiB')
@@ -80,7 +105,7 @@ def metadata_digest(folder, deadline):
 
 
 class Trial:
-    def __init__(self, baseline):
+    def __init__(self, baseline, recovered=False):
         self.baseline = baseline_path(baseline)
         self.new = real_path(ROOT / '.local/MeasurementDerivedData/Build/Products/Release/Levistica.app', ROOT)
         parent = real_path(ROOT / '.local/artifacts', ROOT)
@@ -91,6 +116,8 @@ class Trial:
         self.store_id = None
         self.marker_digest = None
         self.metadata_folder = None
+        self.recovered = recovered
+        self.session_name = 'session.sqlite3'
         self.result = {'success': False, 'normalDataUsed': False, 'cookiesTested': False,
                        'distributionUpdateTested': False, 'checkpoints': []}
 
@@ -181,7 +208,7 @@ class Trial:
         raise TimeoutError('Shutdown did not finish; no force kill attempted')
 
     def folder(self, pid):
-        suffix = '/LevisticaMeasurementProfiles/' + self.store_id + '/session.sqlite3'
+        suffix = '/LevisticaMeasurementProfiles/' + self.store_id + '/' + self.session_name
         base = pathlib.Path.home() / 'Library/Containers' / BUNDLE_ID / 'Data/Library/Application Support/LevisticaMeasurementProfiles'
         limit = min(self.deadline, time.monotonic() + 15)
         while time.monotonic() < limit:
@@ -217,12 +244,15 @@ class Trial:
         if folder.parent != base or folder.name != self.store_id or self.apps():
             raise ValueError('Unowned or running metadata cannot be armed')
         metadata_digest(folder, self.deadline)
-        rows, meta = read_session(folder / 'session.sqlite3')
+        database = session_file(folder)
+        if database.name != self.session_name:
+            raise ValueError('Generated pointer changed before startup')
+        rows, meta = read_session(database)
         if not rows or len(rows) > 2 or any(row[3] is not None for row in rows) or meta is None:
             raise ValueError('Only this trial\'s blank-URL fixture can be armed')
         # An inherited was_running=1 would make an open file look like a completed
         # startup. Require the app to commit a fresh 0 -> 1 transition each time.
-        with closing(sqlite3.connect(folder / 'session.sqlite3')) as db:
+        with closing(sqlite3.connect(database)) as db:
             db.execute('UPDATE session_meta SET was_running=0 WHERE id=1')
             db.commit()
 
@@ -234,7 +264,7 @@ class Trial:
         return before
 
     def verify_rows(self, folder, rows, selected):
-        actual, meta = read_session(folder / 'session.sqlite3')
+        actual, meta = read_session(session_file(folder))
         if actual != rows or meta != (selected, 1):
             raise ValueError('Generated session did not survive startup')
 
@@ -265,13 +295,20 @@ class Trial:
             raise ValueError('Bootstrap namespace is not blank')
         self.stop()
         metadata_digest(folder, self.deadline)
+        default_hash = hashlib.sha256((folder / 'session.sqlite3').read_bytes()).hexdigest()
+        if self.recovered:
+            self.select_generated_recovery(folder)
+        original_name = self.session_name
         rows = [(str(uuid.uuid4()).upper(), i, 'Synthetic baseline ' + str(i), None, 0, 'web', 0, 0) for i in range(2)]
         selected = rows[1][0]
-        with closing(sqlite3.connect(folder / 'session.sqlite3')) as db:
+        with closing(sqlite3.connect(session_file(folder))) as db:
             db.execute('DELETE FROM session_tabs')
             db.executemany('INSERT INTO session_tabs (id,position,title,url,may_reload,kind,is_kept,is_sleeping) VALUES (?,?,?,?,?,?,?,?)', rows)
             db.execute('UPDATE session_meta SET selected_id=?,was_running=0 WHERE id=1', (selected,))
             db.commit()
+        if self.recovered:
+            shutil.copyfile(session_file(folder), folder / (self.session_name + '.backup'))
+            (folder / (self.session_name + '.backup')).chmod(0o600)
         preferences = folder / 'browser-preferences.json'
         old_preferences = b'{"version":1,"newTabURL":null}\n'
         preferences.write_bytes(old_preferences)
@@ -294,10 +331,21 @@ class Trial:
         if preferences.read_bytes() != old_preferences:
             raise ValueError('Old preferences changed during update')
         self.result['checkpoints'].append('new_revision_preserved_old_session')
+        if self.recovered:
+            prior = session_file(folder)
+            self.select_generated_recovery(folder)
+            prior.rename(self.work / 'PreviousSelection.sqlite3')
+            prior.with_name(prior.name + '.backup').rename(self.work / 'PreviousSelection.sqlite3.backup')
         changed = [tuple([*row[:2], 'Synthetic newer ' + str(i), *row[3:]]) for i, row in enumerate(rows)]
-        with closing(sqlite3.connect(folder / 'session.sqlite3')) as db:
+        with closing(sqlite3.connect(session_file(folder))) as db:
             db.executemany('UPDATE session_tabs SET title=? WHERE id=?', [(row[2], row[0]) for row in changed])
             db.commit()
+        if self.recovered:
+            with closing(sqlite3.connect(session_file(folder))) as db:
+                db.execute('UPDATE session_meta SET was_running=0 WHERE id=1')
+                db.commit()
+            shutil.copyfile(session_file(folder), folder / (self.session_name + '.backup'))
+            (folder / (self.session_name + '.backup')).chmod(0o600)
         preferences.write_bytes(b'{"version":1,"newTabURL":null,"searchEngine":"google"}\n')
         pid = self.start(installed, new)
         if self.folder(pid) != folder:
@@ -315,6 +363,9 @@ class Trial:
         bundles.checked_exchange(installed, prepared, new, old, self.inspect, deadline=self.deadline)
         inspect = lambda p: metadata_digest(p, self.deadline)
         bundles.checked_exchange(folder, restore, newer_data, baseline_data, inspect, deadline=self.deadline)
+        self.session_name = session_file(folder).name
+        if self.session_name != original_name:
+            raise ValueError('The old generated pointer was not restored')
         if preferences.read_bytes() != old_preferences or metadata_digest(snapshot, self.deadline) != baseline_data:
             raise ValueError('Old data pair was not restored')
         self.result['checkpoints'].append('old_snapshot_restored_and_newer_snapshot_retained')
@@ -325,6 +376,10 @@ class Trial:
             raise ValueError('Rollback namespace changed')
         self.verify_rows(folder, rows, selected)
         self.stop()
+        if self.recovered:
+            backup_rows, backup_meta = read_session(folder / (self.session_name + '.backup'))
+            if backup_rows != rows or backup_meta != (selected, 0) or hashlib.sha256((folder / 'session.sqlite3').read_bytes()).hexdigest() != default_hash:
+                raise ValueError('Recovery backup or untouched default database changed')
         if (preferences.read_bytes() != old_preferences
                 or metadata_digest(self.work / 'NewerData', self.deadline) != newer_data
                 or self.inspect(self.baseline) != old or self.inspect(self.new) != new):
@@ -332,7 +387,21 @@ class Trial:
         self.result['checkpoints'].append('old_revision_reopened_its_corresponding_session')
         self.result.update(success=True, generatedTabCount=2, externalPageURLs=0, applicationLaunchCount=5,
                            newerSnapshotRetained=True, sourceBundlesUnchanged=True, startupCommitRequired=True,
-                           storeID=self.store_id)
+                           recoveryPointerTested=self.recovered, storeID=self.store_id)
+
+    def select_generated_recovery(self, folder):
+        self.owned()
+        if self.apps():
+            raise ValueError('Cannot select recovery data while an application is running')
+        previous = session_file(folder)
+        name = 'recovered-session-' + str(uuid.uuid4()).upper() + '.sqlite3'
+        target = folder / name
+        shutil.copyfile(previous, target)
+        target.chmod(0o600)
+        pointer = folder / 'current-session.json'
+        pointer.write_text(json.dumps({'version': 1, 'fileName': name}) + '\n')
+        pointer.chmod(0o600)
+        self.session_name = name
 
     def finish(self):
         try:
@@ -351,9 +420,9 @@ class Trial:
 
 
 def main():
-    if len(sys.argv) != 2:
-        raise ValueError('One project Measurement baseline is required')
-    trial = Trial(sys.argv[1])
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != '--recovered'):
+        raise ValueError('One project Measurement baseline and optional --recovered are required')
+    trial = Trial(sys.argv[1], recovered=len(sys.argv) == 3)
     try:
         trial.execute()
     except (Exception, KeyboardInterrupt) as error:
