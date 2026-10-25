@@ -3,6 +3,47 @@ import AppKit
 
 final class BrowserFlowTests: XCTestCase {
     @MainActor
+    func testNestedWebMenuCanBeSelectedWithPointer() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 60
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        submit(base + "/web-menu", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Nested web menu"].waitForExistence(timeout: 10))
+        let settings = app.webViews.popUpButtons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.click()
+        let quality = app.webViews.menuItems["Quality Auto (480p)"]
+        XCTAssertTrue(quality.waitForExistence(timeout: 5))
+        clickWebMenuItem(quality, in: app)
+        let resolution = app.webViews.descendants(matching: .any).matching(NSPredicate(
+            format: "title == %@ OR label == %@", "720p60", "720p60")).firstMatch
+        XCTAssertTrue(resolution.waitForExistence(timeout: 5))
+        clickWebMenuItem(resolution, in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Selected 720p60"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.webViews.staticTexts["Wrong settings"].exists)
+    }
+
+    @MainActor
+    private func clickWebMenuItem(_ element: XCUIElement, in app: XCUIApplication,
+                                  file: StaticString = #filePath, line: UInt = #line) {
+        // Web ARIA menus are not AppKit menus. Use the observed item's center
+        // rather than XCTest's native menu traversal for MenuItem.click().
+        XCTAssertTrue(element.exists, file: file, line: line)
+        let frame = element.frame
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        XCTAssertTrue(frame.minX.isFinite && frame.minY.isFinite && frame.width.isFinite && frame.height.isFinite
+                      && frame.width > 1 && frame.height > 1,
+                      file: file, line: line)
+        XCTAssertTrue(app.windows["browser"].frame.contains(center), file: file, line: line)
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+    }
+
+    @MainActor
     func testPublicPDFReadiness() throws {
         guard let path = ProcessInfo.processInfo.environment["LEVISTICA_DEADLINE_WORKLOAD"],
               !path.isEmpty, !path.hasPrefix("$(") else {
