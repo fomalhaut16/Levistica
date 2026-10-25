@@ -44,6 +44,8 @@ jobs:
           bash -n script/build_and_run.sh script/test.sh
       - name: Check numeric-only memory observation on macOS
         run: python3 -m unittest discover -s script/tests -p test_observe_memory.py -v
+      - name: Check isolated bundle exchange on macOS
+        run: python3 -m unittest discover -s script/tests -p test_rehearse_update.py -v
       - name: Build Release app
         run: CONFIGURATION=Release ./script/build_and_run.sh --build
       - name: Build isolated profiling app
