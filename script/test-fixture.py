@@ -433,7 +433,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 <button onclick="wrong.textContent='Wrong actions: 1'">再生リストに保存</button>
                 <button onclick="wrong.textContent='Wrong actions: 1'">ミュート設定を開く</button>
                 <button onclick="this.textContent='一時停止 (k)'">再生 (k)</button>
-                <button onclick="this.textContent='ミュート解除 (m)'">ミュート (m)</button>''',
+                <button onclick="this.textContent='ミュート解除 キーボード ショートカット m'">ミュート（消音） キーボード ショートカット m</button>''',
             "/web-menu": '''<title>Web menu fixture</title><h1>Nested web menu</h1>
                 <style>body{padding:24px}button{padding:12px;margin:6px}[hidden]{display:none}
                 [role=menu]{padding:12px;border:1px solid #555;width:240px}</style>

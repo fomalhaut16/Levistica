@@ -2,15 +2,24 @@ import XCTest
 import AppKit
 
 final class BrowserFlowTests: XCTestCase {
-    private static let playAction = "^(動画を再生|再生|Play|Play video)([ 　]*[（(][^）)]*[）)])?$"
-    private static let pauseAction = "^(一時停止|Pause)([ 　]*[（(][^）)]*[）)])?$"
-    private static let muteAction = "^(ミュート|Mute)([ 　]*[（(][^）)]*[）)])?$"
-    private static let unmuteAction = "^(ミュート解除|Unmute)([ 　]*[（(][^）)]*[）)])?$"
+    private static func playerAction(_ names: String, key: String) -> String {
+        "^(?:\(names))(?:[ 　]*[（(]\(key)[）)])?(?:[ 　]+(?:キーボード[ 　]+ショートカット|[Kk]eyboard[ 　]+[Ss]hortcut)[ 　]+\(key))?$"
+    }
+    private static let playAction = playerAction("動画を再生|再生|Play|Play video", key: "k")
+    private static let pauseAction = playerAction("一時停止|Pause", key: "k")
+    private static let muteAction = playerAction("ミュート[（(]消音[）)]|ミュート|Mute", key: "m")
+    private static let unmuteAction = playerAction("ミュート解除|Unmute", key: "m")
 
     @MainActor
     func testPlayerControlsDoNotSelectPlaylist() throws {
         continueAfterFailure = false
         executionTimeAllowance = 60
+        let muteNames = ["ミュート（消音） キーボード ショートカット m",
+                         "ミュート(消音) キーボード ショートカット m", "ミュート (m)", "Mute Keyboard shortcut m"]
+        for name in muteNames {
+            XCTAssertTrue(NSPredicate(format: "SELF MATCHES %@", Self.muteAction).evaluate(with: name))
+        }
+        XCTAssertFalse(NSPredicate(format: "SELF MATCHES %@", Self.muteAction).evaluate(with: "ミュート設定を開く"))
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
         let app = XCUIApplication()
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
@@ -206,15 +215,7 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(pause.waitForExistence(timeout: 15))
         evidence["stage"] = "playing"
         try hoverTransport()
-        let volumeCandidates = window.webViews.descendants(matching: .any).matching(NSPredicate(
-            format: "label MATCHES[c] %@ OR title MATCHES[c] %@",
-            "^(ミュート|音声|音量|Mute|Unmute|Volume).*", "^(ミュート|音声|音量|Mute|Unmute|Volume).*"))
-        evidence["volumeControls"] = volumeCandidates.allElementsBoundByIndex.prefix(8).map { element in
-            ["type": element.elementType.rawValue, "title": String(element.title.prefix(160)),
-             "label": String(element.label.prefix(160)), "hittable": element.isHittable] as [String: Any]
-        }
         recordEvidence()
-        try hoverTransport()
         let unmute = button(Self.unmuteAction)
         if !unmute.exists {
             let mute = button(Self.muteAction)
