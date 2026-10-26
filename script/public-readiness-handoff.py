@@ -4,7 +4,6 @@ import argparse
 import http.server
 import importlib.util
 import json
-import math
 from pathlib import Path
 import plistlib
 import secrets
@@ -28,8 +27,8 @@ def validate_snapshot(value, original=None):
     if value['phase'] != expected_phase:
         raise ValueError('Unexpected observation phase')
     numbers = fields - {'phase', 'instance', 'muted', 'paused'}
-    if any(type(value[k]) not in (int, float) or not math.isfinite(value[k]) for k in numbers):
-        raise ValueError('Snapshot numbers must be finite')
+    if any(type(value[k]) not in (int, float) or not -1e12 <= value[k] <= 1e12 for k in numbers):
+        raise ValueError('Snapshot numbers must be finite and bounded')
     if (type(value['pid']) is not int or value['pid'] <= 0
             or type(value['revision']) is not int or value['revision'] <= 0
             or not isinstance(value['instance'], str)):

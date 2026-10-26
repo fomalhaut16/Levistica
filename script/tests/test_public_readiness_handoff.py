@@ -35,6 +35,7 @@ class HandoffValidationTests(unittest.TestCase):
     def test_only_the_numeric_allowlist_can_be_retained(self):
         for changed in [{'url': 'private'}, {'token': 'private'}, {'title': 'private'},
                         {'mediaTime': float('nan')}, {'documentElapsed': float('inf')},
+                        {'mediaTime': 10 ** 1000},
                         {'pid': True}, {'revision': 1.0}, {'instance': 'not-uuid'},
                         {'muted': 1}, {'paused': 0}]:
             with self.subTest(changed=changed), self.assertRaises(ValueError):
