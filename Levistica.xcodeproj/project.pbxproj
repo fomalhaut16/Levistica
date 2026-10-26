@@ -5,6 +5,12 @@
 	objectVersion = "56";
 	archiveVersion = "1";
 	objects = {
+		71C1548D70B371DAA0D0456D = { isa = PBXFileReference; path = "Levistica/Browser/MeasurementViewport.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		492B2DD7EB42A857302B17A5 = { isa = PBXBuildFile; fileRef = 71C1548D70B371DAA0D0456D; };
+		B3CA9B22BCB7911B8CB9B9EC = { isa = PBXFileReference; path = "Levistica/Views/MeasurementViewportStatus.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		74D34A8746C151C4448FB2AB = { isa = PBXBuildFile; fileRef = B3CA9B22BCB7911B8CB9B9EC; };
+		BF7653BCF5F4057F06C951FC = { isa = PBXFileReference; path = "LevisticaTests/Browser/MeasurementViewportTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		1F6DF2B09CE07E7B7D73B27C = { isa = PBXBuildFile; fileRef = BF7653BCF5F4057F06C951FC; };
 		A44BA613BD917FF6D99A5E09 = { isa = PBXFileReference; path = "Levistica/Browser/PageIMECompatibility.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
 		37E9F6DA2BB2D3B5DDA6BD0A = { isa = PBXBuildFile; fileRef = A44BA613BD917FF6D99A5E09; };
 		13C2358D0BF6452185C06B94 = { isa = PBXFileReference; path = "Levistica/Browser/BrowserPreferences.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
@@ -342,6 +348,8 @@
 			isa = "PBXSourcesBuildPhase";
 			buildActionMask = "2147483647";
 			files = (
+				74D34A8746C151C4448FB2AB,
+				492B2DD7EB42A857302B17A5,
 				04A1139D2C0128F848875553,
 				0843339345F2AC47B633608B,
 				F225C32BD88742E26BE8C7F3,
@@ -422,6 +430,8 @@
 			isa = "PBXGroup";
 			name = "Levistica";
 			children = (
+				B3CA9B22BCB7911B8CB9B9EC,
+				71C1548D70B371DAA0D0456D,
 				FD852BD7C6E6FDEF84743F16,
 				CE80D8313D9B72F503E3CC2C,
 				06884E03345331ED6E1429A2,
@@ -471,6 +481,7 @@
 			isa = "PBXGroup";
 			name = "LevisticaTests";
 			children = (
+				BF7653BCF5F4057F06C951FC,
 				AD7088C74305D62C68AD80D3,
 				F33CDB952F8497650CE70C03,
 				E47885C028C37A9D8BDC5E8D,
@@ -688,6 +699,7 @@
 			isa = "PBXSourcesBuildPhase";
 			buildActionMask = "2147483647";
 			files = (
+				1F6DF2B09CE07E7B7D73B27C,
 				1DC57427B849C429C39A80C8,
 				9EEF9369977FADEA57406577,
 				4C92768B8353F52646572F73,
