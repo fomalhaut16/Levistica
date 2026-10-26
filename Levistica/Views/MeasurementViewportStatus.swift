@@ -8,6 +8,7 @@ struct MeasurementViewportStatus: View {
         let runtime: ObjectIdentifier?
         let revision: Int
         let loading: Bool
+        let url: URL?
     }
     private struct Request: Equatable {
         let id = UUID()
@@ -21,9 +22,14 @@ struct MeasurementViewportStatus: View {
 
     private var document: DocumentKey {
         DocumentKey(runtime: page.map(ObjectIdentifier.init), revision: page?.documentRevision ?? 0,
-                    loading: page?.isLoading ?? false)
+                    loading: page?.isLoading ?? false, url: page?.url)
     }
-    private var displayReport: String { page?.isLoading == true ? "viewport:loading" : report }
+    private var displayReport: String {
+        if let page, page.url != nil, MeasurementViewport.pageID(for: page.url) == nil {
+            return "viewport:error:ineligibleDocument:" + MeasurementViewport.ineligibleDocumentFlags(page)
+        }
+        return page?.isLoading == true ? "viewport:loading" : report
+    }
     private var displaySummary: String { page?.isLoading == true ? "viewport:loading" : summary }
 
     var body: some View {
@@ -36,7 +42,7 @@ struct MeasurementViewportStatus: View {
                 .accessibilityIdentifier("captureMeasurementViewportButton")
                 .disabled(page == nil || page?.isLoading == true
                           || report == "viewport:requested" || report == "viewport:pending"
-                          || MeasurementViewport.pageID(for: page?.webView.url) == nil)
+                          || MeasurementViewport.pageID(for: page?.url) == nil)
             Text(displaySummary)
                 .font(.system(size: 10, design: .monospaced))
                 .lineLimit(2)
@@ -64,7 +70,11 @@ struct MeasurementViewportStatus: View {
                                  snapshot.cssHeight, snapshot.devicePixelRatio)
             } catch {
                 guard Task.isCancelled == false else { return }
-                report = "viewport:unavailable"
+                report = (error as? MeasurementViewport.Failure).map { "viewport:error:" + $0.rawValue }
+                    ?? "viewport:unavailable"
+                if error as? MeasurementViewport.Failure == .ineligibleDocument {
+                    report += ":" + MeasurementViewport.ineligibleDocumentFlags(page)
+                }
                 summary = report
             }
         }

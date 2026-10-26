@@ -8,12 +8,18 @@ extension WebKitIntegrationTests {
 struct MeasurementViewportTests {
     @Test func onlyFixedPublicDocumentsAndLoopbackFixturesAreEligible() {
         for text in ["https://arxiv.org/pdf/1706.03762v7", "http://127.0.0.1:12345/one",
-                     "https://www.youtube.com/watch?v=aqz-KE-bpKQ&hl=en"] {
+                     "https://www.youtube.com/watch?v=aqz-KE-bpKQ&hl=en",
+                     "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+                     "https://www.youtube.com/watch?hl=en&v=aqz-KE-bpKQ"] {
             #expect(MeasurementViewport.pageID(for: URL(string: text)) != nil)
         }
         for text in ["https://x.com/i/flow/login", "file:///private/synthetic.pdf",
                      "http://127.0.0.1/one", "http://user:pass@127.0.0.1:12345/one",
-                     "http://127.0.0.1:12345/one?token=synthetic", "https://arxiv.org/pdf/other"] {
+                     "http://127.0.0.1:12345/one?token=synthetic", "https://arxiv.org/pdf/other",
+                     "https://www.youtube.com/watch?v=other",
+                     "https://www.youtube.com/watch?v=aqz-KE-bpKQ&v=other",
+                     "https://www.youtube.com/watch?v=aqz-KE-bpKQ&list=synthetic",
+                     "https://www.youtube.com/watch?v=aqz-KE-bpKQ#synthetic"] {
             #expect(MeasurementViewport.pageID(for: URL(string: text)) == nil)
         }
     }
@@ -79,6 +85,48 @@ struct MeasurementViewportTests {
         #expect(encoded.contains("synthetic-private-value") == false)
         #expect(encoded.contains("example.invalid") == false)
         #expect(encoded.contains("Viewport fixture") == false)
+    }
+
+    @Test func fixedVideoSnapshotIncludesIntrinsicSizeAndPlaybackState() throws {
+        let text = """
+        {"width":779,"height":683,"dpr":2,"visualScale":1,"visible":true,"ready":"complete",
+         "media":{"width":1280,"height":720,"duration":634.601,"currentTime":30,
+                  "paused":false,"muted":true,"readyState":4}}
+        """
+        let bounds = CGRect(x: 0, y: 0, width: 779, height: 683)
+        let snapshot = try MeasurementViewport.decode(text, pageID: "public-video", bounds: bounds, zoom: 1)
+        #expect(snapshot.media?.height == 720)
+        #expect(snapshot.media?.muted == true)
+        #expect(snapshot.media?.paused == false)
+        #expect(throws: MeasurementViewport.Failure.invalidMetrics) {
+            try MeasurementViewport.decode(text, pageID: "public-html", bounds: bounds, zoom: 1)
+        }
+    }
+
+    @Test(arguments: ["\"height\":0", "\"duration\":0", "\"currentTime\":-1", "\"currentTime\":900"])
+    func invalidMediaMetricsAreNotAccepted(_ replacement: String) {
+        let valid = """
+        {"width":779,"height":683,"dpr":2,"visualScale":1,"visible":true,"ready":"complete",
+         "media":{"width":1280,"height":720,"duration":634.601,"currentTime":30,
+                  "paused":false,"muted":true,"readyState":4}}
+        """
+        let key = String(replacement.prefix(through: replacement.firstIndex(of: ":")!))
+        let original = key == "\"height\":" ? "\"height\":720" :
+            (key == "\"duration\":" ? "\"duration\":634.601" : "\"currentTime\":30")
+        #expect(throws: MeasurementViewport.Failure.invalidMedia) {
+            try MeasurementViewport.decode(valid.replacingOccurrences(of: original, with: replacement),
+                pageID: "public-video", bounds: CGRect(x: 0, y: 0, width: 779, height: 683), zoom: 1)
+        }
+    }
+
+    @Test func videoWithoutLoadedMediaIsNotReady() {
+        let text = """
+        {"width":779,"height":683,"dpr":2,"visualScale":1,"visible":true,"ready":"complete"}
+        """
+        #expect(throws: MeasurementViewport.Failure.mediaUnavailable) {
+            try MeasurementViewport.decode(text, pageID: "public-video",
+                bounds: CGRect(x: 0, y: 0, width: 779, height: 683), zoom: 1)
+        }
     }
 }
 }

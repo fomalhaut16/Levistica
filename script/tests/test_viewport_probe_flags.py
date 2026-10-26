@@ -7,6 +7,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ViewportProbeFlags(unittest.TestCase):
+    def test_video_fixture_modifier_is_rejected_before_any_app_action_in_other_modes(self):
+        for args in [('--unit', '--video'), ('--public-video-ui', '--video'),
+                     ('--public-viewport-ui', '--other')]:
+            with self.subTest(args=args):
+                result = subprocess.run(['bash', str(ROOT/'script/test.sh'), *args],
+                                        capture_output=True, text=True, timeout=3)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn('--video', result.stderr)
+                self.assertEqual(result.stdout, '')
+
     def test_invalid_flags_stop_before_any_build_or_app_action(self):
         cases = [({}, '--build'), ({'CONFIGURATION': 'Release'}, '--build'),
                  ({'CONFIGURATION': 'Release', 'LEVISTICA_EPHEMERAL': '1'}, '--build'),
