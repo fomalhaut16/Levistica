@@ -2,7 +2,11 @@ import http.client
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import threading
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -155,6 +159,44 @@ class HandoffHTTPTests(unittest.TestCase):
         self.assertEqual(len(self.server.records), 1)
         self.assertEqual(sampler.attempts, 1)
         self.assertEqual(self.server.failure, 'observation_rejected')
+
+
+class ReceiverShutdownTests(unittest.TestCase):
+    def test_parent_termination_preserves_a_zero_sample_failure_record(self):
+        child_code = '''
+import importlib.util, pathlib, plistlib, sys
+from unittest.mock import patch
+spec=importlib.util.spec_from_file_location('receiver',sys.argv[1]);h=importlib.util.module_from_spec(spec);spec.loader.exec_module(h)
+info=plistlib.dumps({'LevisticaSourceRevision':'c'*40,'LevisticaSourceState':'clean'})
+def query(args,**kwargs):return 'c'*40 if args[1]=='rev-parse' else ''
+with patch.object(h.guard,'validate'),patch.object(h.guard,'validate_lifetime'),patch.object(h.guard,'verify_owned'),patch.object(h.subprocess,'check_output',side_effect=query),patch.object(pathlib.Path,'read_bytes',return_value=info):
+    h.serve(pathlib.Path(sys.argv[2]))
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            workload = path / 'workload.json'
+            workload.write_text(json.dumps({'pid': 123, 'dryRunPublicHandoff': True,
+                'executable': '/fake/Levistica.app/Contents/MacOS/Levistica'}))
+            child = subprocess.Popen([sys.executable, '-c', child_code,
+                                      str(Path(handoff.__file__)), str(workload)],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                deadline = time.monotonic() + 5
+                while not (path / 'public-handoff.json').exists() and time.monotonic() < deadline:
+                    self.assertIsNone(child.poll())
+                    time.sleep(.02)
+                self.assertTrue((path / 'public-handoff.json').exists())
+                child.terminate()
+                child.wait(timeout=5)
+                result = json.loads((path / 'public-handoff-result.json').read_text())
+                self.assertFalse(result['success'])
+                self.assertEqual(result['failure'], 'receiver_interrupted')
+                self.assertEqual(result['memorySamplesTaken'], 0)
+                self.assertEqual(result['records'], [])
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
 
 
 if __name__ == '__main__':

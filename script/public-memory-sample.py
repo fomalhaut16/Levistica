@@ -39,6 +39,7 @@ class Sampler:
         self.baseline = None
         self.stable_since = None
         self.last_check = None
+        self.last_context = None
         self.checks = 0
         self.changes = 0
         self.attempts = 0
@@ -49,6 +50,7 @@ class Sampler:
             return
         deadline = min(self.clock() + 3, deadline) if deadline is not None else self.clock() + 3
         context = self.read_context(deadline)
+        self.last_context = context
         require_context(context)
         current = self.read_attribution(deadline)
         if self.pid not in current['identities']:

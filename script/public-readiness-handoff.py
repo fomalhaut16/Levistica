@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import plistlib
 import secrets
+import signal
 import subprocess
 import time
 import uuid
@@ -96,7 +97,7 @@ def create_server(pid, verify, clock=time.monotonic, sampler=None):
                 self.server.records.append({'receivedMonotonic': received, 'snapshot': value})
             except (OSError, ValueError, subprocess.SubprocessError):
                 # Never copy malformed bodies, tokens, URLs or exception text to results.
-                self.server.failure = 'observation_rejected'
+                self.server.failure = self.server.failure or 'observation_rejected'
                 self.send_error(409)
                 return
             data = json.dumps({'success': True, 'memorySamplesTaken': sampler.attempts if sampler else 0,
@@ -157,9 +158,13 @@ def serve(workload_path):
     temporary = output / 'public-handoff.partial'
     temporary.write_text(json.dumps(config) + '\n')
     temporary.chmod(0o600)
-    temporary.replace(output / 'public-handoff.json')
     deadline = time.monotonic() + 300
+    def interrupted(_number, _frame):
+        server.failure = 'receiver_interrupted'
+        raise InterruptedError('Receiver stopped by its parent')
+    previous_handler = signal.signal(signal.SIGTERM, interrupted)
     try:
+        temporary.replace(output / 'public-handoff.json')
         while len(server.records) < 2 and server.failure is None and time.monotonic() < deadline:
             verify()
             if sampler is not None:
@@ -167,9 +172,12 @@ def serve(workload_path):
             server.handle_request()
         if len(server.records) != 2 and server.failure is None:
             server.failure = 'handoff_deadline_expired'
+    except InterruptedError:
+        server.failure = 'receiver_interrupted'
     except (OSError, ValueError, subprocess.SubprocessError):
         server.failure = 'owner_source_or_sampling_condition_changed'
     finally:
+        signal.signal(signal.SIGTERM, previous_handler)
         server.server_close()
         result = {'success': len(server.records) == 2 and server.failure is None,
                   'records': server.records, 'failure': server.failure, 'sourceRevision': revision,
@@ -177,6 +185,10 @@ def serve(workload_path):
         if sampler is not None:
             result['provisionalMemorySample'] = sampler.sample
             result['memoryProvenance'] = sampler.provenance
+            result['memoryPreparation'] = {
+                'checks': sampler.checks, 'changes': sampler.changes,
+                'stableSeconds': time.monotonic() - sampler.stable_since if sampler.stable_since is not None else None,
+                'lastSystemContext': sampler.last_context}
         path = output / 'public-handoff-result.json'
         path.write_text(json.dumps(result, indent=2) + '\n')
         path.chmod(0o600)
