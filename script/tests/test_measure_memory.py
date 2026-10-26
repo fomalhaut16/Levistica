@@ -10,6 +10,18 @@ spec.loader.exec_module(measure)
 
 
 class AttributionTests(unittest.TestCase):
+    def test_original_single_document_without_kind_remains_supported(self):
+        original = {'ready_monotonic': 10, 'viewport': {
+            'sections': 240, 'visibility': 'visible'}}
+        measure.check_fixture(original, copy.deepcopy(original), now=100)
+
+    def test_unknown_workload_cannot_inherit_single_document_readiness(self):
+        single_document = {'ready_monotonic': 10, 'viewport': {
+            'sections': 240, 'visibility': 'visible'}}
+        for kind in ['public-video', 'mixed-steady-observed', 'unknown', '', None, False, [], {}]:
+            with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, 'Unsupported fixture kind'):
+                measure.check_fixture({**single_document, 'kind': kind}, now=100)
+
     def test_measurement_requires_its_own_bundle_and_non_debuggable_sandbox_signing(self):
         info = {'CFBundleIdentifier': 'dev.fomalhaut16.Levistica.measurement'}
         entitlements = {'com.apple.security.app-sandbox': True}
