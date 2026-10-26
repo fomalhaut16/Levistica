@@ -94,6 +94,7 @@ final class BrowserFlowTests: XCTestCase {
             let executable: String
             let startedEpoch: Double
             let mixedPublicPages: Bool?
+            let audiblePublicVideo: Bool?
         }
         let file = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let directory = file.deletingLastPathComponent()
@@ -102,6 +103,7 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertEqual(directory.deletingLastPathComponent().lastPathComponent, "artifacts")
         XCTAssertEqual(directory.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent, ".local")
         let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: file))
+        let expectedMuted = workload.audiblePublicVideo != true
         let expected = checkout.appendingPathComponent(
             ".local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica")
         XCTAssertEqual(workload.executable, expected.path)
@@ -183,6 +185,7 @@ final class BrowserFlowTests: XCTestCase {
         let tabRows = window.outlines.firstMatch.outlineRows
         if workload.mixedPublicPages == true {
             evidence["mixedPublicPages"] = true
+            evidence["mutedPlayback"] = expectedMuted
             evidence["initialTabRowCount"] = tabRows.count
             recordEvidence()
             XCTAssertEqual(tabRows.count, 4)
@@ -322,6 +325,35 @@ final class BrowserFlowTests: XCTestCase {
             evidence["resumeClicked"] = true
             XCTAssertTrue(pause.waitForExistence(timeout: 5))
         }
+        if !expectedMuted {
+            XCTAssertEqual(workload.mixedPublicPages, true)
+            try hoverTransport()
+            XCTAssertTrue(unmute.waitForExistence(timeout: 5))
+            try check()
+            unmute.hover()
+            let volumes = app.webViews.sliders.matching(NSPredicate(
+                format: "label MATCHES %@ OR title MATCHES %@", "^(音量|Volume).*", "^(音量|Volume).*"))
+            XCTAssertTrue(volumes.firstMatch.waitForExistence(timeout: 5))
+            XCTAssertEqual(volumes.count, 1)
+            let volume = volumes.firstMatch
+            let frame = volume.frame
+            let point = CGPoint(x: frame.minX + frame.width * 0.1, y: frame.midY)
+            XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+            XCTAssertTrue(frame.width > frame.height && frame.width > 20 && frame.height > 0)
+            XCTAssertTrue(window.frame.contains(point))
+            XCTAssertTrue(volume.isHittable)
+            try check()
+            volume.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)).click()
+            evidence["lowVolumePointerSelection"] = true
+            let quiet = try captureMeasurementViewport(app, expectedPID: workload.pid, pageID: "public-video",
+                prefix: "public-mixed-low-volume", captureImage: false, validate: { try check() })
+            let quietMedia = try XCTUnwrap(quiet.media)
+            XCTAssertTrue((0.05...0.15).contains(try XCTUnwrap(quietMedia.volume)))
+            if quietMedia.muted {
+                XCTAssertTrue(unmute.exists && unmute.isHittable)
+                unmute.click()
+            }
+        }
         evidence["stage"] = "before-media-capture"
         recordEvidence()
         let viewport = try captureMeasurementViewport(app, expectedPID: workload.pid,
@@ -333,8 +365,11 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertEqual(media.width, 1280)
         XCTAssertEqual(media.height, 720)
         XCTAssertTrue((633...635).contains(media.duration))
-        XCTAssertTrue(media.muted && media.paused == false && media.readyState >= 2)
-        XCTAssertTrue(pause.exists && unmute.exists)
+        XCTAssertEqual(media.muted, expectedMuted)
+        if !expectedMuted { XCTAssertTrue((0.05...0.15).contains(try XCTUnwrap(media.volume))) }
+        XCTAssertTrue(media.paused == false && media.readyState >= 2)
+        XCTAssertTrue(pause.exists)
+        XCTAssertEqual(unmute.exists, expectedMuted)
         evidence["videoIntrinsicSizeVerified"] = true
         evidence["viewportVerified"] = true
         evidence["timeBeforeSeconds"] = media.currentTime
@@ -355,7 +390,9 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertEqual(afterViewport.devicePixelRatio, viewport.devicePixelRatio)
         XCTAssertEqual(afterMedia.width, 1280)
         XCTAssertEqual(afterMedia.height, 720)
-        XCTAssertTrue(afterMedia.muted && afterMedia.paused == false && afterMedia.readyState >= 2)
+        XCTAssertEqual(afterMedia.muted, expectedMuted)
+        if !expectedMuted { XCTAssertTrue((0.05...0.15).contains(try XCTUnwrap(afterMedia.volume))) }
+        XCTAssertTrue(afterMedia.paused == false && afterMedia.readyState >= 2)
         XCTAssertTrue((633...635).contains(afterMedia.duration))
         XCTAssertGreaterThanOrEqual(afterMedia.currentTime, media.currentTime + 2)
         let observedInterval = afterViewport.capturedAtEpochSeconds - viewport.capturedAtEpochSeconds
@@ -419,7 +456,9 @@ final class BrowserFlowTests: XCTestCase {
             XCTAssertEqual(returned.devicePixelRatio, 2)
             XCTAssertEqual(returnedMedia.width, 1280)
             XCTAssertEqual(returnedMedia.height, 720)
-            XCTAssertTrue(returnedMedia.muted && !returnedMedia.paused && returnedMedia.readyState >= 2)
+            XCTAssertEqual(returnedMedia.muted, expectedMuted)
+            if !expectedMuted { XCTAssertTrue((0.05...0.15).contains(try XCTUnwrap(returnedMedia.volume))) }
+            XCTAssertTrue(!returnedMedia.paused && returnedMedia.readyState >= 2)
             XCTAssertGreaterThanOrEqual(returnedMedia.currentTime, afterMedia.currentTime + 2)
             let originalOrigin = try XCTUnwrap(afterViewport.documentTimeOrigin)
             XCTAssertEqual(try XCTUnwrap(returned.documentTimeOrigin), originalOrigin)
@@ -527,6 +566,7 @@ final class BrowserFlowTests: XCTestCase {
         let paused, muted: Bool
         let readyState: Int
         let playbackRate: Double?
+        let volume: Double?
     }
 
     private struct ViewportSnapshot: Decodable {

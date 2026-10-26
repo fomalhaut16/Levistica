@@ -6,9 +6,13 @@ MODE="${1:---unit}"
 case "$MODE" in --unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui) ;; *) echo "usage: $0 [--unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui]" >&2; exit 2;; esac
 VIEWPORT_PAGE=public-html
 MIXED_PUBLIC=0
+AUDIBLE_PUBLIC=0
 if [[ $# -gt 1 ]]; then
     if [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed ]]; then
         MIXED_PUBLIC=1
+    elif [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed-audible ]]; then
+        MIXED_PUBLIC=1
+        AUDIBLE_PUBLIC=1
     elif [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --video ]]; then
         VIEWPORT_PAGE=public-video
     elif [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --pdf ]]; then
@@ -90,7 +94,7 @@ if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --pub
     DEADLINE_ALLOWANCE=60
     if [[ "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ]]; then
         # Fixed public workloads only; keep normal profiles and arbitrary URLs out of these trials.
-        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" "$MIXED_PUBLIC" <<'PYPDF'
+        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" "$MIXED_PUBLIC" "$AUDIBLE_PUBLIC" <<'PYPDF'
 import importlib.util
 import json
 import pathlib
@@ -118,6 +122,7 @@ if sys.argv[3] == '--public-video-ui' and sys.argv[5] == '1':
     targets = [viewport_urls[key] for key in
                ['public-html', 'public-pdf', 'public-chat-login', 'public-video']]
     record['mixedPublicPages'] = True
+    record['audiblePublicVideo'] = sys.argv[6] == '1'
     workload.write_text(json.dumps(record) + '\n')
 subprocess.run(['/usr/bin/open', '-a', str(app), *targets],
                check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)

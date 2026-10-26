@@ -96,12 +96,13 @@ struct MeasurementViewportTests {
         let text = """
         {"width":779,"height":683,"dpr":2,"visualScale":1,"visible":true,"ready":"complete",
          "media":{"width":1280,"height":720,"duration":634.601,"currentTime":30,
-                  "paused":false,"muted":true,"readyState":4,"playbackRate":1}}
+                  "paused":false,"muted":true,"readyState":4,"playbackRate":1,"volume":0.1}}
         """
         let bounds = CGRect(x: 0, y: 0, width: 779, height: 683)
         let snapshot = try MeasurementViewport.decode(text, pageID: "public-video", bounds: bounds, zoom: 1)
         #expect(snapshot.media?.height == 720)
         #expect(snapshot.media?.playbackRate == 1)
+        #expect(snapshot.media?.volume == 0.1)
         #expect(snapshot.media?.muted == true)
         #expect(snapshot.media?.paused == false)
         #expect(throws: MeasurementViewport.Failure.invalidMetrics) {
@@ -143,6 +144,19 @@ struct MeasurementViewportTests {
         let values = try #require(JSONSerialization.jsonObject(with: Data(flags.utf8)) as? [String: Bool])
         #expect(values["pageURLMatchesViewURL"] == true)
         #expect(values["chatHost"] == (url.host == "discord.com"))
+    }
+
+    @Test(arguments: [-0.1, 1.1])
+    func outOfRangeVolumeIsRejected(_ volume: Double) {
+        let payload = """
+        {"width":779,"height":683,"dpr":2,"visualScale":1,"visible":true,"ready":"complete",
+         "media":{"width":1280,"height":720,"duration":634.601,"currentTime":30,
+                  "paused":false,"muted":false,"readyState":4,"volume":\(volume)}}
+        """
+        #expect(throws: MeasurementViewport.Failure.invalidMedia) {
+            try MeasurementViewport.decode(payload, pageID: "public-video",
+                bounds: CGRect(x: 0, y: 0, width: 779, height: 683), zoom: 1)
+        }
     }
 
     @Test(arguments: ["\"height\":0", "\"duration\":0", "\"currentTime\":-1", "\"currentTime\":900", "\"playbackRate\":0", "\"playbackRate\":-1"])

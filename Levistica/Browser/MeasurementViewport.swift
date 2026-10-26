@@ -17,6 +17,7 @@ enum MeasurementViewport {
         let muted: Bool
         let readyState: Int
         let playbackRate: Double?
+        let volume: Double?
     }
 
     struct Snapshot: Codable, Equatable, Sendable {
@@ -115,6 +116,7 @@ enum MeasurementViewport {
                   media.currentTime.isFinite, media.currentTime >= 0,
                   media.currentTime <= media.duration else { throw Failure.invalidMedia }
             guard (2...4).contains(media.readyState) else { throw Failure.notReady }
+            if let volume = media.volume, volume.isFinite == false || !(0...1).contains(volume) { throw Failure.invalidMedia }
             if let rate = media.playbackRate, rate.isFinite == false || rate <= 0 { throw Failure.invalidMedia }
         } else if value.media != nil { throw Failure.invalidMetrics }
         return Snapshot(schema: 1, pageID: pageID, cssWidth: value.width, cssHeight: value.height,
@@ -139,7 +141,7 @@ enum MeasurementViewport {
         (() => {
         const v = \(id == "public-video" ? "document.querySelector('video.html5-main-video')" : "null");
         const media = v ? {width:v.videoWidth,height:v.videoHeight,duration:v.duration,
-          currentTime:v.currentTime,paused:v.paused,muted:v.muted,readyState:v.readyState,playbackRate:v.playbackRate} : null;
+          currentTime:v.currentTime,paused:v.paused,muted:v.muted,readyState:v.readyState,playbackRate:v.playbackRate,volume:v.volume} : null;
         const headingMatches = \(id == "public-html" ? "(() => {const h=document.querySelector('h1')?.textContent || '';return h.includes('Web Content Accessibility Guidelines') && h.includes('2.2');})()" : "null");
         return JSON.stringify({width:innerWidth,height:innerHeight,dpr:devicePixelRatio,
           visualScale:visualViewport ? visualViewport.scale : 1,
