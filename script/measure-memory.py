@@ -285,6 +285,11 @@ def sleep_contract():
 
 def check_fixture(current, original=None, now=None):
     """Refuse stale/paused video while retaining the fixed-document contract."""
+    # Only the original single-document fixture has no kind field. A new
+    # workload must define its own checks rather than inherit that contract.
+    if 'kind' in current and current['kind'] not in (
+            'manual-sleep', 'manual-sleep-cycle', 'documents', 'cross-site-documents', 'video'):
+        raise ValueError('Unsupported fixture kind')
     if current.get('kind') == 'manual-sleep':
         sleep_contract().check(current, original, check_fixture, now=now)
         return
