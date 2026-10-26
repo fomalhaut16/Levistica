@@ -96,6 +96,7 @@ final class BrowserFlowTests: XCTestCase {
             let mixedPublicPages: Bool?
             let audiblePublicVideo: Bool?
             let prepareMixedBeforePlayback: Bool?
+            let steadyPublicVideo: Bool?
         }
         let file = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let directory = file.deletingLastPathComponent()
@@ -105,6 +106,12 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertEqual(directory.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent, ".local")
         let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: file))
         let expectedMuted = workload.audiblePublicVideo != true
+        let bodySeconds: TimeInterval = workload.steadyPublicVideo == true ? 270 : 140
+        if workload.steadyPublicVideo == true {
+            XCTAssertEqual(workload.prepareMixedBeforePlayback, true)
+            XCTAssertTrue(expectedMuted)
+            executionTimeAllowance = 280
+        }
         let expected = checkout.appendingPathComponent(
             ".local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica")
         XCTAssertEqual(workload.executable, expected.path)
@@ -136,7 +143,7 @@ final class BrowserFlowTests: XCTestCase {
         }
         func check(requireForeground: Bool = true, requireMovie: Bool = true) throws {
             let sameProcess = identityMatches()
-            let withinDeadline = ProcessInfo.processInfo.systemUptime - began < 140
+            let withinDeadline = ProcessInfo.processInfo.systemUptime - began < bodySeconds
             let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier == workload.pid
             let movieMatches = requireForeground == false || requireMovie == false || (foreground && movieAddressMatches())
             evidence["guardConditions"] = ["sameProcess": sameProcess, "withinDeadline": withinDeadline,
@@ -202,7 +209,7 @@ final class BrowserFlowTests: XCTestCase {
             row.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).click()
             try check(requireMovie: false)
         }
-        func observeMixedDocuments() throws -> [[String: Any]] {
+        func observeMixedDocuments(captureImages: Bool = true) throws -> [[String: Any]] {
             let pageIDs = ["public-html", "public-pdf", "public-chat-login"]
             var observations: [[String: Any]] = []
             for (index, pageID) in pageIDs.enumerated() {
@@ -216,14 +223,16 @@ final class BrowserFlowTests: XCTestCase {
                     XCTAssertTrue(app.webViews.secureTextFields.firstMatch.waitForExistence(timeout: 5))
                 }
                 let value = try captureMeasurementViewport(app, expectedPID: workload.pid, pageID: pageID,
-                    prefix: "public-mixed-" + pageID, captureImage: pageID != "public-chat-login",
+                    prefix: "public-mixed-" + pageID, captureImage: captureImages && pageID != "public-chat-login",
                     validate: { try check(requireMovie: false) })
                 XCTAssertEqual(value.cssWidth, 779)
                 XCTAssertEqual(value.cssHeight, pageID == "public-pdf" ? 652 : 683)
                 XCTAssertEqual(value.devicePixelRatio, 2)
                 if pageID == "public-html" { XCTAssertEqual(value.documentHeadingMatches, true) }
                 observations.append(["pageID": pageID, "cssWidth": value.cssWidth, "cssHeight": value.cssHeight,
-                                     "devicePixelRatio": value.devicePixelRatio])
+                                     "devicePixelRatio": value.devicePixelRatio,
+                                     "documentInstanceID": try XCTUnwrap(value.documentIdentity).instance.uuidString,
+                                     "documentRevision": try XCTUnwrap(value.documentIdentity).revision])
             }
             return observations
         }
@@ -457,7 +466,7 @@ final class BrowserFlowTests: XCTestCase {
         evidence["playerControlConditionsMet"] = true
         recordEvidence()
         if workload.prepareMixedBeforePlayback == true {
-            XCTAssertEqual(try XCTUnwrap(afterViewport.documentTimeOrigin), try XCTUnwrap(viewport.documentTimeOrigin))
+            XCTAssertEqual(try XCTUnwrap(afterViewport.documentIdentity), try XCTUnwrap(viewport.documentIdentity))
             XCTAssertEqual(try XCTUnwrap(afterMedia.playbackRate), 1)
             let elapsed = (try XCTUnwrap(afterViewport.documentElapsedMilliseconds) -
                            XCTUnwrap(viewport.documentElapsedMilliseconds)) / 1000
@@ -473,6 +482,70 @@ final class BrowserFlowTests: XCTestCase {
             evidence["foregroundVideoAdvancedSeconds"] = advanced
             evidence["backgroundContinuationTested"] = false
             recordEvidence()
+            if workload.steadyPublicVideo == true {
+                let observationUntil = ProcessInfo.processInfo.systemUptime + 120
+                let identity = try XCTUnwrap(afterViewport.documentIdentity)
+                let initialElapsed = try XCTUnwrap(afterViewport.documentElapsedMilliseconds)
+                var previousElapsed = initialElapsed
+                var previousTime = afterMedia.currentTime
+                var checks = 0
+                repeat {
+                    let sampleAt = min(ProcessInfo.processInfo.systemUptime + 15, observationUntil)
+                    let intervalReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                        ProcessInfo.processInfo.systemUptime >= sampleAt
+                    }, object: nil)
+                    XCTAssertEqual(XCTWaiter.wait(for: [intervalReady], timeout: 17), .completed)
+                    try check()
+                    XCTAssertTrue(app.staticTexts["4タブ・読み込み済み4"].exists)
+                    let sample = try captureMeasurementViewport(app, expectedPID: workload.pid,
+                        pageID: "public-video", prefix: "public-steady-video", captureImage: false,
+                        validate: { try check() })
+                    let video = try XCTUnwrap(sample.media)
+                    XCTAssertEqual(try XCTUnwrap(sample.documentIdentity), identity)
+                    XCTAssertEqual(sample.cssWidth, 779)
+                    XCTAssertEqual(sample.cssHeight, 683)
+                    XCTAssertEqual(sample.devicePixelRatio, 2)
+                    XCTAssertEqual(video.width, 1280)
+                    XCTAssertEqual(video.height, 720)
+                    XCTAssertEqual(try XCTUnwrap(video.playbackRate), 1)
+                    XCTAssertTrue(video.muted && !video.paused && video.readyState >= 2)
+                    let currentElapsed = try XCTUnwrap(sample.documentElapsedMilliseconds)
+                    let interval = (currentElapsed - previousElapsed) / 1000
+                    XCTAssertTrue(interval > 0 && interval < 35)
+                    XCTAssertGreaterThanOrEqual(video.currentTime - previousTime, interval - 2)
+                    previousElapsed = currentElapsed
+                    previousTime = video.currentTime
+                    checks += 1
+                    XCTAssertLessThanOrEqual(checks, 9)
+                    evidence["stage"] = "mixed-steady-observing"
+                    evidence["steadyObservationCount"] = checks
+                    evidence["steadyElapsedSeconds"] = (currentElapsed - initialElapsed) / 1000
+                    evidence["steadyVideoAdvancedSeconds"] = video.currentTime - afterMedia.currentTime
+                    evidence["additionalSteadyImagesTaken"] = false
+                    recordEvidence()
+                } while ProcessInfo.processInfo.systemUptime < observationUntil
+                let total = (previousElapsed - initialElapsed) / 1000
+                XCTAssertTrue(total >= 120 && total < 180)
+                XCTAssertGreaterThanOrEqual(previousTime - afterMedia.currentTime, total - 2)
+                let retained = try observeMixedDocuments(captureImages: false)
+                XCTAssertEqual(retained.count, preloadedObservations.count)
+                for (before, after) in zip(preloadedObservations, retained) {
+                    XCTAssertEqual(try XCTUnwrap(after["pageID"] as? String), try XCTUnwrap(before["pageID"] as? String))
+                    XCTAssertEqual(try XCTUnwrap(after["documentInstanceID"] as? String),
+                                   try XCTUnwrap(before["documentInstanceID"] as? String))
+                    XCTAssertEqual(try XCTUnwrap(after["documentRevision"] as? Int),
+                                   try XCTUnwrap(before["documentRevision"] as? Int))
+                }
+                XCTAssertTrue(app.staticTexts["4タブ・読み込み済み4"].exists)
+                evidence["backgroundDocumentIdentityChecks"] = retained.count
+                evidence["backgroundDocumentIdentitiesUnchanged"] = true
+                evidence["activePageAtEnd"] = "public-chat-login"
+                evidence["readyForImmediateRAM"] = false
+                evidence["stage"] = "mixed-steady-observed"
+                evidence["memorySamplesTaken"] = 0
+                evidence["continuousEveryInstantObservation"] = false
+                recordEvidence()
+            }
             return
         }
         if workload.mixedPublicPages == true {
@@ -498,8 +571,8 @@ final class BrowserFlowTests: XCTestCase {
             if !expectedMuted { XCTAssertTrue((0.05...0.15).contains(try XCTUnwrap(returnedMedia.volume))) }
             XCTAssertTrue(!returnedMedia.paused && returnedMedia.readyState >= 2)
             XCTAssertGreaterThanOrEqual(returnedMedia.currentTime, afterMedia.currentTime + 2)
-            let originalOrigin = try XCTUnwrap(afterViewport.documentTimeOrigin)
-            XCTAssertEqual(try XCTUnwrap(returned.documentTimeOrigin), originalOrigin)
+            let originalIdentity = try XCTUnwrap(afterViewport.documentIdentity)
+            XCTAssertEqual(try XCTUnwrap(returned.documentIdentity), originalIdentity)
             XCTAssertEqual(try XCTUnwrap(returnedMedia.playbackRate), 1)
             let elapsedBefore = try XCTUnwrap(afterViewport.documentElapsedMilliseconds)
             let elapsedAfter = try XCTUnwrap(returned.documentElapsedMilliseconds)
@@ -513,7 +586,7 @@ final class BrowserFlowTests: XCTestCase {
             evidence["loadedPages"] = 4
             evidence["pageObservations"] = observations
             evidence["returnedVideoTimeSeconds"] = returnedMedia.currentTime
-            evidence["documentTimeOriginUnchanged"] = true
+            evidence["documentIdentityUnchanged"] = true
             evidence["tabSelectionIntervalSeconds"] = elapsed
             evidence["videoAdvancedSeconds"] = advanced
             evidence["videoProgressMatchedElapsedInterval"] = true
@@ -607,6 +680,11 @@ final class BrowserFlowTests: XCTestCase {
         let volume: Double?
     }
 
+    private struct ViewportDocumentIdentity: Decodable, Equatable {
+        let instance: UUID
+        let revision: Int
+    }
+
     private struct ViewportSnapshot: Decodable {
         let schema: Int
         let pageID: String
@@ -615,6 +693,7 @@ final class BrowserFlowTests: XCTestCase {
         let documentVisible: Bool
         let media: ViewportMedia?
         let documentTimeOrigin: Double?
+        let documentIdentity: ViewportDocumentIdentity?
         let documentElapsedMilliseconds: Double?
         let documentHeadingMatches: Bool?
     }

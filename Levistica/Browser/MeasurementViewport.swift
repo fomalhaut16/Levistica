@@ -20,6 +20,11 @@ enum MeasurementViewport {
         let volume: Double?
     }
 
+    struct DocumentIdentity: Codable, Equatable, Sendable {
+        let instance: UUID
+        let revision: Int
+    }
+
     struct Snapshot: Codable, Equatable, Sendable {
         let schema: Int
         let pageID: String
@@ -34,6 +39,7 @@ enum MeasurementViewport {
         let capturedAtEpochSeconds: Double
         let media: Media?
         let documentTimeOrigin: Double?
+        let documentIdentity: DocumentIdentity?
         let documentElapsedMilliseconds: Double?
         let documentHeadingMatches: Bool?
     }
@@ -100,7 +106,8 @@ enum MeasurementViewport {
         return String(decoding: data, as: UTF8.self)
     }
 
-    static func decode(_ encoded: String, pageID: String, bounds: CGRect, zoom: Double) throws -> Snapshot {
+    static func decode(_ encoded: String, pageID: String, bounds: CGRect, zoom: Double,
+                       documentIdentity: DocumentIdentity? = nil) throws -> Snapshot {
         guard let data = encoded.data(using: .utf8), let value = try? JSONDecoder().decode(Payload.self, from: data) else {
             throw Failure.invalidMetrics
         }
@@ -123,7 +130,7 @@ enum MeasurementViewport {
                         devicePixelRatio: value.dpr, visualScale: value.visualScale,
                         nativeWidth: bounds.width, nativeHeight: bounds.height, pageZoom: zoom,
                         documentVisible: value.visible, capturedAtEpochSeconds: Date().timeIntervalSince1970,
-                        media: value.media, documentTimeOrigin: value.timeOrigin,
+                        media: value.media, documentTimeOrigin: value.timeOrigin, documentIdentity: documentIdentity,
                         documentElapsedMilliseconds: value.elapsed,
                         documentHeadingMatches: value.headingMatches)
     }
@@ -161,7 +168,8 @@ enum MeasurementViewport {
         guard view.url == url, page.documentRevision == revision, view.isLoading == false,
               view.bounds == bounds, view.pageZoom == zoom else { throw Failure.documentChanged }
         try Task.checkCancellation()
-        return try decode(encoded, pageID: id, bounds: bounds, zoom: zoom)
+        return try decode(encoded, pageID: id, bounds: bounds, zoom: zoom,
+                          documentIdentity: DocumentIdentity(instance: page.measurementInstanceID, revision: revision))
     }
 }
 #endif

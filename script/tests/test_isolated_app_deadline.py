@@ -65,6 +65,42 @@ class DeadlineSafetyTests(unittest.TestCase):
         self.assertEqual(result['status'], 'identity_changed_no_signal')
         send.assert_not_called()
 
+    def test_only_the_complete_fixed_steady_workload_accepts_300_seconds(self):
+        flags = dict(steadyPublicVideo=True, mixedPublicPages=True,
+                     prepareMixedBeforePlayback=True, audiblePublicVideo=False)
+        record = {**self.record(), **flags}
+        now = [0.0]
+        send = Mock()
+        result = m.monitor(record, 300, verify=Mock(), send=send,
+                           clock=lambda: now[0], wait=lambda seconds: now.__setitem__(0, now[0] + seconds))
+        self.assertEqual(result['elapsedSeconds'], 300)
+        send.assert_called_once_with(record['pid'], signal.SIGTERM)
+        for key in flags:
+            bad = {**record, key: None}
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                m.monitor(bad, 300, verify=Mock(), send=Mock())
+        for seconds in (180, 181, 299, 301, True):
+            with self.subTest(seconds=seconds), self.assertRaises(ValueError):
+                m.monitor(record, seconds, verify=Mock(), send=Mock())
+
+    def test_startup_is_published_only_after_ownership_verification(self):
+        now = [10.0]
+        verify, started, send = Mock(), Mock(), Mock()
+        def publish(value):
+            verify.assert_called_once()
+            send.assert_not_called()
+            self.assertEqual(value, dict(status='monitoring', pid=12345,
+                                         maximumSeconds=1, startedMonotonic=10.0))
+            started(value)
+        m.monitor(self.record(), 1, verify=verify, send=send, on_started=publish,
+                  clock=lambda: now[0], wait=lambda seconds: now.__setitem__(0, now[0] + seconds))
+        started.assert_called_once()
+        for bad_seconds, bad_verify in [(181, Mock()), (1, Mock(side_effect=ValueError()))]:
+            started = Mock()
+            with self.assertRaises(ValueError):
+                m.monitor(self.record(), bad_seconds, verify=bad_verify, send=Mock(), on_started=started)
+            started.assert_not_called()
+
     def test_invalid_or_extended_lifetimes_are_rejected(self):
         for seconds in (0, 181, True, 1.5):
             with self.assertRaises(ValueError): m.monitor(self.record(), seconds, verify=Mock(), send=Mock())

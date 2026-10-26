@@ -8,9 +8,14 @@ VIEWPORT_PAGE=public-html
 MIXED_PUBLIC=0
 AUDIBLE_PUBLIC=0
 FOREGROUND_PUBLIC=0
+STEADY_PUBLIC=0
 if [[ $# -gt 1 ]]; then
     if [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed ]]; then
         MIXED_PUBLIC=1
+    elif [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed-steady ]]; then
+        MIXED_PUBLIC=1
+        FOREGROUND_PUBLIC=1
+        STEADY_PUBLIC=1
     elif [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed-foreground ]]; then
         MIXED_PUBLIC=1
         FOREGROUND_PUBLIC=1
@@ -98,7 +103,7 @@ if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --pub
     DEADLINE_ALLOWANCE=60
     if [[ "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ]]; then
         # Fixed public workloads only; keep normal profiles and arbitrary URLs out of these trials.
-        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" "$MIXED_PUBLIC" "$AUDIBLE_PUBLIC" "$FOREGROUND_PUBLIC" <<'PYPDF'
+        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" "$MIXED_PUBLIC" "$AUDIBLE_PUBLIC" "$FOREGROUND_PUBLIC" "$STEADY_PUBLIC" <<'PYPDF'
 import importlib.util
 import json
 import pathlib
@@ -128,6 +133,7 @@ if sys.argv[3] == '--public-video-ui' and sys.argv[5] == '1':
     record['mixedPublicPages'] = True
     record['audiblePublicVideo'] = sys.argv[6] == '1'
     record['prepareMixedBeforePlayback'] = sys.argv[7] == '1'
+    record['steadyPublicVideo'] = sys.argv[8] == '1'
     workload.write_text(json.dumps(record) + '\n')
 subprocess.run(['/usr/bin/open', '-a', str(app), *targets],
                check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -140,6 +146,10 @@ PYPDF
             DEADLINE_SECONDS=180
             DEADLINE_TEST=testPublicVideoReadiness
             DEADLINE_ALLOWANCE=150
+            if [[ "$STEADY_PUBLIC" == 1 ]]; then
+                DEADLINE_SECONDS=300
+                DEADLINE_ALLOWANCE=280
+            fi
         elif [[ "$MODE" == --public-viewport-ui ]]; then
             DEADLINE_SECONDS=60
             DEADLINE_TEST=testPublicViewportReadiness
@@ -147,8 +157,37 @@ PYPDF
         fi
     fi
     python3 "$ROOT_DIR/script/isolated-app-deadline.py" monitor "$RUN_DIR/deadline-workload.json" \
-        "$RUN_DIR/deadline-result.json" --seconds "$DEADLINE_SECONDS" >"$RUN_DIR/deadline-monitor.log" 2>&1 &
+        "$RUN_DIR/deadline-result.json" --seconds "$DEADLINE_SECONDS" --started "$RUN_DIR/deadline-started.json" >"$RUN_DIR/deadline-monitor.log" 2>&1 &
     DEADLINE_PID=$!
+    # Do not start UI automation unless the lifetime guard verified its owner and started.
+    python3 - "$DEADLINE_PID" "$RUN_DIR/deadline-workload.json" "$RUN_DIR/deadline-started.json" "$DEADLINE_SECONDS" <<'PYSTART'
+import json
+import math
+import os
+from pathlib import Path
+import sys
+import time
+monitor_pid = int(sys.argv[1])
+workload = json.loads(Path(sys.argv[2]).read_text())
+started_path = Path(sys.argv[3])
+limit = time.monotonic() + 5
+while not started_path.exists():
+    try:
+        os.kill(monitor_pid, 0)
+    except ProcessLookupError:
+        raise SystemExit('Deadline monitor exited before startup; inspect deadline-monitor.log')
+    if time.monotonic() >= limit:
+        raise SystemExit('Deadline monitor startup was not confirmed within five seconds')
+    time.sleep(.05)
+value = json.loads(started_path.read_text())
+began = value.get('startedMonotonic')
+if (value.get('status') != 'monitoring' or value.get('pid') != workload['pid']
+        or value.get('maximumSeconds') != int(sys.argv[4])
+        or type(began) not in (int, float) or not math.isfinite(began)
+        or not 0 <= time.monotonic() - began <= 5):
+    raise SystemExit('Deadline monitor startup identity or timestamp mismatch')
+os.kill(monitor_pid, 0)
+PYSTART
     BUILD_ARGS+=("LEVISTICA_DEADLINE_WORKLOAD=$RUN_DIR/deadline-workload.json"
         "-only-testing:LevisticaUITests/BrowserFlowTests/$DEADLINE_TEST"
         -test-timeouts-enabled YES -maximum-test-execution-time-allowance "$DEADLINE_ALLOWANCE")
