@@ -315,29 +315,34 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(pause.exists && unmute.exists)
         evidence["videoIntrinsicSizeVerified"] = true
         evidence["viewportVerified"] = true
-        let beforePosition = try XCTUnwrap(playbackTime())
-        XCTAssertEqual(beforePosition.duration, 634, "Unexpected public film duration")
-        let before = description(positionControl())
-        evidence["timeBeforeSeconds"] = beforePosition.current
-        evidence["durationSeconds"] = beforePosition.duration
-        evidence["timeBefore"] = before
+        evidence["timeBeforeSeconds"] = media.currentTime
+        evidence["durationSeconds"] = media.duration
         evidence["stage"] = "before-progress-check"
         recordEvidence()
-        XCTAssertTrue(attachWindowImage(app, name: "public-video-before-progress", knownFrame: window.frame))
-        let advancing = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            guard let now = playbackTime() else { return false }
-            return now.duration == beforePosition.duration && now.current >= beforePosition.current + 2
+        let readAfter = ProcessInfo.processInfo.systemUptime + 3
+        let interval = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            ProcessInfo.processInfo.systemUptime >= readAfter
         }, object: nil)
-        let outcome = XCTWaiter.wait(for: [advancing], timeout: 15)
-        evidence["timeAfter"] = description(positionControl())
-        evidence["timeAfterSeconds"] = playbackTime()?.current
-        evidence["seekAfter"] = String(describing: seek.value ?? "")
+        XCTAssertEqual(XCTWaiter.wait(for: [interval], timeout: 5), .completed)
+        try check()
+        let afterViewport = try captureMeasurementViewport(app, expectedPID: workload.pid,
+            pageID: "public-video", prefix: "public-video-after-viewport", validate: { try check() })
+        let afterMedia = try XCTUnwrap(afterViewport.media)
+        XCTAssertEqual(afterViewport.cssWidth, viewport.cssWidth)
+        XCTAssertEqual(afterViewport.cssHeight, viewport.cssHeight)
+        XCTAssertEqual(afterViewport.devicePixelRatio, viewport.devicePixelRatio)
+        XCTAssertEqual(afterMedia.width, 1280)
+        XCTAssertEqual(afterMedia.height, 720)
+        XCTAssertTrue(afterMedia.muted && afterMedia.paused == false && afterMedia.readyState >= 2)
+        XCTAssertTrue((633...635).contains(afterMedia.duration))
+        XCTAssertGreaterThanOrEqual(afterMedia.currentTime, media.currentTime + 2)
+        let observedInterval = afterViewport.capturedAtEpochSeconds - viewport.capturedAtEpochSeconds
+        XCTAssertTrue(observedInterval >= 3 && observedInterval < 30)
+        evidence["timeAfterSeconds"] = afterMedia.currentTime
+        evidence["captureIntervalSeconds"] = observedInterval
+        evidence["actualMediaProgressVerified"] = true
         evidence["stage"] = "after-progress-check"
         recordEvidence()
-        XCTAssertTrue(attachWindowImage(app, name: "public-video-after-progress", knownFrame: window.frame))
-        XCTAssertEqual(outcome, .completed, "Rendered playback time did not advance")
-        try check()
-        XCTAssertTrue(pause.exists && unmute.exists)
         evidence["stage"] = "playback-advanced"
         evidence["playerControlConditionsMet"] = true
         recordEvidence()
