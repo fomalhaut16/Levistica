@@ -371,6 +371,7 @@ final class BrowserFlowTests: XCTestCase {
         if workload.mixedPublicPages == true {
             evidence["mixedPublicPages"] = true
             let rows = tabRows
+            XCTAssertEqual(try XCTUnwrap(afterMedia.playbackRate), 1)
             evidence["tabRowCount"] = rows.count
             XCTAssertEqual(rows.count, 4)
             func selectTab(_ index: Int) throws {
@@ -390,12 +391,9 @@ final class BrowserFlowTests: XCTestCase {
                 evidence["stage"] = "mixed-selecting-" + pageID
                 recordEvidence()
                 try selectTab(index)
-                if pageID == "public-html" {
-                    XCTAssertTrue(app.webViews.staticTexts.matching(NSPredicate(
-                        format: "label CONTAINS %@", "Web Content Accessibility Guidelines")).firstMatch.waitForExistence(timeout: 10))
-                } else if pageID == "public-pdf" {
+                if pageID == "public-pdf" {
                     XCTAssertTrue(app.staticTexts["webPDFNotice"].waitForExistence(timeout: 10))
-                } else {
+                } else if pageID == "public-chat-login" {
                     XCTAssertTrue(app.webViews.textFields.firstMatch.waitForExistence(timeout: 12))
                     XCTAssertTrue(app.webViews.secureTextFields.firstMatch.waitForExistence(timeout: 5))
                 }
@@ -405,6 +403,7 @@ final class BrowserFlowTests: XCTestCase {
                 XCTAssertEqual(value.cssWidth, 779)
                 XCTAssertEqual(value.cssHeight, pageID == "public-pdf" ? 652 : 683)
                 XCTAssertEqual(value.devicePixelRatio, 2)
+                if pageID == "public-html" { XCTAssertEqual(value.documentHeadingMatches, true) }
                 observations.append(["pageID": pageID, "cssWidth": value.cssWidth, "cssHeight": value.cssHeight,
                                      "devicePixelRatio": value.devicePixelRatio])
             }
@@ -422,13 +421,25 @@ final class BrowserFlowTests: XCTestCase {
             XCTAssertEqual(returnedMedia.height, 720)
             XCTAssertTrue(returnedMedia.muted && !returnedMedia.paused && returnedMedia.readyState >= 2)
             XCTAssertGreaterThanOrEqual(returnedMedia.currentTime, afterMedia.currentTime + 2)
+            let originalOrigin = try XCTUnwrap(afterViewport.documentTimeOrigin)
+            XCTAssertEqual(try XCTUnwrap(returned.documentTimeOrigin), originalOrigin)
+            XCTAssertEqual(try XCTUnwrap(returnedMedia.playbackRate), 1)
+            let elapsedBefore = try XCTUnwrap(afterViewport.documentElapsedMilliseconds)
+            let elapsedAfter = try XCTUnwrap(returned.documentElapsedMilliseconds)
+            let elapsed = (elapsedAfter - elapsedBefore) / 1000
+            let advanced = returnedMedia.currentTime - afterMedia.currentTime
+            XCTAssertTrue(elapsed >= 3 && elapsed < 140)
+            XCTAssertGreaterThanOrEqual(advanced, elapsed - 2, "Video progress lagged behind the observed interval")
             XCTAssertTrue(app.staticTexts["4タブ・読み込み済み4"].exists)
             evidence["stage"] = "mixed-four-retained"
             evidence["totalTabs"] = 4
             evidence["loadedPages"] = 4
             evidence["pageObservations"] = observations
             evidence["returnedVideoTimeSeconds"] = returnedMedia.currentTime
-            evidence["videoContinuedAcrossTabSelections"] = true
+            evidence["documentTimeOriginUnchanged"] = true
+            evidence["tabSelectionIntervalSeconds"] = elapsed
+            evidence["videoAdvancedSeconds"] = advanced
+            evidence["videoProgressMatchedElapsedInterval"] = true
             evidence["backgroundSnapshotsTaken"] = false
             recordEvidence()
         }
@@ -515,6 +526,7 @@ final class BrowserFlowTests: XCTestCase {
         let width, height, duration, currentTime: Double
         let paused, muted: Bool
         let readyState: Int
+        let playbackRate: Double?
     }
 
     private struct ViewportSnapshot: Decodable {
@@ -524,6 +536,9 @@ final class BrowserFlowTests: XCTestCase {
         let nativeWidth, nativeHeight, pageZoom, capturedAtEpochSeconds: Double
         let documentVisible: Bool
         let media: ViewportMedia?
+        let documentTimeOrigin: Double?
+        let documentElapsedMilliseconds: Double?
+        let documentHeadingMatches: Bool?
     }
 
     @MainActor
