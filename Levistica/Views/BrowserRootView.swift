@@ -140,33 +140,36 @@ struct BrowserRootView: View {
                 PageFindBar(session: session, tab: tab, page: page).id(tab.id)
             }
             Divider()
-            if let page = tab.page {
-                // A tab can replace its runtime (for example, local PDF to web).
-                // The container owns one WebView, so its lifetime follows that runtime.
-                // Rendering still only attaches the existing view; it never starts a load.
-                WebPageView(page: page).id(ObjectIdentifier(page)).accessibilityIdentifier("pageView")
+            ZStack {
+                // Session owns the loaded pages. This stable host only manages their
+                // attachment, visibility and selected viewport; it never starts a load.
+                WebPageView(pages: session.tabs.compactMap(\.page), selectedPage: tab.page)
+                    .accessibilityIdentifier("pageView")
                     .overlay(alignment: .top) {
-                        if page.isLoading {
+                        if let page = tab.page, page.isLoading {
                             ProgressView(value: page.progress).progressViewStyle(.linear)
                         }
                     }
-            } else if tab.isSleeping {
-                VStack(spacing: 12) {
-                    Image(systemName: "moon.zzz").font(.largeTitle)
-                    Text("タブは休眠中です").font(.headline).accessibilityIdentifier("sleepingTabPlaceholder")
-                    Text("再開するとURLから読み込み直します。前のページの入力や再生位置は復元されません。")
-                        .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Button("ページを再開") { session.resumeSleepingTab() }
-                        .accessibilityIdentifier("resumeSleepingTabButton")
-                }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if session.recoveryRequired && tab.pendingURL != nil && tab.mayRestoreAutomatically {
-                ContentUnavailableView("ページはまだ読み込んでいません", systemImage: "globe",
-                                       description: Text("上の「選択中のページを開く」から表示できます。"))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ContentUnavailableView("Levistica", systemImage: "globe",
-                                       description: Text("URLを入力してページを開きます。"))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if tab.page == nil {
+                    if tab.isSleeping {
+                        VStack(spacing: 12) {
+                            Image(systemName: "moon.zzz").font(.largeTitle)
+                            Text("タブは休眠中です").font(.headline).accessibilityIdentifier("sleepingTabPlaceholder")
+                            Text("再開するとURLから読み込み直します。前のページの入力や再生位置は復元されません。")
+                                .foregroundStyle(.secondary).multilineTextAlignment(.center)
+                            Button("ページを再開") { session.resumeSleepingTab() }
+                                .accessibilityIdentifier("resumeSleepingTabButton")
+                        }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if session.recoveryRequired && tab.pendingURL != nil && tab.mayRestoreAutomatically {
+                        ContentUnavailableView("ページはまだ読み込んでいません", systemImage: "globe",
+                                               description: Text("上の「選択中のページを開く」から表示できます。"))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ContentUnavailableView("Levistica", systemImage: "globe",
+                                               description: Text("URLを入力してページを開きます。"))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
             }
         }
     }
