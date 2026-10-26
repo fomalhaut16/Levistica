@@ -44,6 +44,181 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testPublicVideoReadiness() throws {
+        guard let path = ProcessInfo.processInfo.environment["LEVISTICA_DEADLINE_WORKLOAD"],
+              !path.isEmpty, !path.hasPrefix("$(") else {
+            throw XCTSkip("Run script/test.sh --public-video-ui for the opt-in player-controls trial.")
+        }
+        continueAfterFailure = false
+        executionTimeAllowance = 150
+        struct Workload: Decodable { let pid: Int32; let executable: String; let startedEpoch: Double }
+        let file = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        let directory = file.deletingLastPathComponent()
+        let checkout = directory.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        XCTAssertEqual(file.lastPathComponent, "deadline-workload.json")
+        XCTAssertEqual(directory.deletingLastPathComponent().lastPathComponent, "artifacts")
+        XCTAssertEqual(directory.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent, ".local")
+        let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: file))
+        let expected = checkout.appendingPathComponent(
+            ".local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica")
+        XCTAssertEqual(workload.executable, expected.path)
+        let running = try XCTUnwrap(NSRunningApplication(processIdentifier: workload.pid))
+        func identityMatches() -> Bool {
+            let candidates = NSRunningApplication.runningApplications(withBundleIdentifier: "dev.fomalhaut16.Levistica.measurement")
+            guard let launched = running.launchDate else { return false }
+            return !running.isTerminated && candidates.count == 1
+                && candidates.first?.processIdentifier == workload.pid
+                && running.executableURL?.path == expected.path
+                && abs(launched.timeIntervalSince1970 - workload.startedEpoch) < 1
+        }
+        XCTAssertTrue(identityMatches())
+        let app = XCUIApplication(url: expected.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent())
+        let connected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.state == .runningForeground || app.state == .runningBackground
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 5), .completed)
+        XCTAssertTrue(identityMatches())
+        let began = ProcessInfo.processInfo.systemUptime
+        var evidence: [String: Any] = ["stage": "attached", "comparisonSamplesTaken": 0,
+                                       "decodedFormatVerified": false, "playerControlConditionsMet": false, "advertisementAbsenceVerified": false]
+        func check() throws {
+            guard identityMatches(), ProcessInfo.processInfo.systemUptime - began < 140 else {
+                throw NSError(domain: "PublicVideoTrial", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "Owned process changed or deadline expired"])
+            }
+        }
+        func button(_ expression: String) -> XCUIElement {
+            app.webViews.buttons.matching(NSPredicate(format: "label MATCHES %@ OR title MATCHES %@",
+                                                     expression, expression)).firstMatch
+        }
+        func item(_ expression: String) -> XCUIElement {
+            app.webViews.descendants(matching: .any).matching(NSPredicate(
+                format: "label MATCHES %@ OR title MATCHES %@", expression, expression)).firstMatch
+        }
+        func description(_ element: XCUIElement) -> String {
+            [element.title, element.label, String(describing: element.value ?? "")].joined(separator: " ")
+        }
+        func recordEvidence() {
+            let attachment = XCTAttachment(data: (try? JSONSerialization.data(withJSONObject: evidence, options: .sortedKeys)) ?? Data(),
+                                          uniformTypeIdentifier: "public.json")
+            attachment.name = "public-video-readiness-" + String(describing: evidence["stage"] ?? "unknown")
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        defer {
+            recordEvidence()
+            if identityMatches() && app.state != .notRunning { app.terminate() }
+        }
+        try check()
+        XCTAssertTrue(running.activate(options: []))
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        let document = app.webViews.matching(NSPredicate(format: "label CONTAINS %@", "Big Buck Bunny")).firstMatch
+        XCTAssertTrue(document.waitForExistence(timeout: 30), "Expected public film did not load")
+        try check()
+        XCTAssertTrue((app.textFields["addressField"].value as? String)?.contains("aqz-KE-bpKQ") == true)
+        let window = app.windows["browser"]
+        XCTAssertTrue(window.exists)
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.42)).hover()
+        let pause = button("^(一時停止|Pause).*")
+        if !pause.exists {
+            let play = button("^(再生|Play).*")
+            XCTAssertTrue(play.waitForExistence(timeout: 10))
+            try check()
+            play.click()
+        }
+        XCTAssertTrue(pause.waitForExistence(timeout: 15))
+        evidence["stage"] = "playing"
+        let unmute = button("^(ミュート解除|Unmute).*")
+        if !unmute.exists {
+            let mute = button("^(ミュート|Mute).*")
+            XCTAssertTrue(mute.waitForExistence(timeout: 5))
+            try check()
+            mute.click()
+        }
+        XCTAssertTrue(unmute.waitForExistence(timeout: 5))
+        evidence["stage"] = "muted"
+        recordEvidence()
+        try check()
+        let settings = app.webViews.popUpButtons.matching(NSPredicate(
+            format: "label MATCHES %@ OR title MATCHES %@", "^(設定|Settings).*", "^(設定|Settings).*" )).firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.click()
+        let quality = item("^(画質|Quality).*")
+        XCTAssertTrue(quality.waitForExistence(timeout: 5))
+        evidence["qualityBefore"] = description(quality)
+        try check()
+        clickWebMenuItem(quality, in: app)
+        evidence["stage"] = "quality-menu"
+        let resolution = item("^720p60.*")
+        XCTAssertTrue(resolution.waitForExistence(timeout: 5))
+        try check()
+        clickWebMenuItem(resolution, in: app)
+        settings.click()
+        XCTAssertTrue(quality.waitForExistence(timeout: 5))
+        let selected = description(quality)
+        evidence["selectedQuality"] = selected
+        XCTAssertTrue(selected.contains("720p60"), "Selected quality is not evidenced")
+        evidence["stage"] = "quality-selected"
+        recordEvidence()
+        XCTAssertTrue(attachWindowImage(app, name: "public-video-selected-quality", knownFrame: window.frame))
+        try check()
+        settings.click()
+        let seek = app.webViews.sliders.matching(NSPredicate(
+            format: "label MATCHES %@ OR title MATCHES %@", ".*(移動スライダー|Seek slider|再生位置).*",
+            ".*(移動スライダー|Seek slider|再生位置).*" )).firstMatch
+        XCTAssertTrue(seek.waitForExistence(timeout: 5))
+        evidence["seekBefore"] = String(describing: seek.value ?? "")
+        func positionControl() -> XCUIElement {
+            app.webViews.buttons.matching(NSPredicate(format: "title MATCHES %@ OR label MATCHES %@",
+                                                      "^[0-9].* / .*", "^[0-9].* / .*")).firstMatch
+        }
+        let position = positionControl()
+        XCTAssertTrue(position.waitForExistence(timeout: 5))
+        position.hover()
+        func playbackTime() -> (current: Int, duration: Int)? {
+            let control = positionControl()
+            let text = control.title.isEmpty ? control.label : control.title
+            let halves = text.components(separatedBy: " / ")
+            func seconds(_ text: String) -> Int? {
+                let parts = text.components(separatedBy: CharacterSet(charactersIn: "0123456789").inverted)
+                    .filter { !$0.isEmpty }.compactMap(Int.init)
+                guard (1...3).contains(parts.count), parts.last! < 60,
+                      parts.count != 3 || parts[1] < 60 else { return nil }
+                return parts.reduce(0) { $0 * 60 + $1 }
+            }
+            guard halves.count == 2, let current = seconds(halves[0]), let duration = seconds(halves[1]) else { return nil }
+            return (current, duration)
+        }
+        let beforePosition = try XCTUnwrap(playbackTime())
+        XCTAssertEqual(beforePosition.duration, 634, "Unexpected public film duration")
+        let before = description(positionControl())
+        evidence["timeBeforeSeconds"] = beforePosition.current
+        evidence["durationSeconds"] = beforePosition.duration
+        evidence["timeBefore"] = before
+        evidence["stage"] = "before-progress-check"
+        recordEvidence()
+        XCTAssertTrue(attachWindowImage(app, name: "public-video-before-progress", knownFrame: window.frame))
+        let advancing = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let now = playbackTime() else { return false }
+            return now.duration == beforePosition.duration && now.current >= beforePosition.current + 2
+        }, object: nil)
+        let outcome = XCTWaiter.wait(for: [advancing], timeout: 15)
+        evidence["timeAfter"] = description(positionControl())
+        evidence["timeAfterSeconds"] = playbackTime()?.current
+        evidence["seekAfter"] = String(describing: seek.value ?? "")
+        evidence["stage"] = "after-progress-check"
+        recordEvidence()
+        XCTAssertTrue(attachWindowImage(app, name: "public-video-after-progress", knownFrame: window.frame))
+        XCTAssertEqual(outcome, .completed, "Rendered playback time did not advance")
+        try check()
+        XCTAssertTrue(pause.exists && unmute.exists)
+        evidence["stage"] = "playback-advanced"
+        evidence["playerControlConditionsMet"] = true
+        recordEvidence()
+    }
+
+
+    @MainActor
     func testPublicPDFReadiness() throws {
         guard let path = ProcessInfo.processInfo.environment["LEVISTICA_DEADLINE_WORKLOAD"],
               !path.isEmpty, !path.hasPrefix("$(") else {
