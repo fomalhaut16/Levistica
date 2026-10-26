@@ -48,7 +48,8 @@ enum MeasurementViewport {
         let fixed = [
             "https://www.youtube.com/watch?v=aqz-KE-bpKQ&hl=en": "public-video",
             "https://www.w3.org/TR/2024/REC-WCAG22-20241212/": "public-html",
-            "https://arxiv.org/pdf/1706.03762v7": "public-pdf"
+            "https://arxiv.org/pdf/1706.03762v7": "public-pdf",
+            "https://discord.com/login": "public-chat-login"
         ]
         if let id = fixed[url.absoluteString] { return id }
         if let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
@@ -83,7 +84,10 @@ enum MeasurementViewport {
                      "onlyVideoAndLanguageKeys": items.allSatisfy { ["v", "hl"].contains($0.name) },
                      "englishParameter": items.contains { $0.name == "hl" && $0.value == "en" },
                      "fragmentAbsent": parts?.fragment == nil || parts?.fragment == "",
-                     "localPDFAbsent": page.localPDF == nil]
+                     "localPDFAbsent": page.localPDF == nil,
+                     "pageURLMatchesViewURL": page.url == page.webView.url,
+                     "chatHost": parts?.host == "discord.com",
+                     "chatLoginPath": parts?.path == "/login", "queryPresent": !items.isEmpty]
         guard let data = try? JSONSerialization.data(withJSONObject: flags, options: .sortedKeys) else { return "" }
         return String(decoding: data, as: UTF8.self)
     }
@@ -113,6 +117,9 @@ enum MeasurementViewport {
     static func capture(_ page: PageRuntime) async throws -> Snapshot {
         let view = page.webView
         guard let id = pageID(for: view.url), page.localPDF == nil else { throw Failure.ineligibleDocument }
+        if id == "public-chat-login", view.configuration.websiteDataStore.isPersistent {
+            throw Failure.ineligibleDocument
+        }
         guard page.failure == nil, view.isLoading == false else { throw Failure.notReady }
         let url = view.url, revision = page.documentRevision, bounds = view.bounds, zoom = view.pageZoom
         // A fixed read in the isolated client world; no page-to-native message handler or content values.
