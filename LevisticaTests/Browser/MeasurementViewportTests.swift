@@ -8,12 +8,15 @@ extension WebKitIntegrationTests {
 struct MeasurementViewportTests {
     @Test func onlyFixedPublicDocumentsAndLoopbackFixturesAreEligible() {
         for text in ["https://arxiv.org/pdf/1706.03762v7", "http://127.0.0.1:12345/one",
+                     "https://x.com/i/flow/login", "https://discord.com/login",
                      "https://www.youtube.com/watch?v=aqz-KE-bpKQ&hl=en",
                      "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
                      "https://www.youtube.com/watch?hl=en&v=aqz-KE-bpKQ"] {
             #expect(MeasurementViewport.pageID(for: URL(string: text)) != nil)
         }
-        for text in ["https://x.com/i/flow/login", "file:///private/synthetic.pdf",
+        for text in ["https://x.com/home", "https://discord.com/channels/@me", "file:///private/synthetic.pdf",
+                     "https://x.com/i/flow/login?token=synthetic", "https://discord.com/login#synthetic",
+                     "https://user:pass@discord.com/login", "http://discord.com/login",
                      "http://127.0.0.1/one", "http://user:pass@127.0.0.1:12345/one",
                      "http://127.0.0.1:12345/one?token=synthetic", "https://arxiv.org/pdf/other",
                      "https://www.youtube.com/watch?v=other",
@@ -101,6 +104,36 @@ struct MeasurementViewportTests {
         #expect(throws: MeasurementViewport.Failure.invalidMetrics) {
             try MeasurementViewport.decode(text, pageID: "public-html", bounds: bounds, zoom: 1)
         }
+    }
+
+    @Test(arguments: ["https://x.com/i/flow/login", "https://discord.com/login"])
+    func simulatedPublicLoginGeometryNeverIncludesFormContents(_ address: String) async throws {
+        let page = PageRuntime(dataStore: .nonPersistent())
+        defer { page.stop() }
+        page.webView.frame = CGRect(x: 0, y: 0, width: 640, height: 480)
+        let url = try #require(URL(string: address))
+        page.webView.loadSimulatedRequest(URLRequest(url: url), responseHTML: """
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'">
+        <title>Synthetic login fixture</title>
+        <input type="email" value="synthetic-private-account">
+        <input type="password" value="synthetic-private-password">
+        <p>synthetic-private-content</p>
+        """)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while page.webView.title != "Synthetic login fixture" || page.webView.isLoading,
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(page.webView.title == "Synthetic login fixture" && !page.webView.isLoading)
+        let snapshot = try await MeasurementViewport.capture(page)
+        #expect(snapshot.pageID == MeasurementViewport.pageID(for: url))
+        #expect(snapshot.cssWidth == 640)
+        #expect(snapshot.media == nil)
+        let data = try JSONEncoder().encode(snapshot)
+        let encoded = String(decoding: data, as: UTF8.self)
+        #expect(!encoded.contains("synthetic-private"))
+        #expect(!encoded.contains("Synthetic login"))
+        #expect(!encoded.contains(url.host!))
     }
 
     @Test(arguments: ["\"height\":0", "\"duration\":0", "\"currentTime\":-1", "\"currentTime\":900"])

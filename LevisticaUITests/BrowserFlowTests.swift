@@ -383,7 +383,7 @@ final class BrowserFlowTests: XCTestCase {
             ".local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica")
         let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: file))
         let expectedPageID = workload.viewportPageID ?? "public-html"
-        XCTAssertTrue(["public-html", "public-video", "public-pdf"].contains(expectedPageID))
+        XCTAssertTrue(["public-html", "public-video", "public-pdf", "public-social-login", "public-chat-login"].contains(expectedPageID))
         XCTAssertEqual(workload.executable, expected.path)
         let running = try XCTUnwrap(NSRunningApplication(processIdentifier: workload.pid))
         let began = ProcessInfo.processInfo.systemUptime
@@ -404,8 +404,32 @@ final class BrowserFlowTests: XCTestCase {
         defer { if identityMatches() && app.state != .notRunning { app.terminate() } }
         XCTAssertTrue(running.activate(options: []))
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        let isLogin = ["public-social-login", "public-chat-login"].contains(expectedPageID)
+        if isLogin {
+            try check()
+            XCTAssertTrue(app.webViews.textFields.firstMatch.waitForExistence(timeout: 12),
+                          "Expected a public login text field; no input values are read")
+            if expectedPageID == "public-chat-login" {
+                XCTAssertTrue(app.webViews.secureTextFields.firstMatch.waitForExistence(timeout: 5))
+            }
+        }
         let snapshot = try captureMeasurementViewport(app, expectedPID: workload.pid, pageID: expectedPageID,
-                                                      prefix: "public-viewport", validate: check)
+                                                      prefix: "public-viewport", captureImage: !isLogin, validate: check)
+        if isLogin {
+            XCTAssertEqual(snapshot.cssWidth, 779)
+            XCTAssertEqual(snapshot.cssHeight, 683)
+            XCTAssertEqual(snapshot.devicePixelRatio, 2)
+            XCTAssertNil(snapshot.media)
+            let observation: [String: Any] = ["pageID": expectedPageID, "textFieldFound": true,
+                "passwordFieldRequired": expectedPageID == "public-chat-login",
+                "inputValuesRead": false, "inputSent": false, "screenshotsRequested": false,
+                "loginSuccessVerified": false, "challengeAbsenceVerified": false, "comparisonSamplesTaken": 0]
+            let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: observation, options: .sortedKeys),
+                                          uniformTypeIdentifier: "public.json")
+            attachment.name = "public-login-control-observation"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
         if expectedPageID == "public-pdf" {
             try check()
             XCTAssertTrue(app.staticTexts["webPDFNotice"].exists, "Expected a PDF response, not an HTML error document")
@@ -431,6 +455,7 @@ final class BrowserFlowTests: XCTestCase {
     @MainActor
     private func captureMeasurementViewport(_ app: XCUIApplication, expectedPID: Int32,
                                              pageID expectedPageID: String, prefix: String,
+                                             captureImage: Bool = true,
                                              validate: @MainActor () throws -> Void) throws -> ViewportSnapshot {
         try validate()
         let window = app.windows["browser"]
@@ -473,7 +498,7 @@ final class BrowserFlowTests: XCTestCase {
             diagnostic.name = prefix + "-control-state"
             diagnostic.lifetime = .keepAlways
             add(diagnostic)
-            _ = attachWindowImage(app, name: prefix + "-incomplete", knownFrame: window.frame)
+            if captureImage { _ = attachWindowImage(app, name: prefix + "-incomplete", knownFrame: window.frame) }
         }
         XCTAssertEqual(completion, .completed)
         try validate()
@@ -500,7 +525,7 @@ final class BrowserFlowTests: XCTestCase {
         attachment.name = prefix + "-readiness"
         attachment.lifetime = .keepAlways
         add(attachment)
-        XCTAssertTrue(attachWindowImage(app, name: prefix + "-window", knownFrame: window.frame))
+        if captureImage { XCTAssertTrue(attachWindowImage(app, name: prefix + "-window", knownFrame: window.frame)) }
         return snapshot
     }
 
