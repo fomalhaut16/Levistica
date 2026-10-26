@@ -127,10 +127,16 @@ final class BrowserFlowTests: XCTestCase {
             return videos.count == 1 && videos[0].value == "aqz-KE-bpKQ"
         }
         func check(requireForeground: Bool = true) throws {
-            guard identityMatches(), ProcessInfo.processInfo.systemUptime - began < 140,
-                  requireForeground == false || (NSWorkspace.shared.frontmostApplication?.processIdentifier == workload.pid && movieAddressMatches()) else {
-                throw NSError(domain: "PublicVideoTrial", code: 1,
-                              userInfo: [NSLocalizedDescriptionKey: "Owned process changed or deadline expired"])
+            let sameProcess = identityMatches()
+            let withinDeadline = ProcessInfo.processInfo.systemUptime - began < 140
+            let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier == workload.pid
+            let movieMatches = requireForeground == false || (foreground && movieAddressMatches())
+            evidence["guardConditions"] = ["sameProcess": sameProcess, "withinDeadline": withinDeadline,
+                "foreground": foreground, "foregroundRequired": requireForeground, "movieAddress": movieMatches]
+            guard sameProcess, withinDeadline, requireForeground == false || (foreground && movieMatches) else {
+                let reason = sameProcess == false ? "Owned process changed" :
+                    (withinDeadline == false ? "Deadline expired" : (foreground == false ? "Foreground changed" : "Movie address changed"))
+                throw NSError(domain: "PublicVideoTrial", code: 1, userInfo: [NSLocalizedDescriptionKey: reason])
             }
         }
         func button(_ expression: String) -> XCUIElement {
@@ -159,6 +165,10 @@ final class BrowserFlowTests: XCTestCase {
         try check(requireForeground: false)
         XCTAssertTrue(running.activate(options: []))
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        let foregroundReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            identityMatches() && NSWorkspace.shared.frontmostApplication?.processIdentifier == workload.pid
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [foregroundReady], timeout: 5), .completed)
         let document = app.webViews.matching(NSPredicate(format: "label CONTAINS %@", "Big Buck Bunny")).firstMatch
         XCTAssertTrue(document.waitForExistence(timeout: 30), "Expected public film did not load")
         try check()
