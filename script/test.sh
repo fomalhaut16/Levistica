@@ -9,13 +9,15 @@ MIXED_PUBLIC=0
 AUDIBLE_PUBLIC=0
 FOREGROUND_PUBLIC=0
 STEADY_PUBLIC=0
+HANDOFF_PUBLIC=0
 if [[ $# -gt 1 ]]; then
     if [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed ]]; then
         MIXED_PUBLIC=1
-    elif [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed-steady ]]; then
+    elif [[ $# == 2 && "$MODE" == --public-video-ui && ( "$2" == --mixed-steady || "$2" == --mixed-handoff ) ]]; then
         MIXED_PUBLIC=1
         FOREGROUND_PUBLIC=1
         STEADY_PUBLIC=1
+        if [[ "$2" == --mixed-handoff ]]; then HANDOFF_PUBLIC=1; fi
     elif [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed-foreground ]]; then
         MIXED_PUBLIC=1
         FOREGROUND_PUBLIC=1
@@ -103,7 +105,7 @@ if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --pub
     DEADLINE_ALLOWANCE=60
     if [[ "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ]]; then
         # Fixed public workloads only; keep normal profiles and arbitrary URLs out of these trials.
-        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" "$MIXED_PUBLIC" "$AUDIBLE_PUBLIC" "$FOREGROUND_PUBLIC" "$STEADY_PUBLIC" <<'PYPDF'
+        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" "$MIXED_PUBLIC" "$AUDIBLE_PUBLIC" "$FOREGROUND_PUBLIC" "$STEADY_PUBLIC" "$HANDOFF_PUBLIC" <<'PYPDF'
 import importlib.util
 import json
 import pathlib
@@ -134,6 +136,7 @@ if sys.argv[3] == '--public-video-ui' and sys.argv[5] == '1':
     record['audiblePublicVideo'] = sys.argv[6] == '1'
     record['prepareMixedBeforePlayback'] = sys.argv[7] == '1'
     record['steadyPublicVideo'] = sys.argv[8] == '1'
+    record['dryRunPublicHandoff'] = sys.argv[9] == '1'
     workload.write_text(json.dumps(record) + '\n')
 subprocess.run(['/usr/bin/open', '-a', str(app), *targets],
                check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -188,6 +191,17 @@ if (value.get('status') != 'monitoring' or value.get('pid') != workload['pid']
     raise SystemExit('Deadline monitor startup identity or timestamp mismatch')
 os.kill(monitor_pid, 0)
 PYSTART
+    if [[ "$HANDOFF_PUBLIC" == 1 ]]; then
+        python3 "$ROOT_DIR/script/public-readiness-handoff.py" "$RUN_DIR/deadline-workload.json" >"$RUN_DIR/public-handoff.log" 2>&1 &
+        COLLECTOR_PID=$!
+        for ((attempt=0; attempt<100; attempt++)); do
+            [[ -f "$RUN_DIR/public-handoff.json" ]] && break
+            kill -0 "$COLLECTOR_PID" 2>/dev/null || { echo 'Public handoff receiver failed to start' >&2; exit 1; }
+            sleep .05
+        done
+        [[ -f "$RUN_DIR/public-handoff.json" ]] || { echo 'Public handoff receiver startup timed out' >&2; exit 1; }
+        kill -0 "$COLLECTOR_PID"
+    fi
     BUILD_ARGS+=("LEVISTICA_DEADLINE_WORKLOAD=$RUN_DIR/deadline-workload.json"
         "-only-testing:LevisticaUITests/BrowserFlowTests/$DEADLINE_TEST"
         -test-timeouts-enabled YES -maximum-test-execution-time-allowance "$DEADLINE_ALLOWANCE")
@@ -310,6 +324,20 @@ if [[ "$MODE" == --deadline-ui ]]; then
     DEADLINE_PID=""
     echo 'Isolated app deadline and XCTest completion verified; no browsing or memory comparison.'
 elif [[ "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ]]; then
+    if [[ "$HANDOFF_PUBLIC" == 1 ]]; then
+        wait "$COLLECTOR_PID"
+        COLLECTOR_PID=""
+        python3 - "$RUN_DIR/public-handoff-result.json" <<'PYHANDOFF'
+import json
+from pathlib import Path
+import sys
+result = json.loads(Path(sys.argv[1]).read_text())
+if (result.get('success') is not True or result.get('failure') is not None
+        or len(result.get('records', [])) != 2 or result.get('memorySamplesTaken') != 0
+        or result.get('readyForRAM') is not False):
+    raise SystemExit('Live public handoff did not complete; no RAM sample was taken')
+PYHANDOFF
+    fi
     # The successful UI test terminates its verified app. Cancel its remaining watchdog.
     kill "$DEADLINE_PID" 2>/dev/null || true
     MONITOR_STATUS=0
