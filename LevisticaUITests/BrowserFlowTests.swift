@@ -89,7 +89,12 @@ final class BrowserFlowTests: XCTestCase {
         }
         continueAfterFailure = false
         executionTimeAllowance = 150
-        struct Workload: Decodable { let pid: Int32; let executable: String; let startedEpoch: Double }
+        struct Workload: Decodable {
+            let pid: Int32
+            let executable: String
+            let startedEpoch: Double
+            let mixedPublicPages: Bool?
+        }
         let file = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let directory = file.deletingLastPathComponent()
         let checkout = directory.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -126,11 +131,11 @@ final class BrowserFlowTests: XCTestCase {
             let videos = (parts.queryItems ?? []).filter { $0.name == "v" }
             return videos.count == 1 && videos[0].value == "aqz-KE-bpKQ"
         }
-        func check(requireForeground: Bool = true) throws {
+        func check(requireForeground: Bool = true, requireMovie: Bool = true) throws {
             let sameProcess = identityMatches()
             let withinDeadline = ProcessInfo.processInfo.systemUptime - began < 140
             let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier == workload.pid
-            let movieMatches = requireForeground == false || (foreground && movieAddressMatches())
+            let movieMatches = requireForeground == false || requireMovie == false || (foreground && movieAddressMatches())
             evidence["guardConditions"] = ["sameProcess": sameProcess, "withinDeadline": withinDeadline,
                 "foreground": foreground, "foregroundRequired": requireForeground, "movieAddress": movieMatches]
             guard sameProcess, withinDeadline, requireForeground == false || (foreground && movieMatches) else {
@@ -175,6 +180,13 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue((app.textFields["addressField"].value as? String)?.contains("aqz-KE-bpKQ") == true)
         let window = app.windows["browser"]
         XCTAssertTrue(window.exists)
+        let tabRows = window.outlines.firstMatch.outlineRows
+        if workload.mixedPublicPages == true {
+            evidence["mixedPublicPages"] = true
+            evidence["initialTabRowCount"] = tabRows.count
+            recordEvidence()
+            XCTAssertEqual(tabRows.count, 4)
+        }
         evidence["stage"] = "initial-media"
         recordEvidence()
         let initialViewport = try captureMeasurementViewport(app, expectedPID: workload.pid,
@@ -356,6 +368,70 @@ final class BrowserFlowTests: XCTestCase {
         evidence["stage"] = "playback-advanced"
         evidence["playerControlConditionsMet"] = true
         recordEvidence()
+        if workload.mixedPublicPages == true {
+            evidence["mixedPublicPages"] = true
+            let rows = tabRows
+            evidence["tabRowCount"] = rows.count
+            XCTAssertEqual(rows.count, 4)
+            func selectTab(_ index: Int) throws {
+                try check(requireMovie: false)
+                XCTAssertEqual(rows.count, 4)
+                let row = rows.element(boundBy: index)
+                let frame = row.frame
+                XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+                XCTAssertTrue(frame.width > 40 && frame.height > 0)
+                XCTAssertTrue(window.frame.contains(CGPoint(x: frame.midX, y: frame.midY)))
+                row.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).click()
+                try check(requireMovie: false)
+            }
+            let pageIDs = ["public-html", "public-pdf", "public-chat-login"]
+            var observations: [[String: Any]] = []
+            for (index, pageID) in pageIDs.enumerated() {
+                evidence["stage"] = "mixed-selecting-" + pageID
+                recordEvidence()
+                try selectTab(index)
+                if pageID == "public-html" {
+                    XCTAssertTrue(app.webViews.staticTexts.matching(NSPredicate(
+                        format: "label CONTAINS %@", "Web Content Accessibility Guidelines")).firstMatch.waitForExistence(timeout: 10))
+                } else if pageID == "public-pdf" {
+                    XCTAssertTrue(app.staticTexts["webPDFNotice"].waitForExistence(timeout: 10))
+                } else {
+                    XCTAssertTrue(app.webViews.textFields.firstMatch.waitForExistence(timeout: 12))
+                    XCTAssertTrue(app.webViews.secureTextFields.firstMatch.waitForExistence(timeout: 5))
+                }
+                let value = try captureMeasurementViewport(app, expectedPID: workload.pid, pageID: pageID,
+                    prefix: "public-mixed-" + pageID, captureImage: pageID != "public-chat-login",
+                    validate: { try check(requireMovie: false) })
+                XCTAssertEqual(value.cssWidth, 779)
+                XCTAssertEqual(value.cssHeight, pageID == "public-pdf" ? 652 : 683)
+                XCTAssertEqual(value.devicePixelRatio, 2)
+                observations.append(["pageID": pageID, "cssWidth": value.cssWidth, "cssHeight": value.cssHeight,
+                                     "devicePixelRatio": value.devicePixelRatio])
+            }
+            XCTAssertTrue(app.staticTexts["4タブ・読み込み済み4"].waitForExistence(timeout: 5))
+            evidence["stage"] = "mixed-returning-to-video"
+            recordEvidence()
+            try selectTab(3)
+            let returned = try captureMeasurementViewport(app, expectedPID: workload.pid, pageID: "public-video",
+                prefix: "public-mixed-returned-video", validate: { try check() })
+            let returnedMedia = try XCTUnwrap(returned.media)
+            XCTAssertEqual(returned.cssWidth, 779)
+            XCTAssertEqual(returned.cssHeight, 683)
+            XCTAssertEqual(returned.devicePixelRatio, 2)
+            XCTAssertEqual(returnedMedia.width, 1280)
+            XCTAssertEqual(returnedMedia.height, 720)
+            XCTAssertTrue(returnedMedia.muted && !returnedMedia.paused && returnedMedia.readyState >= 2)
+            XCTAssertGreaterThanOrEqual(returnedMedia.currentTime, afterMedia.currentTime + 2)
+            XCTAssertTrue(app.staticTexts["4タブ・読み込み済み4"].exists)
+            evidence["stage"] = "mixed-four-retained"
+            evidence["totalTabs"] = 4
+            evidence["loadedPages"] = 4
+            evidence["pageObservations"] = observations
+            evidence["returnedVideoTimeSeconds"] = returnedMedia.currentTime
+            evidence["videoContinuedAcrossTabSelections"] = true
+            evidence["backgroundSnapshotsTaken"] = false
+            recordEvidence()
+        }
     }
 
 

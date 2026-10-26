@@ -14,6 +14,8 @@ class ViewportProbeFlags(unittest.TestCase):
                      ('--unit', '--x-login'), ('--public-video-ui', '--discord-login'),
                      ('--public-viewport-ui', '--x-login'),
                      ('--public-viewport-ui', '--x-login', '--discord-login'),
+                     ('--unit', '--mixed'), ('--public-viewport-ui', '--mixed'),
+                     ('--public-video-ui', '--mixed', '--pdf'),
                      ('--public-viewport-ui', '--other'),
                      ('--public-viewport-ui', 'https://example.invalid/')]:
             with self.subTest(args=args):
