@@ -134,6 +134,13 @@ struct MeasurementViewportTests {
         #expect(!encoded.contains("synthetic-private"))
         #expect(!encoded.contains("Synthetic login"))
         #expect(!encoded.contains(url.host!))
+        let flags = MeasurementViewport.ineligibleDocumentFlags(page)
+        #expect(!flags.contains("synthetic-private"))
+        #expect(!flags.contains(url.host!))
+        let values = try #require(JSONSerialization.jsonObject(with: Data(flags.utf8)) as? [String: Bool])
+        #expect(values["pageURLMatchesViewURL"] == true)
+        #expect(values["socialHost"] == (url.host == "x.com"))
+        #expect(values["chatHost"] == (url.host == "discord.com"))
     }
 
     @Test(arguments: ["\"height\":0", "\"duration\":0", "\"currentTime\":-1", "\"currentTime\":900"])

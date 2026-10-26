@@ -80,12 +80,26 @@ enum MeasurementViewport {
     static func ineligibleDocumentFlags(_ page: PageRuntime) -> String {
         let parts = page.webView.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
         let items = parts?.queryItems ?? []
+        let socialHost = parts?.host == "x.com"
         let flags = ["videoHost": parts?.host == "www.youtube.com", "videoPath": parts?.path == "/watch",
                      "movieID": items.contains { $0.name == "v" && $0.value == "aqz-KE-bpKQ" },
                      "onlyVideoAndLanguageKeys": items.allSatisfy { ["v", "hl"].contains($0.name) },
                      "englishParameter": items.contains { $0.name == "hl" && $0.value == "en" },
                      "fragmentAbsent": parts?.fragment == nil || parts?.fragment == "",
-                     "localPDFAbsent": page.localPDF == nil]
+                     "localPDFAbsent": page.localPDF == nil,
+                     "pageURLMatchesViewURL": page.url == page.webView.url,
+                     "socialHost": socialHost, "socialLoginPath": parts?.path == "/i/flow/login",
+                     "socialRootPath": parts?.path == "/", "chatHost": parts?.host == "discord.com",
+                     "chatLoginPath": parts?.path == "/login", "queryPresent": !items.isEmpty,
+                     "socialMigrationTwoOnly": socialHost && items.count == 1
+                         && items[0].name == "mx" && items[0].value == "2",
+                     "socialEnglishOnly": socialHost && items.count == 1
+                         && items[0].name == "lang" && items[0].value == "en",
+                     "socialJapaneseOnly": socialHost && items.count == 1
+                         && items[0].name == "lang" && items[0].value == "ja",
+                     "socialMigrationTwoEnglishOnly": socialHost && items.count == 2
+                         && items.contains { $0.name == "mx" && $0.value == "2" }
+                         && items.contains { $0.name == "lang" && $0.value == "en" }]
         guard let data = try? JSONSerialization.data(withJSONObject: flags, options: .sortedKeys) else { return "" }
         return String(decoding: data, as: UTF8.self)
     }
