@@ -92,5 +92,13 @@ struct TabSidebar: View {
             if !visibleTabs.contains(where: { $0.id == session.selectedID }) { filter = "" }
         }
         .frame(minWidth: 160, idealWidth: 220, maxWidth: 320)
+        #if LEVISTICA_MEASUREMENT
+        .overlay(alignment: .bottomLeading) {
+            if MeasurementViewportStatus.enabled {
+                MeasurementViewportStatus(page: session.page)
+                    .background(.regularMaterial)
+            }
+        }
+        #endif
     }
 }

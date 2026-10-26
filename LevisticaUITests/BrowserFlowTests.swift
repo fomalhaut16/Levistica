@@ -219,6 +219,103 @@ final class BrowserFlowTests: XCTestCase {
 
 
     @MainActor
+    func testPublicViewportReadiness() throws {
+        guard let path = ProcessInfo.processInfo.environment["LEVISTICA_DEADLINE_WORKLOAD"],
+              !path.isEmpty, !path.hasPrefix("$(") else {
+            throw XCTSkip("Run script/test.sh --public-viewport-ui for the opt-in geometry trial.")
+        }
+        continueAfterFailure = false
+        executionTimeAllowance = 45
+        struct Workload: Decodable { let pid: Int32; let executable: String; let startedEpoch: Double }
+        struct Snapshot: Decodable {
+            let schema: Int
+            let pageID: String
+            let cssWidth, cssHeight, devicePixelRatio, visualScale: Double
+            let nativeWidth, nativeHeight, pageZoom, capturedAtEpochSeconds: Double
+            let documentVisible: Bool
+        }
+        let file = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        let directory = file.deletingLastPathComponent()
+        XCTAssertEqual(file.lastPathComponent, "deadline-workload.json")
+        XCTAssertEqual(directory.deletingLastPathComponent().lastPathComponent, "artifacts")
+        XCTAssertEqual(directory.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent, ".local")
+        let checkout = directory.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let expected = checkout.appendingPathComponent(
+            ".local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica")
+        let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: file))
+        XCTAssertEqual(workload.executable, expected.path)
+        let running = try XCTUnwrap(NSRunningApplication(processIdentifier: workload.pid))
+        let began = ProcessInfo.processInfo.systemUptime
+        func identityMatches() -> Bool {
+            let candidates = NSRunningApplication.runningApplications(withBundleIdentifier: "dev.fomalhaut16.Levistica.measurement")
+            guard let started = running.launchDate else { return false }
+            return !running.isTerminated && candidates.count == 1
+                && candidates.first?.processIdentifier == workload.pid
+                && running.executableURL?.path == expected.path
+                && abs(started.timeIntervalSince1970 - workload.startedEpoch) < 1
+        }
+        func check() throws {
+            _ = try XCTUnwrap(identityMatches() && ProcessInfo.processInfo.systemUptime - began < 50 ? true : nil,
+                              "Owned Measurement changed or trial expired")
+        }
+        try check()
+        let app = XCUIApplication(url: expected.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent())
+        defer { if identityMatches() && app.state != .notRunning { app.terminate() } }
+        XCTAssertTrue(running.activate(options: []))
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        let window = app.windows["browser"]
+        let button = window.buttons.matching(identifier: "captureMeasurementViewportButton").firstMatch
+        XCTAssertTrue(button.waitForExistence(timeout: 10))
+        let available = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in button.isEnabled }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [available], timeout: 15), .completed)
+        try check()
+        let frame = button.frame
+        XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+        XCTAssertTrue(frame.width > 0 && frame.height > 0)
+        XCTAssertTrue(window.frame.contains(CGPoint(x: frame.midX, y: frame.midY)))
+        XCTAssertEqual(NSWorkspace.shared.frontmostApplication?.processIdentifier, workload.pid)
+        button.click()
+        let report = window.staticTexts.matching(identifier: "measurementViewportReport").firstMatch
+        let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard report.exists, let value = report.value as? String else { return false }
+            return value.hasPrefix("{") || value == "viewport:unavailable"
+        }, object: nil)
+        let completion = XCTWaiter.wait(for: [completed], timeout: 10)
+        if completion != .completed {
+            try check()
+            // This is the fixed diagnostic control, never the page's accessibility tree.
+            let state: [String: String] = [
+                "label": report.exists ? report.label : "missing",
+                "value": report.exists ? (report.value as? String ?? "unavailable") : "missing",
+                "buttonEnabled": String(button.isEnabled)
+            ]
+            let diagnostic = XCTAttachment(data: try JSONEncoder().encode(state), uniformTypeIdentifier: "public.json")
+            diagnostic.name = "public-viewport-control-state"
+            diagnostic.lifetime = .keepAlways
+            add(diagnostic)
+            _ = attachWindowImage(app, name: "public-viewport-incomplete", knownFrame: window.frame)
+        }
+        XCTAssertEqual(completion, .completed)
+        try check()
+        let value = try XCTUnwrap(report.value as? String)
+        let data = try XCTUnwrap(value.data(using: .utf8))
+        let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
+        XCTAssertEqual(snapshot.schema, 1)
+        XCTAssertEqual(snapshot.pageID, "public-html")
+        XCTAssertTrue([snapshot.cssWidth, snapshot.cssHeight, snapshot.devicePixelRatio,
+                       snapshot.nativeWidth, snapshot.nativeHeight].allSatisfy { $0.isFinite && $0 > 0 })
+        XCTAssertEqual(snapshot.pageZoom, 1)
+        XCTAssertEqual(snapshot.visualScale, 1)
+        XCTAssertTrue(snapshot.documentVisible)
+        XCTAssertLessThan(Date().timeIntervalSince1970 - snapshot.capturedAtEpochSeconds, 15)
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        attachment.name = "public-viewport-readiness"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertTrue(attachWindowImage(app, name: "public-viewport-window", knownFrame: window.frame))
+    }
+
+    @MainActor
     func testPublicPDFReadiness() throws {
         guard let path = ProcessInfo.processInfo.environment["LEVISTICA_DEADLINE_WORKLOAD"],
               !path.isEmpty, !path.hasPrefix("$(") else {

@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VIEWPORT_PROBE="${LEVISTICA_VIEWPORT_PROBE:-0}"
+case "$VIEWPORT_PROBE" in 0|1) ;; *) echo 'VIEWPORT_PROBE must be 0 or 1' >&2; exit 2;; esac
+if [[ "$VIEWPORT_PROBE" == 1 ]]; then
+    if [[ "${CONFIGURATION:-Debug}" != Release || "${LEVISTICA_EPHEMERAL:-0}" != 1 || "${LEVISTICA_MEASUREMENT:-0}" != 1 || "${LEVISTICA_PROFILE:-0}" != 0 || -n "${LEVISTICA_MEASUREMENT_STORE_ID:-}" || "${LEVISTICA_MEASUREMENT_PERSIST_METADATA:-0}" != 0 ]]; then
+        echo 'VIEWPORT_PROBE requires nonpersistent isolated Release Measurement' >&2; exit 2
+    fi
+    case "${1:-run}" in run|--build|--verify) ;; *) echo 'VIEWPORT_PROBE supports only run, --build or --verify' >&2; exit 2;; esac
+fi
 # Run two existing isolated revisions against newly generated metadata only.
 # This mode never builds or stops an app that was already running.
 if [[ "${1:-}" == --rehearse-session-update ]]; then
@@ -215,6 +223,9 @@ case "$MODE" in
 esac
 if [[ "${LEVISTICA_EPHEMERAL:-0}" == 1 ]]; then
     LEVISTICA_OPEN_ARGS=(-n --env LEVISTICA_EPHEMERAL=1)
+    if [[ "$VIEWPORT_PROBE" == 1 ]]; then
+        LEVISTICA_OPEN_ARGS+=(--env LEVISTICA_VIEWPORT_PROBE=1)
+    fi
     if [[ -n "$STORE_ID" ]]; then
         LEVISTICA_OPEN_ARGS+=(--env "LEVISTICA_MEASUREMENT_STORE_ID=$STORE_ID")
     fi
