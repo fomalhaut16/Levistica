@@ -50,13 +50,29 @@ def expire(record, verify=verify_owned, send=os.kill):
     return 'deadline_stop_requested'
 
 
-def monitor(record, seconds, verify=verify_owned, send=os.kill, clock=time.monotonic, wait=time.sleep):
+def validate_lifetime(record, seconds):
+    steady = record.get('steadyPublicVideo') is True
+    if steady:
+        allowed = (seconds == 300 and type(seconds) is int
+                   and record.get('mixedPublicPages') is True
+                   and record.get('prepareMixedBeforePlayback') is True
+                   and record.get('audiblePublicVideo') is False)
+    else:
+        allowed = type(seconds) is int and 1 <= seconds <= 180
+    if not allowed:
+        raise ValueError('Expected 1..180 seconds, or exactly 300 for the fixed steady public workload')
+
+
+def monitor(record, seconds, verify=verify_owned, send=os.kill, clock=time.monotonic, wait=time.sleep,
+            on_started=None):
     validate(record)
-    if type(seconds) is not int or not 1 <= seconds <= 180:
-        raise ValueError('Lifetime must be between one and 180 seconds')
+    validate_lifetime(record, seconds)
     # Establish ownership before starting the timer; monotonic time prevents clock edits extending it.
     verify(record)
     began = clock()
+    if on_started is not None:
+        on_started({"status": "monitoring", "pid": record["pid"],
+                    "maximumSeconds": seconds, "startedMonotonic": began})
     deadline = began + seconds
     while True:
         remaining = deadline - clock()
@@ -97,12 +113,19 @@ if __name__ == '__main__':
     monitor_parser.add_argument('workload', type=Path)
     monitor_parser.add_argument('result', type=Path)
     monitor_parser.add_argument('--seconds', type=int, default=180)
+    monitor_parser.add_argument('--started', type=Path)
     args = parser.parse_args()
     if args.mode == 'prepare':
         prepare(args.output)
     else:
         record = json.loads(args.workload.read_text())
-        result = monitor(record, args.seconds)
+        def started(value):
+            if args.started is not None:
+                temporary = args.started.with_name(args.started.name + '.partial')
+                temporary.write_text(json.dumps(value, indent=2) + '\n')
+                temporary.chmod(0o600)
+                temporary.replace(args.started)
+        result = monitor(record, args.seconds, on_started=started)
         args.result.write_text(json.dumps(result, indent=2) + '\n')
         args.result.chmod(0o600)
         if result['status'] != 'deadline_stop_requested':

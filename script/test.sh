@@ -157,8 +157,37 @@ PYPDF
         fi
     fi
     python3 "$ROOT_DIR/script/isolated-app-deadline.py" monitor "$RUN_DIR/deadline-workload.json" \
-        "$RUN_DIR/deadline-result.json" --seconds "$DEADLINE_SECONDS" >"$RUN_DIR/deadline-monitor.log" 2>&1 &
+        "$RUN_DIR/deadline-result.json" --seconds "$DEADLINE_SECONDS" --started "$RUN_DIR/deadline-started.json" >"$RUN_DIR/deadline-monitor.log" 2>&1 &
     DEADLINE_PID=$!
+    # Do not start UI automation unless the lifetime guard verified its owner and started.
+    python3 - "$DEADLINE_PID" "$RUN_DIR/deadline-workload.json" "$RUN_DIR/deadline-started.json" "$DEADLINE_SECONDS" <<'PYSTART'
+import json
+import math
+import os
+from pathlib import Path
+import sys
+import time
+monitor_pid = int(sys.argv[1])
+workload = json.loads(Path(sys.argv[2]).read_text())
+started_path = Path(sys.argv[3])
+limit = time.monotonic() + 5
+while not started_path.exists():
+    try:
+        os.kill(monitor_pid, 0)
+    except ProcessLookupError:
+        raise SystemExit('Deadline monitor exited before startup; inspect deadline-monitor.log')
+    if time.monotonic() >= limit:
+        raise SystemExit('Deadline monitor startup was not confirmed within five seconds')
+    time.sleep(.05)
+value = json.loads(started_path.read_text())
+began = value.get('startedMonotonic')
+if (value.get('status') != 'monitoring' or value.get('pid') != workload['pid']
+        or value.get('maximumSeconds') != int(sys.argv[4])
+        or type(began) not in (int, float) or not math.isfinite(began)
+        or not 0 <= time.monotonic() - began <= 5):
+    raise SystemExit('Deadline monitor startup identity or timestamp mismatch')
+os.kill(monitor_pid, 0)
+PYSTART
     BUILD_ARGS+=("LEVISTICA_DEADLINE_WORKLOAD=$RUN_DIR/deadline-workload.json"
         "-only-testing:LevisticaUITests/BrowserFlowTests/$DEADLINE_TEST"
         -test-timeouts-enabled YES -maximum-test-execution-time-allowance "$DEADLINE_ALLOWANCE")
