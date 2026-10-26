@@ -95,6 +95,7 @@ final class BrowserFlowTests: XCTestCase {
             let startedEpoch: Double
             let mixedPublicPages: Bool?
             let audiblePublicVideo: Bool?
+            let prepareMixedBeforePlayback: Bool?
         }
         let file = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let directory = file.deletingLastPathComponent()
@@ -189,6 +190,56 @@ final class BrowserFlowTests: XCTestCase {
             evidence["initialTabRowCount"] = tabRows.count
             recordEvidence()
             XCTAssertEqual(tabRows.count, 4)
+        }
+        func selectMixedTab(_ index: Int) throws {
+            try check(requireMovie: false)
+            XCTAssertEqual(tabRows.count, 4)
+            let row = tabRows.element(boundBy: index)
+            let frame = row.frame
+            XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+            XCTAssertTrue(frame.width > 40 && frame.height > 0)
+            XCTAssertTrue(window.frame.contains(CGPoint(x: frame.midX, y: frame.midY)))
+            row.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).click()
+            try check(requireMovie: false)
+        }
+        func observeMixedDocuments() throws -> [[String: Any]] {
+            let pageIDs = ["public-html", "public-pdf", "public-chat-login"]
+            var observations: [[String: Any]] = []
+            for (index, pageID) in pageIDs.enumerated() {
+                evidence["stage"] = "mixed-selecting-" + pageID
+                recordEvidence()
+                try selectMixedTab(index)
+                if pageID == "public-pdf" {
+                    XCTAssertTrue(app.staticTexts["webPDFNotice"].waitForExistence(timeout: 10))
+                } else if pageID == "public-chat-login" {
+                    XCTAssertTrue(app.webViews.textFields.firstMatch.waitForExistence(timeout: 12))
+                    XCTAssertTrue(app.webViews.secureTextFields.firstMatch.waitForExistence(timeout: 5))
+                }
+                let value = try captureMeasurementViewport(app, expectedPID: workload.pid, pageID: pageID,
+                    prefix: "public-mixed-" + pageID, captureImage: pageID != "public-chat-login",
+                    validate: { try check(requireMovie: false) })
+                XCTAssertEqual(value.cssWidth, 779)
+                XCTAssertEqual(value.cssHeight, pageID == "public-pdf" ? 652 : 683)
+                XCTAssertEqual(value.devicePixelRatio, 2)
+                if pageID == "public-html" { XCTAssertEqual(value.documentHeadingMatches, true) }
+                observations.append(["pageID": pageID, "cssWidth": value.cssWidth, "cssHeight": value.cssHeight,
+                                     "devicePixelRatio": value.devicePixelRatio])
+            }
+            return observations
+        }
+
+        var preloadedObservations: [[String: Any]] = []
+        if workload.prepareMixedBeforePlayback == true {
+            XCTAssertEqual(workload.mixedPublicPages, true)
+            XCTAssertTrue(expectedMuted)
+            preloadedObservations = try observeMixedDocuments()
+            XCTAssertTrue(app.staticTexts["4タブ・読み込み済み4"].waitForExistence(timeout: 5))
+            try selectMixedTab(3)
+            XCTAssertTrue(document.waitForExistence(timeout: 10))
+            try check()
+            evidence["preparedBeforePlayback"] = true
+            evidence["stage"] = "mixed-documents-preloaded"
+            recordEvidence()
         }
         evidence["stage"] = "initial-media"
         recordEvidence()
@@ -405,49 +456,36 @@ final class BrowserFlowTests: XCTestCase {
         evidence["stage"] = "playback-advanced"
         evidence["playerControlConditionsMet"] = true
         recordEvidence()
+        if workload.prepareMixedBeforePlayback == true {
+            XCTAssertEqual(try XCTUnwrap(afterViewport.documentTimeOrigin), try XCTUnwrap(viewport.documentTimeOrigin))
+            XCTAssertEqual(try XCTUnwrap(afterMedia.playbackRate), 1)
+            let elapsed = (try XCTUnwrap(afterViewport.documentElapsedMilliseconds) -
+                           XCTUnwrap(viewport.documentElapsedMilliseconds)) / 1000
+            let advanced = afterMedia.currentTime - media.currentTime
+            XCTAssertTrue(elapsed >= 3 && elapsed < 30)
+            XCTAssertGreaterThanOrEqual(advanced, elapsed - 2)
+            XCTAssertTrue(app.staticTexts["4タブ・読み込み済み4"].exists)
+            evidence["stage"] = "mixed-foreground-prepared"
+            evidence["totalTabs"] = 4
+            evidence["loadedPages"] = 4
+            evidence["pageObservations"] = preloadedObservations
+            evidence["foregroundIntervalSeconds"] = elapsed
+            evidence["foregroundVideoAdvancedSeconds"] = advanced
+            evidence["backgroundContinuationTested"] = false
+            recordEvidence()
+            return
+        }
         if workload.mixedPublicPages == true {
             evidence["mixedPublicPages"] = true
             let rows = tabRows
             XCTAssertEqual(try XCTUnwrap(afterMedia.playbackRate), 1)
             evidence["tabRowCount"] = rows.count
             XCTAssertEqual(rows.count, 4)
-            func selectTab(_ index: Int) throws {
-                try check(requireMovie: false)
-                XCTAssertEqual(rows.count, 4)
-                let row = rows.element(boundBy: index)
-                let frame = row.frame
-                XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
-                XCTAssertTrue(frame.width > 40 && frame.height > 0)
-                XCTAssertTrue(window.frame.contains(CGPoint(x: frame.midX, y: frame.midY)))
-                row.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).click()
-                try check(requireMovie: false)
-            }
-            let pageIDs = ["public-html", "public-pdf", "public-chat-login"]
-            var observations: [[String: Any]] = []
-            for (index, pageID) in pageIDs.enumerated() {
-                evidence["stage"] = "mixed-selecting-" + pageID
-                recordEvidence()
-                try selectTab(index)
-                if pageID == "public-pdf" {
-                    XCTAssertTrue(app.staticTexts["webPDFNotice"].waitForExistence(timeout: 10))
-                } else if pageID == "public-chat-login" {
-                    XCTAssertTrue(app.webViews.textFields.firstMatch.waitForExistence(timeout: 12))
-                    XCTAssertTrue(app.webViews.secureTextFields.firstMatch.waitForExistence(timeout: 5))
-                }
-                let value = try captureMeasurementViewport(app, expectedPID: workload.pid, pageID: pageID,
-                    prefix: "public-mixed-" + pageID, captureImage: pageID != "public-chat-login",
-                    validate: { try check(requireMovie: false) })
-                XCTAssertEqual(value.cssWidth, 779)
-                XCTAssertEqual(value.cssHeight, pageID == "public-pdf" ? 652 : 683)
-                XCTAssertEqual(value.devicePixelRatio, 2)
-                if pageID == "public-html" { XCTAssertEqual(value.documentHeadingMatches, true) }
-                observations.append(["pageID": pageID, "cssWidth": value.cssWidth, "cssHeight": value.cssHeight,
-                                     "devicePixelRatio": value.devicePixelRatio])
-            }
+            let observations = try observeMixedDocuments()
             XCTAssertTrue(app.staticTexts["4タブ・読み込み済み4"].waitForExistence(timeout: 5))
             evidence["stage"] = "mixed-returning-to-video"
             recordEvidence()
-            try selectTab(3)
+            try selectMixedTab(3)
             let returned = try captureMeasurementViewport(app, expectedPID: workload.pid, pageID: "public-video",
                 prefix: "public-mixed-returned-video", validate: { try check() })
             let returnedMedia = try XCTUnwrap(returned.media)
