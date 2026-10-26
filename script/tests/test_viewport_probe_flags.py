@@ -14,6 +14,8 @@ class ViewportProbeFlags(unittest.TestCase):
                      ('--unit', '--x-login'), ('--public-video-ui', '--discord-login'),
                      ('--public-viewport-ui', '--x-login'),
                      ('--public-viewport-ui', '--x-login', '--discord-login'),
+                     ('--unit', '--mixed-steady'), ('--public-viewport-ui', '--mixed-steady'),
+                     ('--public-video-ui', '--mixed-steady', '--mixed-foreground'),
                      ('--unit', '--mixed-foreground'), ('--public-viewport-ui', '--mixed-foreground'),
                      ('--public-video-ui', '--mixed-foreground', '--mixed-audible'),
                      ('--unit', '--mixed-audible'), ('--public-viewport-ui', '--mixed-audible'),

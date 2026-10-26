@@ -8,9 +8,14 @@ VIEWPORT_PAGE=public-html
 MIXED_PUBLIC=0
 AUDIBLE_PUBLIC=0
 FOREGROUND_PUBLIC=0
+STEADY_PUBLIC=0
 if [[ $# -gt 1 ]]; then
     if [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed ]]; then
         MIXED_PUBLIC=1
+    elif [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed-steady ]]; then
+        MIXED_PUBLIC=1
+        FOREGROUND_PUBLIC=1
+        STEADY_PUBLIC=1
     elif [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed-foreground ]]; then
         MIXED_PUBLIC=1
         FOREGROUND_PUBLIC=1
@@ -98,7 +103,7 @@ if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --pub
     DEADLINE_ALLOWANCE=60
     if [[ "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ]]; then
         # Fixed public workloads only; keep normal profiles and arbitrary URLs out of these trials.
-        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" "$MIXED_PUBLIC" "$AUDIBLE_PUBLIC" "$FOREGROUND_PUBLIC" <<'PYPDF'
+        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" "$MIXED_PUBLIC" "$AUDIBLE_PUBLIC" "$FOREGROUND_PUBLIC" "$STEADY_PUBLIC" <<'PYPDF'
 import importlib.util
 import json
 import pathlib
@@ -128,6 +133,7 @@ if sys.argv[3] == '--public-video-ui' and sys.argv[5] == '1':
     record['mixedPublicPages'] = True
     record['audiblePublicVideo'] = sys.argv[6] == '1'
     record['prepareMixedBeforePlayback'] = sys.argv[7] == '1'
+    record['steadyPublicVideo'] = sys.argv[8] == '1'
     workload.write_text(json.dumps(record) + '\n')
 subprocess.run(['/usr/bin/open', '-a', str(app), *targets],
                check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -140,6 +146,10 @@ PYPDF
             DEADLINE_SECONDS=180
             DEADLINE_TEST=testPublicVideoReadiness
             DEADLINE_ALLOWANCE=150
+            if [[ "$STEADY_PUBLIC" == 1 ]]; then
+                DEADLINE_SECONDS=300
+                DEADLINE_ALLOWANCE=280
+            fi
         elif [[ "$MODE" == --public-viewport-ui ]]; then
             DEADLINE_SECONDS=60
             DEADLINE_TEST=testPublicViewportReadiness

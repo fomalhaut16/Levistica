@@ -96,6 +96,7 @@ final class BrowserFlowTests: XCTestCase {
             let mixedPublicPages: Bool?
             let audiblePublicVideo: Bool?
             let prepareMixedBeforePlayback: Bool?
+            let steadyPublicVideo: Bool?
         }
         let file = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let directory = file.deletingLastPathComponent()
@@ -105,6 +106,12 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertEqual(directory.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent, ".local")
         let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: file))
         let expectedMuted = workload.audiblePublicVideo != true
+        let bodySeconds: TimeInterval = workload.steadyPublicVideo == true ? 270 : 140
+        if workload.steadyPublicVideo == true {
+            XCTAssertEqual(workload.prepareMixedBeforePlayback, true)
+            XCTAssertTrue(expectedMuted)
+            executionTimeAllowance = 280
+        }
         let expected = checkout.appendingPathComponent(
             ".local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica")
         XCTAssertEqual(workload.executable, expected.path)
@@ -136,7 +143,7 @@ final class BrowserFlowTests: XCTestCase {
         }
         func check(requireForeground: Bool = true, requireMovie: Bool = true) throws {
             let sameProcess = identityMatches()
-            let withinDeadline = ProcessInfo.processInfo.systemUptime - began < 140
+            let withinDeadline = ProcessInfo.processInfo.systemUptime - began < bodySeconds
             let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier == workload.pid
             let movieMatches = requireForeground == false || requireMovie == false || (foreground && movieAddressMatches())
             evidence["guardConditions"] = ["sameProcess": sameProcess, "withinDeadline": withinDeadline,
@@ -473,6 +480,56 @@ final class BrowserFlowTests: XCTestCase {
             evidence["foregroundVideoAdvancedSeconds"] = advanced
             evidence["backgroundContinuationTested"] = false
             recordEvidence()
+            if workload.steadyPublicVideo == true {
+                let observationUntil = ProcessInfo.processInfo.systemUptime + 120
+                let origin = try XCTUnwrap(afterViewport.documentTimeOrigin)
+                let initialElapsed = try XCTUnwrap(afterViewport.documentElapsedMilliseconds)
+                var previousElapsed = initialElapsed
+                var previousTime = afterMedia.currentTime
+                var checks = 0
+                repeat {
+                    let sampleAt = min(ProcessInfo.processInfo.systemUptime + 15, observationUntil)
+                    let intervalReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                        ProcessInfo.processInfo.systemUptime >= sampleAt
+                    }, object: nil)
+                    XCTAssertEqual(XCTWaiter.wait(for: [intervalReady], timeout: 17), .completed)
+                    try check()
+                    XCTAssertTrue(app.staticTexts["4タブ・読み込み済み4"].exists)
+                    let sample = try captureMeasurementViewport(app, expectedPID: workload.pid,
+                        pageID: "public-video", prefix: "public-steady-video", captureImage: false,
+                        validate: { try check() })
+                    let video = try XCTUnwrap(sample.media)
+                    XCTAssertEqual(try XCTUnwrap(sample.documentTimeOrigin), origin)
+                    XCTAssertEqual(sample.cssWidth, 779)
+                    XCTAssertEqual(sample.cssHeight, 683)
+                    XCTAssertEqual(sample.devicePixelRatio, 2)
+                    XCTAssertEqual(video.width, 1280)
+                    XCTAssertEqual(video.height, 720)
+                    XCTAssertEqual(try XCTUnwrap(video.playbackRate), 1)
+                    XCTAssertTrue(video.muted && !video.paused && video.readyState >= 2)
+                    let currentElapsed = try XCTUnwrap(sample.documentElapsedMilliseconds)
+                    let interval = (currentElapsed - previousElapsed) / 1000
+                    XCTAssertTrue(interval > 0 && interval < 35)
+                    XCTAssertGreaterThanOrEqual(video.currentTime - previousTime, interval - 2)
+                    previousElapsed = currentElapsed
+                    previousTime = video.currentTime
+                    checks += 1
+                    XCTAssertLessThanOrEqual(checks, 9)
+                    evidence["stage"] = "mixed-steady-observing"
+                    evidence["steadyObservationCount"] = checks
+                    evidence["steadyElapsedSeconds"] = (currentElapsed - initialElapsed) / 1000
+                    evidence["steadyVideoAdvancedSeconds"] = video.currentTime - afterMedia.currentTime
+                    evidence["additionalSteadyImagesTaken"] = false
+                    recordEvidence()
+                } while ProcessInfo.processInfo.systemUptime < observationUntil
+                let total = (previousElapsed - initialElapsed) / 1000
+                XCTAssertTrue(total >= 120 && total < 180)
+                XCTAssertGreaterThanOrEqual(previousTime - afterMedia.currentTime, total - 2)
+                evidence["stage"] = "mixed-steady-prepared"
+                evidence["memorySamplesTaken"] = 0
+                evidence["continuousEveryInstantObservation"] = false
+                recordEvidence()
+            }
             return
         }
         if workload.mixedPublicPages == true {
