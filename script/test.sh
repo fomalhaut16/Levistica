@@ -4,11 +4,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 MODE="${1:---unit}"
 case "$MODE" in --unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui) ;; *) echo "usage: $0 [--unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui]" >&2; exit 2;; esac
-VIEWPORT_VIDEO=0
+VIEWPORT_PAGE=public-html
 if [[ $# -gt 1 ]]; then
     if [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --video ]]; then
-        VIEWPORT_VIDEO=1
-    else echo '--video is supported only with --public-viewport-ui' >&2; exit 2; fi
+        VIEWPORT_PAGE=public-video
+    elif [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --pdf ]]; then
+        VIEWPORT_PAGE=public-pdf
+    else echo '--video and --pdf are supported only with --public-viewport-ui' >&2; exit 2; fi
 fi
 # Diagnostic selection is fixed; never run normal launch-based tests against Profile.
 if [[ ( "$MODE" == --profile-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ) && -n "${TEST_ONLY:-}" ]]; then
@@ -83,7 +85,7 @@ if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --pub
     DEADLINE_ALLOWANCE=60
     if [[ "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ]]; then
         # Fixed public workloads only; keep normal profiles and arbitrary URLs out of these trials.
-        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_VIDEO" <<'PYPDF'
+        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" <<'PYPDF'
 import importlib.util
 import json
 import pathlib
@@ -96,12 +98,14 @@ spec.loader.exec_module(guard)
 record = json.loads(workload.read_text())
 guard.verify_owned(record)
 app = pathlib.Path(record['executable']).parents[2]
+viewport_urls = {'public-html': 'https://www.w3.org/TR/2024/REC-WCAG22-20241212/',
+                 'public-video': 'https://www.youtube.com/watch?v=aqz-KE-bpKQ&hl=en',
+                 'public-pdf': 'https://arxiv.org/pdf/1706.03762v7'}
 urls = {'--public-pdf-ui': 'https://arxiv.org/pdf/1706.03762v7',
         '--public-video-ui': 'https://www.youtube.com/watch?v=aqz-KE-bpKQ&hl=en',
-        '--public-viewport-ui': ('https://www.youtube.com/watch?v=aqz-KE-bpKQ&hl=en'
-                                 if sys.argv[4] == '1' else 'https://www.w3.org/TR/2024/REC-WCAG22-20241212/')}
+        '--public-viewport-ui': viewport_urls[sys.argv[4]]}
 if sys.argv[3] == '--public-viewport-ui':
-    record['viewportPageID'] = 'public-video' if sys.argv[4] == '1' else 'public-html'
+    record['viewportPageID'] = sys.argv[4]
     workload.write_text(json.dumps(record) + '\n')
 subprocess.run(['/usr/bin/open', '-a', str(app), urls[sys.argv[3]]],
                check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)

@@ -9,7 +9,10 @@ ROOT = Path(__file__).resolve().parents[2]
 class ViewportProbeFlags(unittest.TestCase):
     def test_video_fixture_modifier_is_rejected_before_any_app_action_in_other_modes(self):
         for args in [('--unit', '--video'), ('--public-video-ui', '--video'),
-                     ('--public-viewport-ui', '--other')]:
+                     ('--unit', '--pdf'), ('--public-pdf-ui', '--pdf'),
+                     ('--public-viewport-ui', '--video', '--pdf'),
+                     ('--public-viewport-ui', '--other'),
+                     ('--public-viewport-ui', 'https://example.invalid/')]:
             with self.subTest(args=args):
                 result = subprocess.run(['bash', str(ROOT/'script/test.sh'), *args],
                                         capture_output=True, text=True, timeout=3)
