@@ -2,6 +2,44 @@ import XCTest
 import AppKit
 
 final class BrowserFlowTests: XCTestCase {
+    private static func playerAction(_ names: String, key: String) -> String {
+        "^(?:\(names))(?:[ 　]*[（(]\(key)[）)])?(?:[ 　]+(?:キーボード[ 　]+ショートカット|[Kk]eyboard[ 　]+[Ss]hortcut)[ 　]+\(key))?$"
+    }
+    private static let playAction = playerAction("動画を再生|再生|Play|Play video", key: "k")
+    private static let pauseAction = playerAction("一時停止|Pause", key: "k")
+    private static let muteAction = playerAction("ミュート[（(]消音[）)]|ミュート|Mute", key: "m")
+    private static let unmuteAction = playerAction("ミュート解除|Unmute", key: "m")
+
+    @MainActor
+    func testPlayerControlsDoNotSelectPlaylist() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 60
+        let muteNames = ["ミュート（消音） キーボード ショートカット m",
+                         "ミュート(消音) キーボード ショートカット m", "ミュート (m)", "Mute Keyboard shortcut m"]
+        for name in muteNames {
+            XCTAssertTrue(NSPredicate(format: "SELF MATCHES %@", Self.muteAction).evaluate(with: name))
+        }
+        XCTAssertFalse(NSPredicate(format: "SELF MATCHES %@", Self.muteAction).evaluate(with: "ミュート設定を開く"))
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        submit(base + "/video-actions", in: app)
+        func action(_ pattern: String) -> XCUIElement {
+            app.webViews.buttons.matching(NSPredicate(format: "label MATCHES %@ OR title MATCHES %@",
+                                                      pattern, pattern)).firstMatch
+        }
+        let play = action(Self.playAction)
+        XCTAssertTrue(play.waitForExistence(timeout: 10))
+        play.click()
+        XCTAssertTrue(action(Self.pauseAction).waitForExistence(timeout: 5))
+        action(Self.muteAction).click()
+        XCTAssertTrue(action(Self.unmuteAction).waitForExistence(timeout: 5))
+        XCTAssertTrue(app.webViews.staticTexts["Wrong actions: 0"].exists)
+    }
+
     @MainActor
     func testNestedWebMenuCanBeSelectedWithPointer() throws {
         continueAfterFailure = false
@@ -81,15 +119,30 @@ final class BrowserFlowTests: XCTestCase {
         let began = ProcessInfo.processInfo.systemUptime
         var evidence: [String: Any] = ["stage": "attached", "comparisonSamplesTaken": 0,
                                        "decodedFormatVerified": false, "playerControlConditionsMet": false, "advertisementAbsenceVerified": false]
-        func check() throws {
-            guard identityMatches(), ProcessInfo.processInfo.systemUptime - began < 140 else {
-                throw NSError(domain: "PublicVideoTrial", code: 1,
-                              userInfo: [NSLocalizedDescriptionKey: "Owned process changed or deadline expired"])
+        func movieAddressMatches() -> Bool {
+            guard let address = app.textFields["addressField"].value as? String else { return false }
+            let text = address.hasPrefix("https://") ? address : "https://" + address
+            guard let parts = URLComponents(string: text), parts.host == "www.youtube.com", parts.path == "/watch" else { return false }
+            let videos = (parts.queryItems ?? []).filter { $0.name == "v" }
+            return videos.count == 1 && videos[0].value == "aqz-KE-bpKQ"
+        }
+        func check(requireForeground: Bool = true) throws {
+            let sameProcess = identityMatches()
+            let withinDeadline = ProcessInfo.processInfo.systemUptime - began < 140
+            let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier == workload.pid
+            let movieMatches = requireForeground == false || (foreground && movieAddressMatches())
+            evidence["guardConditions"] = ["sameProcess": sameProcess, "withinDeadline": withinDeadline,
+                "foreground": foreground, "foregroundRequired": requireForeground, "movieAddress": movieMatches]
+            guard sameProcess, withinDeadline, requireForeground == false || (foreground && movieMatches) else {
+                let reason = sameProcess == false ? "Owned process changed" :
+                    (withinDeadline == false ? "Deadline expired" : (foreground == false ? "Foreground changed" : "Movie address changed"))
+                throw NSError(domain: "PublicVideoTrial", code: 1, userInfo: [NSLocalizedDescriptionKey: reason])
             }
         }
         func button(_ expression: String) -> XCUIElement {
-            app.webViews.buttons.matching(NSPredicate(format: "label MATCHES %@ OR title MATCHES %@",
-                                                     expression, expression)).firstMatch
+            let matches = app.webViews.buttons.matching(NSPredicate(format: "label MATCHES %@ OR title MATCHES %@",
+                                                                      expression, expression))
+            return matches.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? matches.firstMatch
         }
         func item(_ expression: String) -> XCUIElement {
             app.webViews.descendants(matching: .any).matching(NSPredicate(
@@ -109,30 +162,76 @@ final class BrowserFlowTests: XCTestCase {
             recordEvidence()
             if identityMatches() && app.state != .notRunning { app.terminate() }
         }
-        try check()
+        try check(requireForeground: false)
         XCTAssertTrue(running.activate(options: []))
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        let foregroundReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            identityMatches() && NSWorkspace.shared.frontmostApplication?.processIdentifier == workload.pid
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [foregroundReady], timeout: 5), .completed)
         let document = app.webViews.matching(NSPredicate(format: "label CONTAINS %@", "Big Buck Bunny")).firstMatch
         XCTAssertTrue(document.waitForExistence(timeout: 30), "Expected public film did not load")
         try check()
         XCTAssertTrue((app.textFields["addressField"].value as? String)?.contains("aqz-KE-bpKQ") == true)
         let window = app.windows["browser"]
         XCTAssertTrue(window.exists)
-        window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.42)).hover()
-        let pause = button("^(一時停止|Pause).*")
+        evidence["stage"] = "initial-media"
+        recordEvidence()
+        let initialViewport = try captureMeasurementViewport(app, expectedPID: workload.pid,
+            pageID: "public-video", prefix: "public-video-initial-viewport", validate: { try check() })
+        XCTAssertNotNil(initialViewport.media)
+        let seek = app.webViews.sliders.matching(NSPredicate(
+            format: "label MATCHES %@ OR title MATCHES %@", ".*(移動スライダー|Seek slider|再生位置).*",
+            ".*(移動スライダー|Seek slider|再生位置).*" )).firstMatch
+        XCTAssertTrue(seek.waitForExistence(timeout: 5))
+        let controlsAnchor = seek.frame
+        let initialWindowSize = window.frame.size
+        func hoverTransport() throws {
+            try check()
+            XCTAssertEqual(window.frame.size, initialWindowSize)
+            XCTAssertTrue([controlsAnchor.minX, controlsAnchor.minY, controlsAnchor.width, controlsAnchor.height].allSatisfy(\.isFinite))
+            XCTAssertTrue(controlsAnchor.width > 80 && controlsAnchor.height > 0)
+            let target = CGPoint(x: controlsAnchor.minX + min(80, controlsAnchor.width * 0.2),
+                                 y: controlsAnchor.maxY + 20)
+            let frame = window.frame
+            XCTAssertTrue(frame.contains(target))
+            evidence["transportHover"] = ["x": target.x, "y": target.y,
+                "sliderX": controlsAnchor.minX, "sliderY": controlsAnchor.minY,
+                "sliderWidth": controlsAnchor.width, "sliderHeight": controlsAnchor.height]
+            window.coordinate(withNormalizedOffset: CGVector(dx: (target.x - frame.minX) / frame.width,
+                                                             dy: (target.y - frame.minY) / frame.height)).hover()
+        }
+        try hoverTransport()
+        recordEvidence()
+        let pause = button(Self.pauseAction)
+        var controlsStableSince: TimeInterval?
+        let controlsReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let play = button(Self.playAction)
+            let visible = document.exists && ((pause.exists && pause.isHittable) || (play.exists && play.isHittable))
+            if visible {
+                if controlsStableSince == nil { controlsStableSince = ProcessInfo.processInfo.systemUptime }
+            } else { controlsStableSince = nil }
+            return controlsStableSince.map { ProcessInfo.processInfo.systemUptime - $0 >= 3 } ?? false
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [controlsReady], timeout: 8), .completed)
+        try check()
         if !pause.exists {
-            let play = button("^(再生|Play).*")
+            let play = button(Self.playAction)
             XCTAssertTrue(play.waitForExistence(timeout: 10))
             try check()
+            XCTAssertTrue(play.isHittable)
             play.click()
         }
         XCTAssertTrue(pause.waitForExistence(timeout: 15))
         evidence["stage"] = "playing"
-        let unmute = button("^(ミュート解除|Unmute).*")
+        try hoverTransport()
+        recordEvidence()
+        let unmute = button(Self.unmuteAction)
         if !unmute.exists {
-            let mute = button("^(ミュート|Mute).*")
+            let mute = button(Self.muteAction)
             XCTAssertTrue(mute.waitForExistence(timeout: 5))
             try check()
+            XCTAssertTrue(mute.isHittable)
             mute.click()
         }
         XCTAssertTrue(unmute.waitForExistence(timeout: 5))
@@ -163,9 +262,6 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(attachWindowImage(app, name: "public-video-selected-quality", knownFrame: window.frame))
         try check()
         settings.click()
-        let seek = app.webViews.sliders.matching(NSPredicate(
-            format: "label MATCHES %@ OR title MATCHES %@", ".*(移動スライダー|Seek slider|再生位置).*",
-            ".*(移動スライダー|Seek slider|再生位置).*" )).firstMatch
         XCTAssertTrue(seek.waitForExistence(timeout: 5))
         evidence["seekBefore"] = String(describing: seek.value ?? "")
         func positionControl() -> XCUIElement {
@@ -189,29 +285,74 @@ final class BrowserFlowTests: XCTestCase {
             guard halves.count == 2, let current = seconds(halves[0]), let duration = seconds(halves[1]) else { return nil }
             return (current, duration)
         }
-        let beforePosition = try XCTUnwrap(playbackTime())
-        XCTAssertEqual(beforePosition.duration, 634, "Unexpected public film duration")
-        let before = description(positionControl())
-        evidence["timeBeforeSeconds"] = beforePosition.current
-        evidence["durationSeconds"] = beforePosition.duration
-        evidence["timeBefore"] = before
+        // Match the fixed comparison film's starting offset without keyboard input.
+        try check()
+        let seekFrame = seek.frame
+        let fraction = 30.0 / 634.0
+        let seekPoint = CGPoint(x: seekFrame.minX + seekFrame.width * fraction, y: seekFrame.midY)
+        XCTAssertTrue([seekFrame.minX, seekFrame.minY, seekFrame.width, seekFrame.height].allSatisfy(\.isFinite))
+        XCTAssertTrue(seekFrame.width > 1 && seekFrame.height > 1 && window.frame.contains(seekPoint))
+        seek.coordinate(withNormalizedOffset: CGVector(dx: fraction, dy: 0.5)).click()
+        let sought = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let current = playbackTime()?.current else { return false }
+            return (27...36).contains(current)
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [sought], timeout: 8), .completed)
+        try check()
+        evidence["pauseAfterSeek"] = pause.exists
+        evidence["unmuteAfterSeek"] = unmute.exists
+        if pause.exists == false {
+            let resume = button(Self.playAction)
+            XCTAssertTrue(resume.waitForExistence(timeout: 5))
+            try check()
+            XCTAssertTrue(resume.isHittable)
+            resume.click()
+            evidence["resumeClicked"] = true
+            XCTAssertTrue(pause.waitForExistence(timeout: 5))
+        }
+        evidence["stage"] = "before-media-capture"
+        recordEvidence()
+        let viewport = try captureMeasurementViewport(app, expectedPID: workload.pid,
+            pageID: "public-video", prefix: "public-video-viewport", validate: { try check() })
+        XCTAssertEqual(viewport.cssWidth, 779)
+        XCTAssertEqual(viewport.cssHeight, 683)
+        XCTAssertEqual(viewport.devicePixelRatio, 2)
+        let media = try XCTUnwrap(viewport.media)
+        XCTAssertEqual(media.width, 1280)
+        XCTAssertEqual(media.height, 720)
+        XCTAssertTrue((633...635).contains(media.duration))
+        XCTAssertTrue(media.muted && media.paused == false && media.readyState >= 2)
+        XCTAssertTrue(pause.exists && unmute.exists)
+        evidence["videoIntrinsicSizeVerified"] = true
+        evidence["viewportVerified"] = true
+        evidence["timeBeforeSeconds"] = media.currentTime
+        evidence["durationSeconds"] = media.duration
         evidence["stage"] = "before-progress-check"
         recordEvidence()
-        XCTAssertTrue(attachWindowImage(app, name: "public-video-before-progress", knownFrame: window.frame))
-        let advancing = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            guard let now = playbackTime() else { return false }
-            return now.duration == beforePosition.duration && now.current >= beforePosition.current + 2
+        let readAfter = ProcessInfo.processInfo.systemUptime + 3
+        let interval = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            ProcessInfo.processInfo.systemUptime >= readAfter
         }, object: nil)
-        let outcome = XCTWaiter.wait(for: [advancing], timeout: 15)
-        evidence["timeAfter"] = description(positionControl())
-        evidence["timeAfterSeconds"] = playbackTime()?.current
-        evidence["seekAfter"] = String(describing: seek.value ?? "")
+        XCTAssertEqual(XCTWaiter.wait(for: [interval], timeout: 5), .completed)
+        try check()
+        let afterViewport = try captureMeasurementViewport(app, expectedPID: workload.pid,
+            pageID: "public-video", prefix: "public-video-after-viewport", validate: { try check() })
+        let afterMedia = try XCTUnwrap(afterViewport.media)
+        XCTAssertEqual(afterViewport.cssWidth, viewport.cssWidth)
+        XCTAssertEqual(afterViewport.cssHeight, viewport.cssHeight)
+        XCTAssertEqual(afterViewport.devicePixelRatio, viewport.devicePixelRatio)
+        XCTAssertEqual(afterMedia.width, 1280)
+        XCTAssertEqual(afterMedia.height, 720)
+        XCTAssertTrue(afterMedia.muted && afterMedia.paused == false && afterMedia.readyState >= 2)
+        XCTAssertTrue((633...635).contains(afterMedia.duration))
+        XCTAssertGreaterThanOrEqual(afterMedia.currentTime, media.currentTime + 2)
+        let observedInterval = afterViewport.capturedAtEpochSeconds - viewport.capturedAtEpochSeconds
+        XCTAssertTrue(observedInterval >= 3 && observedInterval < 30)
+        evidence["timeAfterSeconds"] = afterMedia.currentTime
+        evidence["captureIntervalSeconds"] = observedInterval
+        evidence["actualMediaProgressVerified"] = true
         evidence["stage"] = "after-progress-check"
         recordEvidence()
-        XCTAssertTrue(attachWindowImage(app, name: "public-video-after-progress", knownFrame: window.frame))
-        XCTAssertEqual(outcome, .completed, "Rendered playback time did not advance")
-        try check()
-        XCTAssertTrue(pause.exists && unmute.exists)
         evidence["stage"] = "playback-advanced"
         evidence["playerControlConditionsMet"] = true
         recordEvidence()
@@ -226,13 +367,11 @@ final class BrowserFlowTests: XCTestCase {
         }
         continueAfterFailure = false
         executionTimeAllowance = 45
-        struct Workload: Decodable { let pid: Int32; let executable: String; let startedEpoch: Double }
-        struct Snapshot: Decodable {
-            let schema: Int
-            let pageID: String
-            let cssWidth, cssHeight, devicePixelRatio, visualScale: Double
-            let nativeWidth, nativeHeight, pageZoom, capturedAtEpochSeconds: Double
-            let documentVisible: Bool
+        struct Workload: Decodable {
+            let pid: Int32
+            let executable: String
+            let startedEpoch: Double
+            let viewportPageID: String?
         }
         let file = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let directory = file.deletingLastPathComponent()
@@ -243,6 +382,8 @@ final class BrowserFlowTests: XCTestCase {
         let expected = checkout.appendingPathComponent(
             ".local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica")
         let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: file))
+        let expectedPageID = workload.viewportPageID ?? "public-html"
+        XCTAssertTrue(["public-html", "public-video"].contains(expectedPageID))
         XCTAssertEqual(workload.executable, expected.path)
         let running = try XCTUnwrap(NSRunningApplication(processIdentifier: workload.pid))
         let began = ProcessInfo.processInfo.systemUptime
@@ -263,26 +404,60 @@ final class BrowserFlowTests: XCTestCase {
         defer { if identityMatches() && app.state != .notRunning { app.terminate() } }
         XCTAssertTrue(running.activate(options: []))
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        _ = try captureMeasurementViewport(app, expectedPID: workload.pid, pageID: expectedPageID,
+                                           prefix: "public-viewport", validate: check)
+    }
+
+    private struct ViewportMedia: Decodable {
+        let width, height, duration, currentTime: Double
+        let paused, muted: Bool
+        let readyState: Int
+    }
+
+    private struct ViewportSnapshot: Decodable {
+        let schema: Int
+        let pageID: String
+        let cssWidth, cssHeight, devicePixelRatio, visualScale: Double
+        let nativeWidth, nativeHeight, pageZoom, capturedAtEpochSeconds: Double
+        let documentVisible: Bool
+        let media: ViewportMedia?
+    }
+
+    @MainActor
+    private func captureMeasurementViewport(_ app: XCUIApplication, expectedPID: Int32,
+                                             pageID expectedPageID: String, prefix: String,
+                                             validate: @MainActor () throws -> Void) throws -> ViewportSnapshot {
+        try validate()
         let window = app.windows["browser"]
         let button = window.buttons.matching(identifier: "captureMeasurementViewportButton").firstMatch
+        let report = window.staticTexts.matching(identifier: "measurementViewportReport").firstMatch
         XCTAssertTrue(button.waitForExistence(timeout: 10))
-        let available = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in button.isEnabled }, object: nil)
+        let available = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            button.isEnabled || (report.value as? String)?.hasPrefix("viewport:error:") == true
+        }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [available], timeout: 15), .completed)
-        try check()
+        try validate()
+        guard button.isEnabled else {
+            let value = (report.value as? String) ?? "viewport:disabled"
+            let diagnostic = XCTAttachment(string: value)
+            diagnostic.name = prefix + "-disabled"
+            diagnostic.lifetime = .keepAlways
+            add(diagnostic)
+            throw NSError(domain: "ViewportCapture", code: 2, userInfo: [NSLocalizedDescriptionKey: value])
+        }
         let frame = button.frame
         XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
         XCTAssertTrue(frame.width > 0 && frame.height > 0)
         XCTAssertTrue(window.frame.contains(CGPoint(x: frame.midX, y: frame.midY)))
-        XCTAssertEqual(NSWorkspace.shared.frontmostApplication?.processIdentifier, workload.pid)
+        XCTAssertEqual(NSWorkspace.shared.frontmostApplication?.processIdentifier, expectedPID)
         button.click()
-        let report = window.staticTexts.matching(identifier: "measurementViewportReport").firstMatch
         let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             guard report.exists, let value = report.value as? String else { return false }
-            return value.hasPrefix("{") || value == "viewport:unavailable"
+            return value.hasPrefix("{") || value.hasPrefix("viewport:error:") || value == "viewport:unavailable"
         }, object: nil)
         let completion = XCTWaiter.wait(for: [completed], timeout: 10)
         if completion != .completed {
-            try check()
+            try validate()
             // This is the fixed diagnostic control, never the page's accessibility tree.
             let state: [String: String] = [
                 "label": report.exists ? report.label : "missing",
@@ -290,18 +465,26 @@ final class BrowserFlowTests: XCTestCase {
                 "buttonEnabled": String(button.isEnabled)
             ]
             let diagnostic = XCTAttachment(data: try JSONEncoder().encode(state), uniformTypeIdentifier: "public.json")
-            diagnostic.name = "public-viewport-control-state"
+            diagnostic.name = prefix + "-control-state"
             diagnostic.lifetime = .keepAlways
             add(diagnostic)
-            _ = attachWindowImage(app, name: "public-viewport-incomplete", knownFrame: window.frame)
+            _ = attachWindowImage(app, name: prefix + "-incomplete", knownFrame: window.frame)
         }
         XCTAssertEqual(completion, .completed)
-        try check()
+        try validate()
         let value = try XCTUnwrap(report.value as? String)
+        guard value.hasPrefix("{") else {
+            let diagnostic = XCTAttachment(string: value)
+            diagnostic.name = prefix + "-capture-failure"
+            diagnostic.lifetime = .keepAlways
+            add(diagnostic)
+            throw NSError(domain: "ViewportCapture", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: value])
+        }
         let data = try XCTUnwrap(value.data(using: .utf8))
-        let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
+        let snapshot = try JSONDecoder().decode(ViewportSnapshot.self, from: data)
         XCTAssertEqual(snapshot.schema, 1)
-        XCTAssertEqual(snapshot.pageID, "public-html")
+        XCTAssertEqual(snapshot.pageID, expectedPageID)
         XCTAssertTrue([snapshot.cssWidth, snapshot.cssHeight, snapshot.devicePixelRatio,
                        snapshot.nativeWidth, snapshot.nativeHeight].allSatisfy { $0.isFinite && $0 > 0 })
         XCTAssertEqual(snapshot.pageZoom, 1)
@@ -309,10 +492,11 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(snapshot.documentVisible)
         XCTAssertLessThan(Date().timeIntervalSince1970 - snapshot.capturedAtEpochSeconds, 15)
         let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
-        attachment.name = "public-viewport-readiness"
+        attachment.name = prefix + "-readiness"
         attachment.lifetime = .keepAlways
         add(attachment)
-        XCTAssertTrue(attachWindowImage(app, name: "public-viewport-window", knownFrame: window.frame))
+        XCTAssertTrue(attachWindowImage(app, name: prefix + "-window", knownFrame: window.frame))
+        return snapshot
     }
 
     @MainActor

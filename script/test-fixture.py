@@ -427,6 +427,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/tab-state": '<title>State tab</title><h1>State tab</h1><input aria-label="Draft"><p id="loads"></p><script>const n=+(sessionStorage.getItem("loads")||0)+1;sessionStorage.setItem("loads",n);document.getElementById("loads").textContent="Document loads: "+n;</script>',
             "/post-form": '<h1>Post fixture</h1><form action="/submitted" method="post"><input name="draft" value="synthetic"><button>Submit fixture</button></form>',
             "/submitted": '<h1>Unexpected GET replay</h1>',
+            "/video-actions": '''<title>Player action fixture</title><h1>Player actions</h1>
+                <style>body{padding:24px}button{padding:12px;margin:6px}</style>
+                <p id="wrong">Wrong actions: 0</p>
+                <button onclick="wrong.textContent='Wrong actions: 1'">再生リストに保存</button>
+                <button onclick="wrong.textContent='Wrong actions: 1'">ミュート設定を開く</button>
+                <button onclick="this.textContent='一時停止 (k)'">再生 (k)</button>
+                <button onclick="this.textContent='ミュート解除 キーボード ショートカット m'">ミュート（消音） キーボード ショートカット m</button>''',
             "/web-menu": '''<title>Web menu fixture</title><h1>Nested web menu</h1>
                 <style>body{padding:24px}button{padding:12px;margin:6px}[hidden]{display:none}
                 [role=menu]{padding:12px;border:1px solid #555;width:240px}</style>
