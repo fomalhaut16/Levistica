@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two authenticated live observations; deliberately never collects RAM."""
+"""Authenticated observations; RAM is limited to the explicit single-sample pilot."""
 import argparse
 import http.server
 import importlib.util
@@ -53,7 +53,7 @@ def validate_snapshot(value, original=None):
             raise ValueError('Live playback interval did not match')
 
 
-def create_server(pid, verify, clock=time.monotonic):
+def create_server(pid, verify, clock=time.monotonic, sampler=None):
     token = secrets.token_urlsafe(32)
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -87,13 +87,20 @@ def create_server(pid, verify, clock=time.monotonic):
                     if not 3 <= interval <= 20 or abs(interval - document_interval) > 2:
                         raise ValueError('Receiver observation interval did not match')
                 verify()
+                if sampler is not None:
+                    if original is None:
+                        sampler.capture()
+                    else:
+                        sampler.finish()
+                    verify()
                 self.server.records.append({'receivedMonotonic': received, 'snapshot': value})
             except (OSError, ValueError, subprocess.SubprocessError):
                 # Never copy malformed bodies, tokens, URLs or exception text to results.
                 self.server.failure = 'observation_rejected'
                 self.send_error(409)
                 return
-            data = b'{"success":true,"memorySamplesTaken":0,"readyForRAM":false}'
+            data = json.dumps({'success': True, 'memorySamplesTaken': sampler.attempts if sampler else 0,
+                               'readyForRAM': False}).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(data)))
@@ -121,8 +128,9 @@ def serve(workload_path):
     record = json.loads(workload_path.read_text())
     guard.validate(record)
     guard.validate_lifetime(record, 300)
-    if record.get('dryRunPublicHandoff') is not True:
-        raise ValueError('Requires the fixed explicit dry handoff workload')
+    memory = record.get('samplePublicMemory') is True
+    if memory == (record.get('dryRunPublicHandoff') is True):
+        raise ValueError('Requires exactly one explicit handoff mode')
     app = Path(record['executable']).parents[2]
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     revision = info.get('LevisticaSourceRevision')
@@ -136,7 +144,13 @@ def serve(workload_path):
                 or info.get('LevisticaSourceState') != 'clean' or current.get('LevisticaSourceState') != 'clean'):
             raise ValueError('Measurement source identity changed')
     verify()
-    server = create_server(record['pid'], verify)
+    sampler = None
+    if memory:
+        spec = importlib.util.spec_from_file_location('public_memory_capture', ROOT / 'script/public-memory-sample.py')
+        capture = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(capture)
+        sampler = capture.create_sampler(record)
+    server = create_server(record['pid'], verify, sampler=sampler)
     output = workload_path.parent
     config = {'url': f'http://127.0.0.1:{server.server_port}/public-readiness', 'token': server.token,
               'pid': record['pid'], 'sourceRevision': revision}
@@ -148,16 +162,21 @@ def serve(workload_path):
     try:
         while len(server.records) < 2 and server.failure is None and time.monotonic() < deadline:
             verify()
+            if sampler is not None:
+                sampler.tick()
             server.handle_request()
         if len(server.records) != 2 and server.failure is None:
             server.failure = 'handoff_deadline_expired'
     except (OSError, ValueError, subprocess.SubprocessError):
-        server.failure = 'owner_or_source_changed'
+        server.failure = 'owner_source_or_sampling_condition_changed'
     finally:
         server.server_close()
         result = {'success': len(server.records) == 2 and server.failure is None,
                   'records': server.records, 'failure': server.failure, 'sourceRevision': revision,
-                  'memorySamplesTaken': 0, 'readyForRAM': False}
+                  'memorySamplesTaken': sampler.attempts if sampler else 0, 'readyForRAM': False}
+        if sampler is not None:
+            result['provisionalMemorySample'] = sampler.sample
+            result['memoryProvenance'] = sampler.provenance
         path = output / 'public-handoff-result.json'
         path.write_text(json.dumps(result, indent=2) + '\n')
         path.chmod(0o600)

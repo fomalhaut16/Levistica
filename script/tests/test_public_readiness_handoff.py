@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import threading
 import unittest
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location('public_handoff', Path(__file__).parents[1] / 'public-readiness-handoff.py')
 handoff = importlib.util.module_from_spec(spec)
@@ -115,6 +116,45 @@ class HandoffHTTPTests(unittest.TestCase):
     def test_observation_for_another_pid_is_rejected(self):
         self.assertEqual(self.post({**snapshot(), 'pid': 999})[0], 409)
         self.assertEqual(self.server.records, [])
+
+    def memory_server(self, fail_finish=False):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        sampler = SimpleNamespace(attempts=0, finished=False)
+        def capture():
+            sampler.attempts += 1
+        def finish():
+            if fail_finish:
+                raise ValueError('simulated changed attribution')
+            sampler.finished = True
+        sampler.capture, sampler.finish = capture, finish
+        self.server = handoff.create_server(123, lambda: None, clock=lambda: self.now, sampler=sampler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        return sampler
+
+    def test_explicit_sampling_runs_once_between_the_two_authenticated_observations(self):
+        sampler = self.memory_server()
+        self.assertEqual(self.post(extra={'X-Levistica-Diagnostic': 'wrong'})[0], 403)
+        self.assertEqual(sampler.attempts, 0)
+        status, body = self.post()
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['memorySamplesTaken'], 1)
+        self.now = 104
+        self.assertEqual(self.post(snapshot('after'))[0], 200)
+        self.assertTrue(sampler.finished)
+        self.assertEqual(sampler.attempts, 1)
+        self.assertEqual(self.post(snapshot('after'))[0], 409)
+
+    def test_failed_post_capture_check_cannot_complete_the_pair(self):
+        sampler = self.memory_server(fail_finish=True)
+        self.assertEqual(self.post()[0], 200)
+        self.now = 104
+        self.assertEqual(self.post(snapshot('after'))[0], 409)
+        self.assertEqual(len(self.server.records), 1)
+        self.assertEqual(sampler.attempts, 1)
+        self.assertEqual(self.server.failure, 'observation_rejected')
 
 
 if __name__ == '__main__':

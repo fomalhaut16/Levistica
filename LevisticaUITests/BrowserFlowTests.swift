@@ -98,6 +98,7 @@ final class BrowserFlowTests: XCTestCase {
             let prepareMixedBeforePlayback: Bool?
             let steadyPublicVideo: Bool?
             let dryRunPublicHandoff: Bool?
+            let samplePublicMemory: Bool?
         }
         let file = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let directory = file.deletingLastPathComponent()
@@ -528,7 +529,8 @@ final class BrowserFlowTests: XCTestCase {
                 let total = (previousElapsed - initialElapsed) / 1000
                 XCTAssertTrue(total >= 120 && total < 180)
                 XCTAssertEqual(previousTime - afterMedia.currentTime, total, accuracy: 2)
-                if workload.dryRunPublicHandoff == true {
+                if workload.dryRunPublicHandoff == true || workload.samplePublicMemory == true {
+                    XCTAssertFalse(workload.dryRunPublicHandoff == true && workload.samplePublicMemory == true)
                     struct Collector: Decodable {
                         let url: URL
                         let token: String
@@ -593,11 +595,12 @@ final class BrowserFlowTests: XCTestCase {
                         struct Reply: Decodable { let success: Bool; let memorySamplesTaken: Int; let readyForRAM: Bool }
                         let reply = try JSONDecoder().decode(Reply.self, from: data)
                         XCTAssertTrue(reply.success)
-                        XCTAssertEqual(reply.memorySamplesTaken, 0)
+                        XCTAssertEqual(reply.memorySamplesTaken, workload.samplePublicMemory == true ? 1 : 0)
                         XCTAssertFalse(reply.readyForRAM)
                         try check()
                     }
-                    evidence["liveDryHandoffCompleted"] = true
+                    evidence["liveDryHandoffCompleted"] = workload.dryRunPublicHandoff == true
+                    evidence["liveMemoryHandoffCompleted"] = workload.samplePublicMemory == true
                     evidence["readyForRAM"] = false
                 }
                 let retained = try observeMixedDocuments(captureImages: false)
@@ -615,7 +618,7 @@ final class BrowserFlowTests: XCTestCase {
                 evidence["activePageAtEnd"] = "public-chat-login"
                 evidence["readyForImmediateRAM"] = false
                 evidence["stage"] = "mixed-steady-observed"
-                evidence["memorySamplesTaken"] = 0
+                evidence["memorySamplesTaken"] = workload.samplePublicMemory == true ? 1 : 0
                 evidence["continuousEveryInstantObservation"] = false
                 recordEvidence()
             }

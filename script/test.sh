@@ -10,14 +10,16 @@ AUDIBLE_PUBLIC=0
 FOREGROUND_PUBLIC=0
 STEADY_PUBLIC=0
 HANDOFF_PUBLIC=0
+MEMORY_PUBLIC=0
 if [[ $# -gt 1 ]]; then
     if [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed ]]; then
         MIXED_PUBLIC=1
-    elif [[ $# == 2 && "$MODE" == --public-video-ui && ( "$2" == --mixed-steady || "$2" == --mixed-handoff ) ]]; then
+    elif [[ $# == 2 && "$MODE" == --public-video-ui && ( "$2" == --mixed-steady || "$2" == --mixed-handoff || "$2" == --mixed-memory ) ]]; then
         MIXED_PUBLIC=1
         FOREGROUND_PUBLIC=1
         STEADY_PUBLIC=1
         if [[ "$2" == --mixed-handoff ]]; then HANDOFF_PUBLIC=1; fi
+        if [[ "$2" == --mixed-memory ]]; then HANDOFF_PUBLIC=1; MEMORY_PUBLIC=1; fi
     elif [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed-foreground ]]; then
         MIXED_PUBLIC=1
         FOREGROUND_PUBLIC=1
@@ -105,7 +107,7 @@ if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --pub
     DEADLINE_ALLOWANCE=60
     if [[ "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ]]; then
         # Fixed public workloads only; keep normal profiles and arbitrary URLs out of these trials.
-        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" "$MIXED_PUBLIC" "$AUDIBLE_PUBLIC" "$FOREGROUND_PUBLIC" "$STEADY_PUBLIC" "$HANDOFF_PUBLIC" <<'PYPDF'
+        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" "$MIXED_PUBLIC" "$AUDIBLE_PUBLIC" "$FOREGROUND_PUBLIC" "$STEADY_PUBLIC" "$HANDOFF_PUBLIC" "$MEMORY_PUBLIC" <<'PYPDF'
 import importlib.util
 import json
 import pathlib
@@ -136,7 +138,8 @@ if sys.argv[3] == '--public-video-ui' and sys.argv[5] == '1':
     record['audiblePublicVideo'] = sys.argv[6] == '1'
     record['prepareMixedBeforePlayback'] = sys.argv[7] == '1'
     record['steadyPublicVideo'] = sys.argv[8] == '1'
-    record['dryRunPublicHandoff'] = sys.argv[9] == '1'
+    record['dryRunPublicHandoff'] = sys.argv[9] == '1' and sys.argv[10] == '0'
+    record['samplePublicMemory'] = sys.argv[10] == '1'
     workload.write_text(json.dumps(record) + '\n')
 subprocess.run(['/usr/bin/open', '-a', str(app), *targets],
                check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -327,16 +330,20 @@ elif [[ "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" ==
     if [[ "$HANDOFF_PUBLIC" == 1 ]]; then
         wait "$COLLECTOR_PID"
         COLLECTOR_PID=""
-        python3 - "$RUN_DIR/public-handoff-result.json" <<'PYHANDOFF'
+        python3 - "$RUN_DIR/public-handoff-result.json" "$MEMORY_PUBLIC" <<'PYHANDOFF'
 import json
 from pathlib import Path
 import sys
 result = json.loads(Path(sys.argv[1]).read_text())
 if (result.get('success') is not True or result.get('failure') is not None
-        or len(result.get('records', [])) != 2 or result.get('memorySamplesTaken') != 0
+        or len(result.get('records', [])) != 2 or result.get('memorySamplesTaken') != int(sys.argv[2])
         or result.get('readyForRAM') is not False):
     raise SystemExit('Live public handoff did not complete; no RAM sample was taken')
 PYHANDOFF
+        if [[ "$MEMORY_PUBLIC" == 1 ]]; then
+            python3 "$ROOT_DIR/script/public-memory-sample.py" "$RUN_DIR"
+            echo 'One public-page pilot sample verified; no browser comparison or product acceptance.'
+        fi
     fi
     # The successful UI test terminates its verified app. Cancel its remaining watchdog.
     kill "$DEADLINE_PID" 2>/dev/null || true
