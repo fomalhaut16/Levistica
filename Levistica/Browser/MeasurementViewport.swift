@@ -16,6 +16,8 @@ enum MeasurementViewport {
         let paused: Bool
         let muted: Bool
         let readyState: Int
+        let playbackRate: Double?
+        let volume: Double?
     }
 
     struct Snapshot: Codable, Equatable, Sendable {
@@ -31,6 +33,9 @@ enum MeasurementViewport {
         let documentVisible: Bool
         let capturedAtEpochSeconds: Double
         let media: Media?
+        let documentTimeOrigin: Double?
+        let documentElapsedMilliseconds: Double?
+        let documentHeadingMatches: Bool?
     }
 
     private struct Payload: Decodable {
@@ -41,6 +46,9 @@ enum MeasurementViewport {
         let visible: Bool
         let ready: String
         let media: Media?
+        let timeOrigin: Double?
+        let elapsed: Double?
+        let headingMatches: Bool?
     }
 
     static func pageID(for url: URL?) -> String? {
@@ -100,18 +108,24 @@ enum MeasurementViewport {
                        Double(bounds.width), Double(bounds.height), zoom]
         guard numbers.allSatisfy({ $0.isFinite && $0 > 0 }) else { throw Failure.invalidMetrics }
         guard value.ready == "complete" else { throw Failure.notReady }
+        if let origin = value.timeOrigin, origin.isFinite == false || origin <= 0 { throw Failure.invalidMetrics }
+        if let elapsed = value.elapsed, elapsed.isFinite == false || elapsed < 0 { throw Failure.invalidMetrics }
         if pageID == "public-video" {
             guard let media = value.media else { throw Failure.mediaUnavailable }
             guard [media.width, media.height, media.duration].allSatisfy({ $0.isFinite && $0 > 0 }),
                   media.currentTime.isFinite, media.currentTime >= 0,
                   media.currentTime <= media.duration else { throw Failure.invalidMedia }
             guard (2...4).contains(media.readyState) else { throw Failure.notReady }
+            if let volume = media.volume, volume.isFinite == false || !(0...1).contains(volume) { throw Failure.invalidMedia }
+            if let rate = media.playbackRate, rate.isFinite == false || rate <= 0 { throw Failure.invalidMedia }
         } else if value.media != nil { throw Failure.invalidMetrics }
         return Snapshot(schema: 1, pageID: pageID, cssWidth: value.width, cssHeight: value.height,
                         devicePixelRatio: value.dpr, visualScale: value.visualScale,
                         nativeWidth: bounds.width, nativeHeight: bounds.height, pageZoom: zoom,
                         documentVisible: value.visible, capturedAtEpochSeconds: Date().timeIntervalSince1970,
-                        media: value.media)
+                        media: value.media, documentTimeOrigin: value.timeOrigin,
+                        documentElapsedMilliseconds: value.elapsed,
+                        documentHeadingMatches: value.headingMatches)
     }
 
     static func capture(_ page: PageRuntime) async throws -> Snapshot {
@@ -127,10 +141,12 @@ enum MeasurementViewport {
         (() => {
         const v = \(id == "public-video" ? "document.querySelector('video.html5-main-video')" : "null");
         const media = v ? {width:v.videoWidth,height:v.videoHeight,duration:v.duration,
-          currentTime:v.currentTime,paused:v.paused,muted:v.muted,readyState:v.readyState} : null;
+          currentTime:v.currentTime,paused:v.paused,muted:v.muted,readyState:v.readyState,playbackRate:v.playbackRate,volume:v.volume} : null;
+        const headingMatches = \(id == "public-html" ? "(() => {const h=document.querySelector('h1')?.textContent || '';return h.includes('Web Content Accessibility Guidelines') && h.includes('2.2');})()" : "null");
         return JSON.stringify({width:innerWidth,height:innerHeight,dpr:devicePixelRatio,
           visualScale:visualViewport ? visualViewport.scale : 1,
-          visible:document.visibilityState === 'visible',ready:document.readyState,media});
+          visible:document.visibilityState === 'visible',ready:document.readyState,media,
+          timeOrigin:performance.timeOrigin,elapsed:performance.now(),headingMatches});
         })()
         """
         let encoded: String = try await withCheckedThrowingContinuation { continuation in

@@ -46,6 +46,8 @@ struct MeasurementViewportTests {
             bounds: CGRect(x: 0, y: 0, width: 640, height: 480), zoom: 1)
         #expect(snapshot.documentVisible == false)
         #expect(snapshot.cssWidth == 640)
+        #expect(snapshot.documentTimeOrigin == nil)
+        #expect(snapshot.documentElapsedMilliseconds == nil)
         #expect(throws: MeasurementViewport.Failure.invalidMetrics) {
             try MeasurementViewport.decode(text, pageID: "generated-document", bounds: .zero, zoom: 1)
         }
@@ -94,11 +96,13 @@ struct MeasurementViewportTests {
         let text = """
         {"width":779,"height":683,"dpr":2,"visualScale":1,"visible":true,"ready":"complete",
          "media":{"width":1280,"height":720,"duration":634.601,"currentTime":30,
-                  "paused":false,"muted":true,"readyState":4}}
+                  "paused":false,"muted":true,"readyState":4,"playbackRate":1,"volume":0.1}}
         """
         let bounds = CGRect(x: 0, y: 0, width: 779, height: 683)
         let snapshot = try MeasurementViewport.decode(text, pageID: "public-video", bounds: bounds, zoom: 1)
         #expect(snapshot.media?.height == 720)
+        #expect(snapshot.media?.playbackRate == 1)
+        #expect(snapshot.media?.volume == 0.1)
         #expect(snapshot.media?.muted == true)
         #expect(snapshot.media?.paused == false)
         #expect(throws: MeasurementViewport.Failure.invalidMetrics) {
@@ -142,16 +146,30 @@ struct MeasurementViewportTests {
         #expect(values["chatHost"] == (url.host == "discord.com"))
     }
 
-    @Test(arguments: ["\"height\":0", "\"duration\":0", "\"currentTime\":-1", "\"currentTime\":900"])
+    @Test(arguments: [-0.1, 1.1])
+    func outOfRangeVolumeIsRejected(_ volume: Double) {
+        let payload = """
+        {"width":779,"height":683,"dpr":2,"visualScale":1,"visible":true,"ready":"complete",
+         "media":{"width":1280,"height":720,"duration":634.601,"currentTime":30,
+                  "paused":false,"muted":false,"readyState":4,"volume":\(volume)}}
+        """
+        #expect(throws: MeasurementViewport.Failure.invalidMedia) {
+            try MeasurementViewport.decode(payload, pageID: "public-video",
+                bounds: CGRect(x: 0, y: 0, width: 779, height: 683), zoom: 1)
+        }
+    }
+
+    @Test(arguments: ["\"height\":0", "\"duration\":0", "\"currentTime\":-1", "\"currentTime\":900", "\"playbackRate\":0", "\"playbackRate\":-1"])
     func invalidMediaMetricsAreNotAccepted(_ replacement: String) {
         let valid = """
         {"width":779,"height":683,"dpr":2,"visualScale":1,"visible":true,"ready":"complete",
          "media":{"width":1280,"height":720,"duration":634.601,"currentTime":30,
-                  "paused":false,"muted":true,"readyState":4}}
+                  "paused":false,"muted":true,"readyState":4,"playbackRate":1}}
         """
         let key = String(replacement.prefix(through: replacement.firstIndex(of: ":")!))
         let original = key == "\"height\":" ? "\"height\":720" :
-            (key == "\"duration\":" ? "\"duration\":634.601" : "\"currentTime\":30")
+            (key == "\"duration\":" ? "\"duration\":634.601" :
+                (key == "\"playbackRate\":" ? "\"playbackRate\":1" : "\"currentTime\":30"))
         #expect(throws: MeasurementViewport.Failure.invalidMedia) {
             try MeasurementViewport.decode(valid.replacingOccurrences(of: original, with: replacement),
                 pageID: "public-video", bounds: CGRect(x: 0, y: 0, width: 779, height: 683), zoom: 1)
@@ -166,6 +184,51 @@ struct MeasurementViewportTests {
             try MeasurementViewport.decode(text, pageID: "public-video",
                 bounds: CGRect(x: 0, y: 0, width: 779, height: 683), zoom: 1)
         }
+    }
+
+    @Test(arguments: ["\"timeOrigin\":0", "\"timeOrigin\":-1", "\"timeOrigin\":true", "\"elapsed\":-1"])
+    func invalidDocumentTimingIsNotAccepted(_ metadata: String) {
+        let text = """
+        {"width":640,"height":480,"dpr":2,"visualScale":1,"visible":true,"ready":"complete",\(metadata)}
+        """
+        #expect(throws: (any Error).self) {
+            try MeasurementViewport.decode(text, pageID: "public-html",
+                bounds: CGRect(x: 0, y: 0, width: 640, height: 480), zoom: 1)
+        }
+    }
+
+    @Test func publicHeadingAndNavigationTimingExposeNoPageText() async throws {
+        let page = PageRuntime(dataStore: .nonPersistent())
+        defer { page.stop() }
+        page.webView.frame = CGRect(x: 0, y: 0, width: 640, height: 480)
+        let url = try #require(URL(string: "https://www.w3.org/TR/2024/REC-WCAG22-20241212/"))
+        func load(_ title: String) async throws {
+            page.webView.loadSimulatedRequest(URLRequest(url: url), responseHTML: """
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'">
+            <title>\(title)</title><h1>Web Content Accessibility Guidelines (WCAG) 2.2</h1>
+            <input value="synthetic-private-heading-fixture">
+            """)
+            let deadline = ContinuousClock.now + .seconds(10)
+            while page.webView.title != title || page.webView.isLoading, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try #require(page.webView.title == title && page.webView.isLoading == false)
+        }
+        try await load("Heading fixture one")
+        let first = try await MeasurementViewport.capture(page)
+        let origin = try #require(first.documentTimeOrigin)
+        #expect(origin > 0)
+        #expect(first.documentHeadingMatches == true)
+        let again = try await MeasurementViewport.capture(page)
+        #expect(again.documentTimeOrigin == origin)
+        #expect(try #require(again.documentElapsedMilliseconds) >= #require(first.documentElapsedMilliseconds))
+        let encoded = String(decoding: try JSONEncoder().encode(first), as: UTF8.self)
+        #expect(encoded.contains("synthetic-private") == false)
+        #expect(encoded.contains("Web Content Accessibility") == false)
+        #expect(encoded.contains("Heading fixture") == false)
+        try await load("Heading fixture two")
+        let replaced = try await MeasurementViewport.capture(page)
+        #expect(try #require(replaced.documentTimeOrigin) > origin)
     }
 }
 }

@@ -5,14 +5,21 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 MODE="${1:---unit}"
 case "$MODE" in --unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui) ;; *) echo "usage: $0 [--unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui]" >&2; exit 2;; esac
 VIEWPORT_PAGE=public-html
+MIXED_PUBLIC=0
+AUDIBLE_PUBLIC=0
 if [[ $# -gt 1 ]]; then
-    if [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --video ]]; then
+    if [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed ]]; then
+        MIXED_PUBLIC=1
+    elif [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed-audible ]]; then
+        MIXED_PUBLIC=1
+        AUDIBLE_PUBLIC=1
+    elif [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --video ]]; then
         VIEWPORT_PAGE=public-video
     elif [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --pdf ]]; then
         VIEWPORT_PAGE=public-pdf
     elif [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --discord-login ]]; then
         VIEWPORT_PAGE=public-chat-login
-    else echo '--video, --pdf and --discord-login are supported only with --public-viewport-ui' >&2; exit 2; fi
+    else echo '--video, --pdf and --discord-login require --public-viewport-ui; --mixed requires --public-video-ui' >&2; exit 2; fi
 fi
 # Diagnostic selection is fixed; never run normal launch-based tests against Profile.
 if [[ ( "$MODE" == --profile-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ) && -n "${TEST_ONLY:-}" ]]; then
@@ -87,7 +94,7 @@ if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --pub
     DEADLINE_ALLOWANCE=60
     if [[ "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ]]; then
         # Fixed public workloads only; keep normal profiles and arbitrary URLs out of these trials.
-        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" <<'PYPDF'
+        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" "$MIXED_PUBLIC" "$AUDIBLE_PUBLIC" <<'PYPDF'
 import importlib.util
 import json
 import pathlib
@@ -110,7 +117,14 @@ urls = {'--public-pdf-ui': 'https://arxiv.org/pdf/1706.03762v7',
 if sys.argv[3] == '--public-viewport-ui':
     record['viewportPageID'] = sys.argv[4]
     workload.write_text(json.dumps(record) + '\n')
-subprocess.run(['/usr/bin/open', '-a', str(app), urls[sys.argv[3]]],
+targets = [urls[sys.argv[3]]]
+if sys.argv[3] == '--public-video-ui' and sys.argv[5] == '1':
+    targets = [viewport_urls[key] for key in
+               ['public-html', 'public-pdf', 'public-chat-login', 'public-video']]
+    record['mixedPublicPages'] = True
+    record['audiblePublicVideo'] = sys.argv[6] == '1'
+    workload.write_text(json.dumps(record) + '\n')
+subprocess.run(['/usr/bin/open', '-a', str(app), *targets],
                check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 guard.verify_owned(record)
 PYPDF
