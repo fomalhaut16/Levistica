@@ -16,6 +16,39 @@ struct BrowserSessionTests {
         }
     }
 
+    @Test func pageFindMatchesDocumentTextWithoutKeyboardAutomation() async throws {
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        defer { runtime.clearFind(); runtime.stop() }
+        let url = try #require(URL(string: "https://example.invalid/find-fixture"))
+        runtime.webView.frame = CGRect(x: 0, y: 0, width: 640, height: 480)
+        runtime.webView.loadSimulatedRequest(URLRequest(url: url), responseHTML: """
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'">
+            <title>Page find fixture</title>
+            <p>Alpha nebula. Another NEBULA. こんにちは。</p>
+            """)
+        let loadedDeadline = ContinuousClock.now + .seconds(10)
+        while runtime.webView.title != "Page find fixture" || runtime.webView.isLoading,
+              ContinuousClock.now < loadedDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(runtime.webView.title == "Page find fixture")
+        try #require(runtime.webView.isLoading == false)
+        for (query, backwards, expected) in [("nEbUlA", false, true), ("nEbUlA", true, true),
+                                              ("zzzz-absent-zzzz", false, false), ("こんにちは", false, true)] {
+            runtime.findQuery = query
+            runtime.findNext(backwards: backwards)
+            let deadline = ContinuousClock.now + .seconds(5)
+            while runtime.findMatchFound == nil, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try #require(runtime.findMatchFound != nil, "WebKit find callback did not finish")
+            #expect(runtime.findMatchFound == expected)
+        }
+        runtime.clearFind()
+        #expect(runtime.findQuery.isEmpty)
+        #expect(runtime.findMatchFound == nil)
+    }
+
     @Test(arguments: SearchEngine.allCases)
     func submittedSearchUsesTheChosenEngineWithoutSendingNetworkRequests(_ engine: SearchEngine) async throws {
         let session = BrowserSession(dataStore: .nonPersistent())
