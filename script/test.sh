@@ -298,7 +298,8 @@ if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" "$TEST_ACTION" >"$RUN_DIR/xcodebuild
     # Reporting is best-effort; it must never turn a failed build/test into success.
     if /usr/bin/xcrun xcresulttool get test-results summary --path "$RUN_DIR/Results.xcresult" \
         --format json >"$RUN_DIR/test-summary.json" 2>"$RUN_DIR/test-summary-error.log"; then
-        python3 "$ROOT_DIR/script/report-test-failures.py" "$RUN_DIR/test-summary.json" >&2 \
+        python3 "$ROOT_DIR/script/report-test-failures.py" "$RUN_DIR/test-summary.json" \
+            --classification-json "$RUN_DIR/failure-classification.json" >&2 \
             || echo 'Could not report test failure details; inspect the result bundle and xcodebuild.log.' >&2
     else
         echo 'Test summary unavailable; inspect xcodebuild.log for build or runner failures.' >&2

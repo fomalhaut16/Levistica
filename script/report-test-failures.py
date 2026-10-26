@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Print bounded failure details from xcresulttool's test summary, without attachments."""
+import argparse
 import json
 import pathlib
+import re
 import sys
 import unicodedata
 
@@ -41,11 +43,53 @@ def failure_report(summary):
     return '\n'.join(lines)
 
 
+def failure_classification(summary):
+    # Validate the same structure as the human-readable report. Persist no
+    # failure text, identifiers, device metadata, or attachments here.
+    failure_report(summary)
+    counts = {key: value if type(value) is int and value >= 0 else None
+              for key in ('passedTests', 'failedTests', 'totalTestCount', 'skippedTests')
+              for value in [summary.get(key)]}
+    initialization_timeout = False
+    ordinary_failure = False
+    for failure in summary.get('testFailures', []):
+        identifier = failure.get('testIdentifierString', '')
+        runner = (failure.get('targetName') == 'LevisticaUITests'
+                  and isinstance(identifier, str)
+                  and re.fullmatch(r'LevisticaUITests-Runner \([0-9]+\) encountered an error', identifier))
+        text = failure.get('failureText', '')
+        if runner and isinstance(text, str):
+            text = text.casefold()
+            initialization_timeout |= ('test runner failed to initialize for ui testing' in text
+                                       and 'timed out while enabling automation mode' in text)
+        elif failure.get('targetName') in ('LevisticaTests', 'LevisticaUITests'):
+            ordinary_failure = True
+    if initialization_timeout and ordinary_failure:
+        classification = 'mixed_runner_and_test_failure'
+    elif initialization_timeout:
+        classification = 'ui_automation_initialization_timeout'
+    elif ordinary_failure:
+        classification = 'test_failure'
+    else:
+        classification = 'unclassified_failure'
+    return {'classification': classification, 'testCounts': counts,
+            'appBehaviorVerdict': 'not_determined', 'successfulExecutionConfirmed': False}
+
+
 def main():
-    if len(sys.argv) != 2:
-        raise ValueError('Usage: report-test-failures.py test-summary.json')
-    summary = json.loads(pathlib.Path(sys.argv[1]).read_text())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('summary', type=pathlib.Path)
+    parser.add_argument('--classification-json', type=pathlib.Path)
+    args = parser.parse_args()
+    summary = json.loads(args.summary.read_text())
     print(failure_report(summary))
+    if args.classification_json is not None:
+        result = failure_classification(summary)
+        temporary = args.classification_json.with_name(args.classification_json.name + '.partial')
+        temporary.write_text(json.dumps(result, indent=2) + '\n')
+        temporary.chmod(0o600)
+        temporary.replace(args.classification_json)
+        print('Failure classification: ' + result['classification'])
 
 
 if __name__ == '__main__':
