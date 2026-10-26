@@ -82,7 +82,7 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testPublicVideoReadiness() throws {
+    func testPublicVideoReadiness() async throws {
         guard let path = ProcessInfo.processInfo.environment["LEVISTICA_DEADLINE_WORKLOAD"],
               !path.isEmpty, !path.hasPrefix("$(") else {
             throw XCTSkip("Run script/test.sh --public-video-ui for the opt-in player-controls trial.")
@@ -97,6 +97,7 @@ final class BrowserFlowTests: XCTestCase {
             let audiblePublicVideo: Bool?
             let prepareMixedBeforePlayback: Bool?
             let steadyPublicVideo: Bool?
+            let dryRunPublicHandoff: Bool?
         }
         let file = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let directory = file.deletingLastPathComponent()
@@ -512,7 +513,7 @@ final class BrowserFlowTests: XCTestCase {
                     let currentElapsed = try XCTUnwrap(sample.documentElapsedMilliseconds)
                     let interval = (currentElapsed - previousElapsed) / 1000
                     XCTAssertTrue(interval > 0 && interval < 35)
-                    XCTAssertGreaterThanOrEqual(video.currentTime - previousTime, interval - 2)
+                    XCTAssertEqual(video.currentTime - previousTime, interval, accuracy: 2)
                     previousElapsed = currentElapsed
                     previousTime = video.currentTime
                     checks += 1
@@ -526,7 +527,79 @@ final class BrowserFlowTests: XCTestCase {
                 } while ProcessInfo.processInfo.systemUptime < observationUntil
                 let total = (previousElapsed - initialElapsed) / 1000
                 XCTAssertTrue(total >= 120 && total < 180)
-                XCTAssertGreaterThanOrEqual(previousTime - afterMedia.currentTime, total - 2)
+                XCTAssertEqual(previousTime - afterMedia.currentTime, total, accuracy: 2)
+                if workload.dryRunPublicHandoff == true {
+                    struct Collector: Decodable {
+                        let url: URL
+                        let token: String
+                        let pid: Int32
+                        let sourceRevision: String
+                    }
+                    let collector = try JSONDecoder().decode(Collector.self, from: Data(contentsOf:
+                        directory.appendingPathComponent("public-handoff.json")))
+                    let components = try XCTUnwrap(URLComponents(url: collector.url, resolvingAgainstBaseURL: false))
+                    XCTAssertEqual(components.scheme, "http")
+                    XCTAssertEqual(components.host, "127.0.0.1")
+                    XCTAssertNotNil(components.port)
+                    XCTAssertEqual(components.path, "/public-readiness")
+                    XCTAssertNil(components.user)
+                    XCTAssertNil(components.password)
+                    XCTAssertNil(components.query)
+                    XCTAssertNil(components.fragment)
+                    XCTAssertEqual(collector.pid, workload.pid)
+                    XCTAssertNotNil(collector.token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression))
+                    let appInfo = try XCTUnwrap(NSDictionary(contentsOf: expected.deletingLastPathComponent()
+                        .deletingLastPathComponent().appendingPathComponent("Info.plist")) as? [String: Any])
+                    XCTAssertEqual(appInfo["LevisticaSourceRevision"] as? String, collector.sourceRevision)
+                    XCTAssertEqual(appInfo["LevisticaSourceState"] as? String, "clean")
+                    let configuration = URLSessionConfiguration.ephemeral
+                    configuration.httpShouldSetCookies = false
+                    configuration.timeoutIntervalForResource = 5
+                    let network = URLSession(configuration: configuration)
+                    defer { network.invalidateAndCancel() }
+                    for phase in ["before", "after"] {
+                        if phase == "after" {
+                            let ready = ProcessInfo.processInfo.systemUptime + 3
+                            let wait = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                                ProcessInfo.processInfo.systemUptime >= ready
+                            }, object: nil)
+                            XCTAssertEqual(XCTWaiter.wait(for: [wait], timeout: 5), .completed)
+                        }
+                        try check()
+                        XCTAssertTrue(app.staticTexts["4タブ・読み込み済み4"].exists)
+                        let snapshot = try captureMeasurementViewport(app, expectedPID: workload.pid,
+                            pageID: "public-video", prefix: "public-handoff-" + phase,
+                            captureImage: false, validate: { try check() })
+                        let document = try XCTUnwrap(snapshot.documentIdentity)
+                        XCTAssertEqual(document, identity)
+                        let media = try XCTUnwrap(snapshot.media)
+                        let payload: [String: Any] = ["phase": phase, "pid": workload.pid,
+                            "instance": document.instance.uuidString, "revision": document.revision,
+                            "documentElapsed": try XCTUnwrap(snapshot.documentElapsedMilliseconds),
+                            "mediaTime": media.currentTime, "width": snapshot.cssWidth,
+                            "height": snapshot.cssHeight, "dpr": snapshot.devicePixelRatio,
+                            "videoWidth": media.width, "videoHeight": media.height,
+                            "muted": media.muted, "paused": media.paused,
+                            "playbackRate": try XCTUnwrap(media.playbackRate), "loadedPages": 4,
+                            "readyState": media.readyState]
+                        var request = URLRequest(url: collector.url)
+                        request.httpMethod = "POST"
+                        request.timeoutInterval = 5
+                        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                        request.setValue(collector.token, forHTTPHeaderField: "X-Levistica-Diagnostic")
+                        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: .sortedKeys)
+                        let (data, response) = try await network.data(for: request)
+                        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+                        struct Reply: Decodable { let success: Bool; let memorySamplesTaken: Int; let readyForRAM: Bool }
+                        let reply = try JSONDecoder().decode(Reply.self, from: data)
+                        XCTAssertTrue(reply.success)
+                        XCTAssertEqual(reply.memorySamplesTaken, 0)
+                        XCTAssertFalse(reply.readyForRAM)
+                        try check()
+                    }
+                    evidence["liveDryHandoffCompleted"] = true
+                    evidence["readyForRAM"] = false
+                }
                 let retained = try observeMixedDocuments(captureImages: false)
                 XCTAssertEqual(retained.count, preloadedObservations.count)
                 for (before, after) in zip(preloadedObservations, retained) {
