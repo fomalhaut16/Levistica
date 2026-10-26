@@ -197,12 +197,24 @@ struct MeasurementViewportTests {
         }
     }
 
+    @Test func pagePayloadCannotSupplyNativeIdentity() throws {
+        let payload = """
+        {"width":640,"height":480,"dpr":2,"visualScale":1,"visible":true,"ready":"complete",
+         "documentIdentity":{"instance":"00000000-0000-0000-0000-000000000000","revision":999}}
+        """
+        let bounds = CGRect(x: 0, y: 0, width: 640, height: 480)
+        #expect(try MeasurementViewport.decode(payload, pageID: "public-html", bounds: bounds, zoom: 1).documentIdentity == nil)
+        let native = MeasurementViewport.DocumentIdentity(instance: UUID(), revision: 2)
+        #expect(try MeasurementViewport.decode(payload, pageID: "public-html", bounds: bounds, zoom: 1,
+                                             documentIdentity: native).documentIdentity == native)
+    }
+
     @Test func publicHeadingAndNavigationTimingExposeNoPageText() async throws {
         let page = PageRuntime(dataStore: .nonPersistent())
         defer { page.stop() }
         page.webView.frame = CGRect(x: 0, y: 0, width: 640, height: 480)
         let url = try #require(URL(string: "https://www.w3.org/TR/2024/REC-WCAG22-20241212/"))
-        func load(_ title: String) async throws {
+        func load(_ title: String, in page: PageRuntime) async throws {
             page.webView.loadSimulatedRequest(URLRequest(url: url), responseHTML: """
             <meta http-equiv="Content-Security-Policy" content="default-src 'none'">
             <title>\(title)</title><h1>Web Content Accessibility Guidelines (WCAG) 2.2</h1>
@@ -214,21 +226,30 @@ struct MeasurementViewportTests {
             }
             try #require(page.webView.title == title && page.webView.isLoading == false)
         }
-        try await load("Heading fixture one")
+        try await load("Heading fixture one", in: page)
         let first = try await MeasurementViewport.capture(page)
         let origin = try #require(first.documentTimeOrigin)
         #expect(origin > 0)
         #expect(first.documentHeadingMatches == true)
         let again = try await MeasurementViewport.capture(page)
-        #expect(again.documentTimeOrigin == origin)
+        #expect(try #require(again.documentTimeOrigin) > 0)
+        #expect(try #require(again.documentIdentity) == #require(first.documentIdentity))
         #expect(try #require(again.documentElapsedMilliseconds) >= #require(first.documentElapsedMilliseconds))
         let encoded = String(decoding: try JSONEncoder().encode(first), as: UTF8.self)
         #expect(encoded.contains("synthetic-private") == false)
         #expect(encoded.contains("Web Content Accessibility") == false)
         #expect(encoded.contains("Heading fixture") == false)
-        try await load("Heading fixture two")
+        try await load("Heading fixture two", in: page)
         let replaced = try await MeasurementViewport.capture(page)
-        #expect(try #require(replaced.documentTimeOrigin) > origin)
+        #expect(try #require(replaced.documentTimeOrigin) > 0)
+        #expect(try #require(replaced.documentIdentity) != #require(first.documentIdentity))
+        #expect(replaced.documentIdentity?.instance == first.documentIdentity?.instance)
+        let recreated = PageRuntime(dataStore: .nonPersistent())
+        defer { recreated.stop() }
+        recreated.webView.frame = page.webView.frame
+        try await load("Heading fixture recreated", in: recreated)
+        let recreatedSnapshot = try await MeasurementViewport.capture(recreated)
+        #expect(try #require(recreatedSnapshot.documentIdentity).instance != #require(first.documentIdentity).instance)
     }
 }
 }
