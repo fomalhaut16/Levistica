@@ -31,6 +31,27 @@ def run(args, timeout=30):
                                    env={**os.environ, "LC_ALL": "C"})
 
 
+class PowerConditionError(ValueError):
+    pass
+
+
+def parse_power_source(text):
+    first = text.splitlines()[0].strip() if isinstance(text, str) and text.splitlines() else ''
+    return {"Now drawing from 'AC Power'": 'ac',
+            "Now drawing from 'Battery Power'": 'battery'}.get(first, 'unknown')
+
+
+def record_ac_power(observations, phase):
+    try:
+        source = parse_power_source(run(['/usr/bin/pmset', '-g', 'batt'], timeout=5))
+    except (OSError, subprocess.SubprocessError):
+        source = 'unknown'
+    observations.append({'phase': phase, 'source': source,
+                         'time_utc': datetime.datetime.now(datetime.timezone.utc).isoformat()})
+    if source != 'ac':
+        raise PowerConditionError('AC power required; observed source: ' + source)
+
+
 def parse_domain(text, pid, app, creator_name="Levistica"):
     if not text.startswith(f"pid/{pid} = {{\n"):
         raise ValueError("Unexpected PID domain")
@@ -370,6 +391,8 @@ def main():
     parser.add_argument("--loaded-pages", type=int, required=True)
     parser.add_argument("--total-tabs", type=int, help="Total tab count, including unloaded tabs; omit if unknown")
     parser.add_argument("--samples", type=int, default=3)
+    parser.add_argument('--require-ac-power', action='store_true',
+                        help='Reject non-AC or unknown power at preparation and capture checkpoints')
     parser.add_argument("--interval", type=float, default=5)
     parser.add_argument('--stable-attribution-seconds', type=float, default=0,
                         help='Optional continuous PID/service stability window (1..120 seconds)')
@@ -394,6 +417,12 @@ def main():
             parser.error('Attribution readiness requires an isolated browser, ready-file, and a bounded timeout')
     elif args.attribution_timeout != 90:
         parser.error('attribution-timeout requires stable-attribution-seconds')
+    power_preparation_checks = []
+    if args.require_ac_power:
+        try:
+            record_ac_power(power_preparation_checks, 'preflight')
+        except PowerConditionError as error:
+            parser.error(str(error))
     if args.sleeping_documents and not args.sleep_baseline:
         parser.error('sleeping-documents requires sleep-baseline')
     sleeping = args.sleeping_documents.split(',') if args.sleeping_documents else []
@@ -475,6 +504,8 @@ def main():
                 sleep_guard_file = pathlib.Path(tempfile.mkdtemp(prefix=args.label + '.guard.', dir=parent)) / 'guard.json'
                 print(f'Sleep phase guard: {sleep_guard_file}', flush=True)
             while (remaining := ready + args.ready_delay - time.monotonic()) > 0:
+                if args.require_ac_power:
+                    record_ac_power(power_preparation_checks, 'settling')
                 if checkpoint is not None:
                     observed = read_fixture()
                     observation = {'monotonic': time.monotonic(), 'state': observed, 'valid': False}
@@ -487,13 +518,18 @@ def main():
                     finally:
                         sleep_observations.append(observation)
                         sleep_guard_file.write_text(json.dumps(sleep_observations, indent=2) + '\n')
-                time.sleep(min(remaining, 5 if checkpoint is not None else 30))
+                time.sleep(min(remaining, 5 if checkpoint is not None or args.require_ac_power else 30))
+    if args.require_ac_power:
+        record_ac_power(power_preparation_checks, 'before_target_inspection')
     pid = find_app(binary, profile)
     output_parent = ROOT / ".local/artifacts/memory"
     output_parent.mkdir(parents=True, exist_ok=True)
     output = pathlib.Path(tempfile.mkdtemp(prefix=args.label + ".", dir=output_parent))
     record = {
         "schema": 2, "label": args.label,
+        "ac_power_required": args.require_ac_power,
+        "power_preparation_checks": power_preparation_checks,
+        "aborted_for_power_condition": False,
         "attribution_readiness_seconds": args.stable_attribution_seconds,
         "attribution_readiness_timeout_seconds": args.attribution_timeout if args.stable_attribution_seconds else None, "fixture": fixture, "ready_delay_seconds": args.ready_delay if fixture else None,
         "sleep_guard_file": str(sleep_guard_file) if sleep_guard_file else None,
@@ -513,6 +549,8 @@ def main():
                    "A single WKWebView can retain multiple WebContent processes, including cached or prewarmed pages."],
         "samples": [],
     }
+    if args.require_ac_power:
+        record['limits'].append('Power is checked at preparation, stability and capture boundaries; brief changes between checks can be missed.')
     with (app / "Contents/Info.plist").open("rb") as file:
         info = plistlib.load(file)
     record["bundle"] = {key: info.get(key) for key in (
@@ -528,6 +566,8 @@ def main():
     }
     for index in range(args.samples):
         sample = {"time_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(), "valid": False}
+        if args.require_ac_power:
+            sample['power_checks'] = []
         if fixture:
             sample["seconds_after_ready"] = time.monotonic() - fixture["ready_monotonic"]
         try:
@@ -537,9 +577,13 @@ def main():
             readiness = None
             if args.stable_attribution_seconds:
                 sample['attribution_readiness'] = {}
+                def check_conditions():
+                    check_fixture(read_fixture(), fixture)
+                    if args.require_ac_power:
+                        record_ac_power(sample['power_checks'], 'attribution_stability')
                 readiness = wait_for_stable_attribution(
                     lambda deadline: snapshot(pid, app, binary, profile, deadline=deadline),
-                    lambda: check_fixture(read_fixture(), fixture), pid,
+                    check_conditions, pid,
                     args.stable_attribution_seconds, args.attribution_timeout,
                     sample['attribution_readiness'], interval=min(5, args.stable_attribution_seconds))
             before = snapshot(pid, app, binary, profile)
@@ -555,11 +599,15 @@ def main():
             if readiness is not None:
                 sample['fixture_before'] = read_fixture()
                 check_fixture(sample['fixture_before'], fixture)
+            if args.require_ac_power:
+                record_ac_power(sample['power_checks'], 'before_capture')
             sample['capture_started_time_utc'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             if fixture:
                 sample['capture_started_seconds_after_ready'] = time.monotonic() - fixture['ready_monotonic']
             # The standard tool accepts explicit positional PID lists. Never query all processes.
             run(["/usr/bin/footprint", "-f", "bytes", "-j", str(raw), *map(str, pids)])
+            if args.require_ac_power:
+                record_ac_power(sample['power_checks'], 'after_capture')
             document = json.loads(raw.read_text())
             values, missing = metrics(document, pids)
             after = snapshot(pid, app, binary, profile)
@@ -586,11 +634,15 @@ def main():
         except (ValueError, OSError, subprocess.SubprocessError) as error:
             # Error classes and fixed diagnostics only: never dump a subprocess's environment.
             sample["error"] = str(error) if isinstance(error, ValueError) else type(error).__name__
+            if isinstance(error, PowerConditionError):
+                record['aborted_for_power_condition'] = True
         if fixture:
             sample["completed_seconds_after_ready"] = time.monotonic() - fixture["ready_monotonic"]
         record["samples"].append(sample)
         (output / "result.json").write_text(json.dumps(record, indent=2) + "\n")
         print(f"Sample {index + 1}: valid={sample['valid']}", flush=True)
+        if record['aborted_for_power_condition']:
+            break
         if index + 1 < args.samples:
             time.sleep(args.interval)
     valid = [s["sum_attributed_physical_footprints_bytes"] for s in record["samples"] if s["valid"]]
