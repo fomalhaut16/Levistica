@@ -383,7 +383,7 @@ final class BrowserFlowTests: XCTestCase {
             ".local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica")
         let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: file))
         let expectedPageID = workload.viewportPageID ?? "public-html"
-        XCTAssertTrue(["public-html", "public-video"].contains(expectedPageID))
+        XCTAssertTrue(["public-html", "public-video", "public-pdf"].contains(expectedPageID))
         XCTAssertEqual(workload.executable, expected.path)
         let running = try XCTUnwrap(NSRunningApplication(processIdentifier: workload.pid))
         let began = ProcessInfo.processInfo.systemUptime
@@ -404,8 +404,13 @@ final class BrowserFlowTests: XCTestCase {
         defer { if identityMatches() && app.state != .notRunning { app.terminate() } }
         XCTAssertTrue(running.activate(options: []))
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
-        _ = try captureMeasurementViewport(app, expectedPID: workload.pid, pageID: expectedPageID,
-                                           prefix: "public-viewport", validate: check)
+        let snapshot = try captureMeasurementViewport(app, expectedPID: workload.pid, pageID: expectedPageID,
+                                                      prefix: "public-viewport", validate: check)
+        if expectedPageID == "public-pdf" {
+            try check()
+            XCTAssertTrue(app.staticTexts["webPDFNotice"].exists, "Expected a PDF response, not an HTML error document")
+            XCTAssertNil(snapshot.media)
+        }
     }
 
     private struct ViewportMedia: Decodable {
