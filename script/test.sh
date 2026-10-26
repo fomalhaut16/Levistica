@@ -338,7 +338,7 @@ result = json.loads(Path(sys.argv[1]).read_text())
 if (result.get('success') is not True or result.get('failure') is not None
         or len(result.get('records', [])) != 2 or result.get('memorySamplesTaken') != int(sys.argv[2])
         or result.get('readyForRAM') is not False):
-    raise SystemExit('Live public handoff did not complete; no RAM sample was taken')
+    raise SystemExit('Live public handoff did not complete; no result is accepted')
 PYHANDOFF
         if [[ "$MEMORY_PUBLIC" == 1 ]]; then
             python3 "$ROOT_DIR/script/public-memory-sample.py" "$RUN_DIR"
