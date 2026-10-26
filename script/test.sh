@@ -10,11 +10,9 @@ if [[ $# -gt 1 ]]; then
         VIEWPORT_PAGE=public-video
     elif [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --pdf ]]; then
         VIEWPORT_PAGE=public-pdf
-    elif [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --x-login ]]; then
-        VIEWPORT_PAGE=public-social-login
     elif [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --discord-login ]]; then
         VIEWPORT_PAGE=public-chat-login
-    else echo '--video, --pdf, --x-login and --discord-login are supported only with --public-viewport-ui' >&2; exit 2; fi
+    else echo '--video, --pdf and --discord-login are supported only with --public-viewport-ui' >&2; exit 2; fi
 fi
 # Diagnostic selection is fixed; never run normal launch-based tests against Profile.
 if [[ ( "$MODE" == --profile-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ) && -n "${TEST_ONLY:-}" ]]; then
@@ -105,7 +103,6 @@ app = pathlib.Path(record['executable']).parents[2]
 viewport_urls = {'public-html': 'https://www.w3.org/TR/2024/REC-WCAG22-20241212/',
                  'public-video': 'https://www.youtube.com/watch?v=aqz-KE-bpKQ&hl=en',
                  'public-pdf': 'https://arxiv.org/pdf/1706.03762v7',
-                 'public-social-login': 'https://x.com/i/flow/login',
                  'public-chat-login': 'https://discord.com/login'}
 urls = {'--public-pdf-ui': 'https://arxiv.org/pdf/1706.03762v7',
         '--public-video-ui': 'https://www.youtube.com/watch?v=aqz-KE-bpKQ&hl=en',

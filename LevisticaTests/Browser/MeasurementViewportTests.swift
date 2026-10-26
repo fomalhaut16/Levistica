@@ -8,13 +8,13 @@ extension WebKitIntegrationTests {
 struct MeasurementViewportTests {
     @Test func onlyFixedPublicDocumentsAndLoopbackFixturesAreEligible() {
         for text in ["https://arxiv.org/pdf/1706.03762v7", "http://127.0.0.1:12345/one",
-                     "https://x.com/i/flow/login", "https://discord.com/login",
+                     "https://discord.com/login",
                      "https://www.youtube.com/watch?v=aqz-KE-bpKQ&hl=en",
                      "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
                      "https://www.youtube.com/watch?hl=en&v=aqz-KE-bpKQ"] {
             #expect(MeasurementViewport.pageID(for: URL(string: text)) != nil)
         }
-        for text in ["https://x.com/home", "https://discord.com/channels/@me", "file:///private/synthetic.pdf",
+        for text in ["https://x.com/i/flow/login", "https://x.com/home", "https://discord.com/channels/@me", "file:///private/synthetic.pdf",
                      "https://x.com/i/flow/login?token=synthetic", "https://discord.com/login#synthetic",
                      "https://user:pass@discord.com/login", "http://discord.com/login",
                      "http://127.0.0.1/one", "http://user:pass@127.0.0.1:12345/one",
@@ -106,8 +106,8 @@ struct MeasurementViewportTests {
         }
     }
 
-    @Test(arguments: ["https://x.com/i/flow/login", "https://discord.com/login"])
-    func simulatedPublicLoginGeometryNeverIncludesFormContents(_ address: String) async throws {
+    @Test func simulatedPublicLoginGeometryNeverIncludesFormContents() async throws {
+        let address = "https://discord.com/login"
         let page = PageRuntime(dataStore: .nonPersistent())
         defer { page.stop() }
         page.webView.frame = CGRect(x: 0, y: 0, width: 640, height: 480)
@@ -139,7 +139,6 @@ struct MeasurementViewportTests {
         #expect(!flags.contains(url.host!))
         let values = try #require(JSONSerialization.jsonObject(with: Data(flags.utf8)) as? [String: Bool])
         #expect(values["pageURLMatchesViewURL"] == true)
-        #expect(values["socialHost"] == (url.host == "x.com"))
         #expect(values["chatHost"] == (url.host == "discord.com"))
     }
 

@@ -383,7 +383,7 @@ final class BrowserFlowTests: XCTestCase {
             ".local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica")
         let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: file))
         let expectedPageID = workload.viewportPageID ?? "public-html"
-        XCTAssertTrue(["public-html", "public-video", "public-pdf", "public-social-login", "public-chat-login"].contains(expectedPageID))
+        XCTAssertTrue(["public-html", "public-video", "public-pdf", "public-chat-login"].contains(expectedPageID))
         XCTAssertEqual(workload.executable, expected.path)
         let running = try XCTUnwrap(NSRunningApplication(processIdentifier: workload.pid))
         let began = ProcessInfo.processInfo.systemUptime
@@ -404,14 +404,12 @@ final class BrowserFlowTests: XCTestCase {
         defer { if identityMatches() && app.state != .notRunning { app.terminate() } }
         XCTAssertTrue(running.activate(options: []))
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
-        let isLogin = ["public-social-login", "public-chat-login"].contains(expectedPageID)
+        let isLogin = expectedPageID == "public-chat-login"
         if isLogin {
             try check()
             XCTAssertTrue(app.webViews.textFields.firstMatch.waitForExistence(timeout: 12),
                           "Expected a public login text field; no input values are read")
-            if expectedPageID == "public-chat-login" {
-                XCTAssertTrue(app.webViews.secureTextFields.firstMatch.waitForExistence(timeout: 5))
-            }
+            XCTAssertTrue(app.webViews.secureTextFields.firstMatch.waitForExistence(timeout: 5))
         }
         let snapshot = try captureMeasurementViewport(app, expectedPID: workload.pid, pageID: expectedPageID,
                                                       prefix: "public-viewport", captureImage: !isLogin, validate: check)
@@ -421,7 +419,7 @@ final class BrowserFlowTests: XCTestCase {
             XCTAssertEqual(snapshot.devicePixelRatio, 2)
             XCTAssertNil(snapshot.media)
             let observation: [String: Any] = ["pageID": expectedPageID, "textFieldFound": true,
-                "passwordFieldRequired": expectedPageID == "public-chat-login",
+                "passwordFieldRequired": true,
                 "inputValuesRead": false, "inputSent": false, "screenshotsRequested": false,
                 "loginSuccessVerified": false, "challengeAbsenceVerified": false, "comparisonSamplesTaken": 0]
             let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: observation, options: .sortedKeys),

@@ -49,7 +49,6 @@ enum MeasurementViewport {
             "https://www.youtube.com/watch?v=aqz-KE-bpKQ&hl=en": "public-video",
             "https://www.w3.org/TR/2024/REC-WCAG22-20241212/": "public-html",
             "https://arxiv.org/pdf/1706.03762v7": "public-pdf",
-            "https://x.com/i/flow/login": "public-social-login",
             "https://discord.com/login": "public-chat-login"
         ]
         if let id = fixed[url.absoluteString] { return id }
@@ -80,7 +79,6 @@ enum MeasurementViewport {
     static func ineligibleDocumentFlags(_ page: PageRuntime) -> String {
         let parts = page.webView.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
         let items = parts?.queryItems ?? []
-        let socialHost = parts?.host == "x.com"
         let flags = ["videoHost": parts?.host == "www.youtube.com", "videoPath": parts?.path == "/watch",
                      "movieID": items.contains { $0.name == "v" && $0.value == "aqz-KE-bpKQ" },
                      "onlyVideoAndLanguageKeys": items.allSatisfy { ["v", "hl"].contains($0.name) },
@@ -88,18 +86,8 @@ enum MeasurementViewport {
                      "fragmentAbsent": parts?.fragment == nil || parts?.fragment == "",
                      "localPDFAbsent": page.localPDF == nil,
                      "pageURLMatchesViewURL": page.url == page.webView.url,
-                     "socialHost": socialHost, "socialLoginPath": parts?.path == "/i/flow/login",
-                     "socialRootPath": parts?.path == "/", "chatHost": parts?.host == "discord.com",
-                     "chatLoginPath": parts?.path == "/login", "queryPresent": !items.isEmpty,
-                     "socialMigrationTwoOnly": socialHost && items.count == 1
-                         && items[0].name == "mx" && items[0].value == "2",
-                     "socialEnglishOnly": socialHost && items.count == 1
-                         && items[0].name == "lang" && items[0].value == "en",
-                     "socialJapaneseOnly": socialHost && items.count == 1
-                         && items[0].name == "lang" && items[0].value == "ja",
-                     "socialMigrationTwoEnglishOnly": socialHost && items.count == 2
-                         && items.contains { $0.name == "mx" && $0.value == "2" }
-                         && items.contains { $0.name == "lang" && $0.value == "en" }]
+                     "chatHost": parts?.host == "discord.com",
+                     "chatLoginPath": parts?.path == "/login", "queryPresent": !items.isEmpty]
         guard let data = try? JSONSerialization.data(withJSONObject: flags, options: .sortedKeys) else { return "" }
         return String(decoding: data, as: UTF8.self)
     }
@@ -129,7 +117,7 @@ enum MeasurementViewport {
     static func capture(_ page: PageRuntime) async throws -> Snapshot {
         let view = page.webView
         guard let id = pageID(for: view.url), page.localPDF == nil else { throw Failure.ineligibleDocument }
-        if ["public-social-login", "public-chat-login"].contains(id), view.configuration.websiteDataStore.isPersistent {
+        if id == "public-chat-login", view.configuration.websiteDataStore.isPersistent {
             throw Failure.ineligibleDocument
         }
         guard page.failure == nil, view.isLoading == false else { throw Failure.notReady }

@@ -12,6 +12,7 @@ class ViewportProbeFlags(unittest.TestCase):
                      ('--unit', '--pdf'), ('--public-pdf-ui', '--pdf'),
                      ('--public-viewport-ui', '--video', '--pdf'),
                      ('--unit', '--x-login'), ('--public-video-ui', '--discord-login'),
+                     ('--public-viewport-ui', '--x-login'),
                      ('--public-viewport-ui', '--x-login', '--discord-login'),
                      ('--public-viewport-ui', '--other'),
                      ('--public-viewport-ui', 'https://example.invalid/')]:
