@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read one owned incognito Chrome pilot through a private parent pipe. Never controls Chrome."""
 import argparse
+import ast
 import importlib.util
 import json
 import os
@@ -62,6 +63,54 @@ def validate_packet(packet, stage, run_id):
             or packet.get('phase') != stage or packet.get('runID') != run_id
             or (stage == 'commit' and packet.get('allFourTargetsAndLoadersRetained') is not True)):
         raise ValueError('Unexpected parent phase, fields or trial')
+
+
+def failure_detail(error, root):
+    text = str(error) if isinstance(error, ValueError) else ''
+    fixed = {'Chrome owner changed': 'owner_changed',
+             'Chrome belongs to another user': 'owner_user_changed',
+             'Chrome profile or incognito mode changed': 'profile_changed',
+             'Chrome listener ownership changed': 'listener_changed',
+             'Controller source or Chrome version changed': 'source_or_version_changed',
+             'Domain originator is not this checkout\'s app': 'domain_origin_changed',
+             'Domain creator does not match the app PID': 'domain_creator_changed',
+             'Service PID changed during attribution': 'service_changed_during_read',
+             "Service is outside the app's PID domain": 'service_domain_changed',
+             'Unrecognized ps identity row': 'process_identity_format',
+             'Unrecognized process table': 'process_table_format',
+             'Unexpected PID domain': 'domain_format',
+             'Unrecognized service row; attribution unavailable': 'service_format',
+             'Missing services section; attribution unavailable': 'services_missing',
+             'Requires known AC power and normal memory pressure': 'power_or_pressure',
+             'Root identity changed': 'root_identity_changed',
+             'Attribution has not been stable for sixty seconds': 'attribution_not_settled',
+             'Parent pipe closed or invalid packet': 'parent_pipe_closed'}
+    if text in fixed:
+        return {'reason': fixed[text]}
+    prefix = 'Process identity set changed; missing PIDs: '
+    if text.startswith(prefix) and re.fullmatch(r'[0-9]+(?:,[0-9]+)*', text[len(prefix):]):
+        missing = []
+        for value in text[len(prefix):].split(',')[:64]:
+            pid = int(value)
+            try:
+                os.kill(pid, 0)
+                exists = True
+            except ProcessLookupError:
+                exists = False
+            except PermissionError:
+                exists = None
+            missing.append({'pid': pid, 'isRoot': pid == root, 'existsNow': exists})
+        return {'reason': 'process_identity_set_changed', 'missingProcesses': missing}
+    prefix = 'Unexpected Chrome descendant executable: '
+    if text.startswith(prefix):
+        try:
+            paths = ast.literal_eval(text[len(prefix):])
+            safe = [path if isinstance(path, str) and path.startswith(('/System/Library/', '/usr/'))
+                    else '<non-system path>' for path in paths[:8]]
+            return {'reason': 'unexpected_descendant', 'systemPaths': safe}
+        except (ValueError, SyntaxError, TypeError):
+            pass
+    return {'reason': type(error).__name__}
 
 
 def owner_directory(path):
@@ -185,6 +234,7 @@ def run(path):
         result['failure'] = 'capture_or_protocol_failed'
         result['failureStage'] = stage
         result['errorClass'] = type(error).__name__
+        result['failureDetail'] = failure_detail(error, pid)
         print('{"ok":false}', flush=True)
     finally:
         signal.alarm(0)

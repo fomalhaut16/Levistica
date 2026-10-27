@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('chrome_memory_tests', Path(__file__).parents[1] / 'public-chrome-memory.py')
 chrome = importlib.util.module_from_spec(spec)
@@ -14,6 +15,18 @@ def observation():
 
 
 class ChromeMemoryTests(unittest.TestCase):
+    def test_failure_details_confirm_vanished_children_without_copying_messages(self):
+        with patch.object(chrome.os, 'kill', side_effect=ProcessLookupError):
+            result = chrome.failure_detail(ValueError('Process identity set changed; missing PIDs: 456'), 123)
+        self.assertEqual(result, {'reason': 'process_identity_set_changed',
+                                 'missingProcesses': [{'pid': 456, 'isRoot': False, 'existsNow': False}]})
+        self.assertEqual(chrome.failure_detail(ValueError('private account or URL'), 123), {'reason': 'ValueError'})
+
+    def test_unexpected_system_helpers_are_visible_but_user_paths_are_redacted(self):
+        result = chrome.failure_detail(ValueError("Unexpected Chrome descendant executable: ['/usr/bin/helper', '/Users/private/name']"), 123)
+        self.assertEqual(result, {'reason': 'unexpected_descendant',
+                                 'systemPaths': ['/usr/bin/helper', '<non-system path>']})
+
     def test_only_the_expected_trial_and_phase_can_reach_capture(self):
         packet = {'phase': 'capture', 'runID': 'current', 'snapshot': observation()}
         chrome.validate_packet(packet, 'capture', 'current')
