@@ -203,8 +203,7 @@ class AttributionTests(unittest.TestCase):
         app = pathlib.Path("/synthetic/Chrome.app")
         paths = {100: str(app / "Contents/MacOS/Chrome"),
                  200: str(app / "Contents/Helpers/Renderer"),
-                 300: str(app / "Contents/Helpers/chrome_crashpad_handler"),
-                 400: str(app / "Contents/Helpers/chrome_crashpad_handler")}
+                 300: str(app / "Contents/Helpers/chrome_crashpad_handler")}
         domain = "pid/100 = {\n\toriginator = /synthetic/Chrome.app\n\tcreator = Google Chrome[100]\n\tservices = {\n\t}\n}"
         def query(args):
             if args[0] == "/bin/launchctl":
@@ -212,7 +211,7 @@ class AttributionTests(unittest.TestCase):
             if "-axo" in args:
                 self.assertEqual(args[-1], "pid=,ppid=,stat=,ucomm=")
                 return "100 1 S Chrome\n200 100 S Renderer\n300 1 S chrome_crashpad\n400 1 S chrome_crashpad\n"
-            selected = [int(x) for x in args[2].split(",")]
+            selected = [int(x) for x in args[args.index("-p") + 1].split(",")]
             if args[-1] == "uid=":
                 return str(measure.os.getuid())
             if args[-1] == "args=":

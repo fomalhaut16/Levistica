@@ -181,14 +181,17 @@ def snapshot(pid, app=APP, binary=BINARY, chrome_profile=None, deadline=None):
                 uid = query(["/bin/ps", "-p", str(child), "-o", "uid="]).strip()
                 if uid != str(os.getuid()):
                     continue
+                # Filter unrelated Crashpad instances before executable lookup:
+                # an older browser may still run a removed/upgraded executable.
+                args = query(["/bin/ps", "-ww", "-p", str(child), "-o", "args="])
+                if not has_path_argument(args, "--database=", chrome_profile / "Crashpad"):
+                    continue
                 candidate = identities([child], query=query)[child]
                 path = pathlib.Path(candidate["executable"]).resolve()
                 if not path.is_relative_to(app.resolve()) or path.name != "chrome_crashpad_handler":
-                    continue
-                args = query(["/bin/ps", "-p", str(child), "-o", "args="])
-                if has_path_argument(args, "--database=", chrome_profile / "Crashpad"):
-                    detached.append(child)
-                    checked_identity[child] = candidate
+                    raise ValueError("Owned Crashpad executable is outside the expected Chrome app")
+                detached.append(child)
+                checked_identity[child] = candidate
         children, exited = live_descendants(rows, pid)
         child_identity = identities(sorted(children), query=query)
         unexpected = [item["executable"] for item in child_identity.values()
