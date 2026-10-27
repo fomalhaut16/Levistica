@@ -161,6 +161,7 @@ class IdleWorkloadTests(unittest.TestCase):
             state_path.write_text(json.dumps(state))
             marker = pathlib.Path(temporary) / 'workload.json'
             marker.write_text(json.dumps({'variant': 'Measurement', 'expected_tabs': 50,
+                                          'executable': '/synthetic/Levistica.app/Contents/MacOS/Levistica',
                                           'urls': state['urls'], 'state': str(state_path.resolve())}))
             with patch.object(module, 'verify_application'), patch.object(module.subprocess, 'run') as send, \
                     patch.object(module.time, 'monotonic', side_effect=[0, 181]):
