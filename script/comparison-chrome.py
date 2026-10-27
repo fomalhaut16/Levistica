@@ -166,7 +166,7 @@ def stop(profile):
     for _ in range(50):
         try:
             identity = m.identities([pid])[pid]
-        except (ValueError, subprocess.SubprocessError):
+        except (ProcessLookupError, ValueError, subprocess.SubprocessError):
             return
         if identity != marker['identity']:
             return  # Original process exited; never signal a reused PID.

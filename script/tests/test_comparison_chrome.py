@@ -141,6 +141,21 @@ class ComparisonChromeTests(unittest.TestCase):
                 chrome.stop(profile)
                 kill.assert_called_once_with(123, chrome.signal.SIGTERM)
 
+    def test_kernel_disappearance_after_sigterm_completes_without_another_signal(self):
+        profile = pathlib.Path('/synthetic-owned-profile')
+        identity = {'started': 'original start', 'executable': str(chrome.binary)}
+        marker = {'pid': 123, 'profile': str(profile), 'identity': identity}
+        with patch.object(chrome, 'verified_marker', return_value=marker), \
+                patch.object(chrome.m, 'identities', side_effect=ProcessLookupError('exited')), \
+                patch.object(chrome.os, 'kill') as kill:
+            chrome.stop(profile)
+            kill.assert_called_once_with(123, chrome.signal.SIGTERM)
+        with patch.object(chrome, 'verified_marker', side_effect=ProcessLookupError('gone before verification')), \
+                patch.object(chrome.os, 'kill') as kill:
+            with self.assertRaises(ProcessLookupError):
+                chrome.stop(profile)
+            kill.assert_not_called()
+
     def test_verification_targets_recorded_pid_even_during_another_forwarder(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = pathlib.Path(temporary).resolve()
