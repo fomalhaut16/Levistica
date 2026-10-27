@@ -3461,6 +3461,8 @@ final class BrowserFlowTests: XCTestCase {
         }, evaluatedWith: nil)
         wait(for: [expandedContent], timeout: 5)
         print("Restored fullscreen fixture frame: \(afterFrame); expanded=\(app.webViews.firstMatch.frame)")
+        // Move off toolbar controls so a delayed tooltip cannot cover the corner marker.
+        app.webViews.firstMatch.hover()
         XCTAssertTrue(attachWindowImage(app, name: path + "-after-bookmarks-closed"))
         app.terminate()
     }
