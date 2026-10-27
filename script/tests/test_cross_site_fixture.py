@@ -27,7 +27,7 @@ class CrossSiteFixtureTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('node'), 'Node is only needed for generated JavaScript syntax checks')
     def test_generated_scripts_parse_without_running_page_code(self):
-        for key in fixture.hosts(20):
+        for key in fixture.hosts(self.count):
             source = fixture.document(key).decode().split('<script>', 1)[1].split('</script>', 1)[0]
             result = subprocess.run(['node', '--check'], input=source, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -156,7 +156,7 @@ class CrossSiteFixtureTests(unittest.TestCase):
         other['expected_tabs'] = 20 if self.count == 5 else 5
         with self.assertRaises(ValueError):
             measure.check_fixture(other, state)
-        if self.count == 20:
+        if self.count in (20, 50):
             with self.assertRaises(ValueError):
                 measure.check_fixture({**state, 'kind': 'documents'})
             self.assertEqual(self.request('GET', '/document/20', '19')[0], 404)
@@ -164,6 +164,10 @@ class CrossSiteFixtureTests(unittest.TestCase):
 
 class TwentyDocumentFixtureTests(CrossSiteFixtureTests):
     count = 20
+
+
+class FiftyDocumentFixtureTests(CrossSiteFixtureTests):
+    count = 50
 
 
 if __name__ == '__main__':

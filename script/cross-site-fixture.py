@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Five or twenty loopback-only hosts with fixed documents and same-origin SSE pulses.
+"""Five, twenty, or fifty loopback-only hosts with fixed documents and same-origin SSE pulses.
 
 No DNS changes, browser flags, external assets, or cross-origin page messaging.
 This deliberately measures responsive documents with one persistent stream per document,
@@ -17,12 +17,12 @@ import threading
 import time
 import uuid
 
-COUNTS = (5, 20)
+COUNTS = (5, 20, 50)
 
 
 def hosts(count):
     if type(count) is not int or count not in COUNTS:
-        raise ValueError('Document count must be 5 or 20')
+        raise ValueError('Document count must be 5, 20, or 50')
     return {str(i): f'document-{i}.localhost' for i in range(1, count + 1)}
 
 

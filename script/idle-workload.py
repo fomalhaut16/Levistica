@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare an isolated twenty-tab test; optionally capture one footprint sample, never page content."""
+"""Prepare isolated 20/50-document workloads; RAM capture remains limited to twenty."""
 import argparse
 import signal
 import sys
@@ -17,13 +17,21 @@ processes = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(processes)
 
 
-def validate_state(state, completed=False):
-    keys = {str(n) for n in range(1, 21)}
-    if (state.get('kind') != 'cross-site-documents' or state.get('expected_tabs') != 20
+def validate_count(count):
+    if type(count) is not int or count not in (20, 50):
+        raise ValueError('Only explicit twenty or fifty document counts are supported')
+    return count
+
+
+def validate_state(state, completed=False, count=20):
+    validate_count(count)
+    keys = {str(n) for n in range(1, count + 1)}
+    if (state.get('kind') != 'cross-site-documents' or type(state.get('expected_tabs')) is not int
+            or state.get('expected_tabs') != count
             or state.get('transport') != 'same-origin-sse-v1' or state.get('invalid_reason')
-            or state.get('loads') != (20 if completed else 0)
+            or type(state.get('loads')) is not int or state.get('loads') != (count if completed else 0)
             or set(state.get('urls', {})) != keys):
-        raise ValueError('Expected a fresh or completed twenty-host fixture')
+        raise ValueError('Expected a fresh or completed matching document fixture')
     ports = set()
     for key, value in state['urls'].items():
         url = urllib.parse.urlsplit(value)
@@ -35,7 +43,8 @@ def validate_state(state, completed=False):
     if len(ports) != 1:
         raise ValueError('Fixture ports must match')
     expected = {key: 1 if completed else 0 for key in keys}
-    if state.get('stream_connections') != expected:
+    if (state.get('stream_connections') != expected
+            or any(type(value) is not int for value in state['stream_connections'].values())):
         raise ValueError('Unexpected stream starts; do not retry automatically')
     if completed:
         documents = state.get('documents', {})
@@ -92,18 +101,22 @@ def verify_application(workload):
         raise ValueError('Isolated app identity changed; no URLs delivered')
 
 
-def deliver_sequential(state_path, workload_path):
+def deliver_sequential(state_path, workload_path, count=20):
     initial = json.loads(state_path.read_text())
-    validate_state(initial)
+    validate_state(initial, count=count)
     workload = json.loads(workload_path.read_text())
-    if (workload.get('variant') != 'Measurement' or workload.get('urls') != initial['urls']
+    if (workload.get('variant') != 'Measurement' or type(workload.get('expected_tabs', 20)) is not int
+            or workload.get('expected_tabs', 20) != count
+            or workload.get('urls') != initial['urls']
             or workload.get('state') != str(state_path.resolve())):
         raise ValueError('Sequential preparation requires the matching Measurement workload')
     verify_application(workload)
     app = pathlib.Path(workload['executable']).parents[2]
     deadline = time.monotonic() + 180
     fixed = ('kind', 'transport', 'run_id', 'urls', 'origins', 'document_hashes', 'expected_tabs')
-    for number in range(1, 21):
+    for number in range(1, count + 1):
+        if time.monotonic() >= deadline:
+            raise ValueError('Sequential preparation exceeded its bounded time')
         pressure()
         verify_application(workload)
         subprocess.run(['/usr/bin/open', '-a', str(app), workload['urls'][str(number)]],
@@ -126,7 +139,7 @@ def deliver_sequential(state_path, workload_path):
     verify_application(workload)
     pressure()
     final = json.loads(state_path.read_text())
-    validate_state(final, completed=True)
+    validate_state(final, completed=True, count=count)
     spec = importlib.util.spec_from_file_location('measure_memory', ROOT / 'script/measure-memory.py')
     measure = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(measure)
@@ -190,6 +203,8 @@ def capture_memory(state_path, workload_path):
     workload = json.loads(workload_path.read_text())
     if workload.get('variant') != 'Measurement':
         raise ValueError('RAM capture requires the non-debuggable Measurement app')
+    if type(workload.get('expected_tabs', 20)) is not int or workload.get('expected_tabs', 20) != 20:
+        raise ValueError('Fifty-document preparation does not authorize RAM capture')
     spec = importlib.util.spec_from_file_location('measure_memory', ROOT / 'script/measure-memory.py')
     measure = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(measure)
@@ -250,15 +265,20 @@ def main():
     parser.add_argument('state', type=pathlib.Path)
     parser.add_argument('output', nargs='?', type=pathlib.Path)
     parser.add_argument('--variant', choices=['Profile', 'Measurement'], default='Profile')
+    parser.add_argument('--count', type=int, choices=(20, 50), default=20,
+                        help='Fifty requires Measurement and preparation/validation only; no RAM capture')
     args = parser.parse_args()
+    if args.count == 50 and (args.variant != 'Measurement' or args.mode not in ('prepare', 'deliver-sequential', 'validate')):
+        parser.error('Fifty documents require Measurement prepare, deliver-sequential or validate; no bulk delivery or RAM capture')
     if args.mode == 'monitor':
         monitor(args.state)
         return
     if args.mode == 'deliver-sequential':
         if args.output is None:
             parser.error('deliver-sequential requires the workload file')
-        deliver_sequential(args.state, args.output)
-        print('Twenty documents prepared in order 1..20; no RAM captured.')
+        deliver_sequential(args.state, args.output, count=args.count)
+        name = 'Fifty' if args.count == 50 else 'Twenty'
+        print(f'{name} documents prepared in order 1..{args.count}; no RAM captured.')
         return
     if args.mode == 'capture':
         if args.output is None:
@@ -266,12 +286,13 @@ def main():
         capture_memory(args.state, args.output)
         return
     state = json.loads(args.state.read_text())
-    validate_state(state, completed=args.mode == 'validate')
+    validate_state(state, completed=args.mode == 'validate', count=args.count)
     if args.mode == 'deliver':
         if args.output is None:
             parser.error('deliver requires the workload file')
         workload = json.loads(args.output.read_text())
-        if workload['urls'] != state['urls']:
+        if (type(workload.get('expected_tabs', 20)) is not int or workload.get('expected_tabs', 20) != args.count
+                or workload['urls'] != state['urls']):
             raise ValueError('Workload does not match this fresh fixture')
         verify_application(workload)
         pressure()
@@ -281,7 +302,8 @@ def main():
         verify_application(workload)
         return
     if args.mode == 'validate':
-        print('Twenty documents displayed without reload or reconnect; workload validation passed.')
+        name = 'Fifty' if args.count == 50 else 'Twenty'
+        print(f'{name} documents displayed without reload or reconnect; workload validation passed.')
         return
     if args.output is None:
         parser.error('prepare requires an output file')
@@ -296,8 +318,11 @@ def main():
     started = processes.run_ps(['-p', str(pids[0]), '-o', 'lstart='])
     if not started:
         raise ValueError('Isolated app exited during preparation')
-    args.output.write_text(json.dumps({'variant': args.variant, 'pid': pids[0], 'executable': executable, 'started': started, 'urls': state['urls'],
-        'state': str(args.state.resolve()), 'health': str(args.state.with_name('idle-health.json').resolve())}) + '\n')
+    workload = {'variant': args.variant, 'pid': pids[0], 'executable': executable, 'started': started, 'urls': state['urls'],
+        'state': str(args.state.resolve()), 'health': str(args.state.with_name('idle-health.json').resolve())}
+    if args.count == 50:
+        workload['expected_tabs'] = args.count
+    args.output.write_text(json.dumps(workload) + '\n')
     args.output.chmod(0o600)
 
 

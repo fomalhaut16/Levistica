@@ -15,10 +15,10 @@ spec.loader.exec_module(module)
 
 
 class IdleWorkloadTests(unittest.TestCase):
-    def state(self, completed=False):
-        keys = [str(n) for n in range(1, 21)]
+    def state(self, completed=False, count=20):
+        keys = [str(n) for n in range(1, count + 1)]
         return {'kind': 'cross-site-documents', 'transport': 'same-origin-sse-v1',
-                'expected_tabs': 20, 'loads': 20 if completed else 0,
+                'expected_tabs': count, 'loads': count if completed else 0,
                 'urls': {key: f'http://document-{key}.localhost:12345/document/{key}' for key in keys},
                 'stream_connections': {key: 1 if completed else 0 for key in keys},
                 'documents': {key: {'complete': True, 'seenVisible': True, 'sections': 240, 'pulse': 1}
@@ -105,6 +105,77 @@ class IdleWorkloadTests(unittest.TestCase):
                                     env={**env, **settings}, capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertNotIn('Built ', result.stdout)
+
+    def test_fifty_requires_explicit_count_and_matching_complete_documents(self):
+        fresh = self.state(count=50)
+        module.validate_state(fresh, count=50)
+        completed = self.state(True, count=50)
+        module.validate_state(completed, completed=True, count=50)
+        with self.assertRaises(ValueError):
+            module.validate_state(fresh)
+        for count in (True, 50.0, '50', 100, 0, None):
+            with self.subTest(count=count), self.assertRaises(ValueError):
+                module.validate_state(fresh, count=count)
+        for key, value in [('expected_tabs', 50.0), ('loads', False)]:
+            bad = copy.deepcopy(fresh)
+            bad[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                module.validate_state(bad, count=50)
+        bad = copy.deepcopy(fresh)
+        bad['stream_connections']['50'] = False
+        with self.assertRaises(ValueError): module.validate_state(bad, count=50)
+        for change in ('missing-last', 'reconnect-last', 'incomplete-last', 'wrong-host'):
+            state = copy.deepcopy(completed)
+            if change == 'missing-last': del state['documents']['50']
+            elif change == 'reconnect-last': state['stream_connections']['50'] = 2
+            elif change == 'incomplete-last': state['documents']['50']['complete'] = False
+            else: state['urls']['50'] = 'http://document-51.localhost:12345/document/50'
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                module.validate_state(state, completed=True, count=50)
+
+    def test_fifty_marker_cannot_use_twenty_capture_or_implicit_delivery(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state_path = pathlib.Path(temporary) / 'state.json'
+            state = self.state(count=50)
+            state_path.write_text(json.dumps(state))
+            marker = pathlib.Path(temporary) / 'workload.json'
+            workload = {'variant': 'Measurement', 'expected_tabs': 50, 'urls': state['urls'],
+                        'state': str(state_path.resolve())}
+            marker.write_text(json.dumps(workload))
+            with patch.object(module, 'verify_application') as verify, patch.object(module, 'run_capture') as capture:
+                with self.assertRaises(ValueError): module.capture_memory(state_path, marker)
+                with self.assertRaises(ValueError): module.deliver_sequential(state_path, marker)
+                verify.assert_not_called()
+                capture.assert_not_called()
+            for count in (20, 50.0, True, '50', None):
+                workload['expected_tabs'] = count
+                marker.write_text(json.dumps(workload))
+                with self.subTest(count=count), patch.object(module, 'verify_application') as verify:
+                    with self.assertRaises(ValueError): module.deliver_sequential(state_path, marker, count=50)
+                    verify.assert_not_called()
+
+    def test_expired_fifty_preparation_sends_no_next_url(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state_path = pathlib.Path(temporary) / 'state.json'
+            state = self.state(count=50)
+            state_path.write_text(json.dumps(state))
+            marker = pathlib.Path(temporary) / 'workload.json'
+            marker.write_text(json.dumps({'variant': 'Measurement', 'expected_tabs': 50,
+                                          'executable': '/synthetic/Levistica.app/Contents/MacOS/Levistica',
+                                          'urls': state['urls'], 'state': str(state_path.resolve())}))
+            with patch.object(module, 'verify_application'), patch.object(module.subprocess, 'run') as send, \
+                    patch.object(module.time, 'monotonic', side_effect=[0, 181]):
+                with self.assertRaisesRegex(ValueError, 'bounded time'):
+                    module.deliver_sequential(state_path, marker, count=50)
+                send.assert_not_called()
+
+    def test_fifty_cli_rejects_profile_bulk_capture_and_monitor_before_io(self):
+        for mode, variant in [('prepare', 'Profile'), ('deliver', 'Measurement'),
+                              ('capture', 'Measurement'), ('monitor', 'Measurement')]:
+            result = subprocess.run([module.sys.executable, str(path), mode, '/absent-fixture.json',
+                                     '--count', '50', '--variant', variant], capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn('Fifty documents require', result.stderr)
 
     def test_preparation_requires_an_untouched_twenty_host_fixture(self):
         module.validate_state(self.state())

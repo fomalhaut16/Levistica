@@ -468,7 +468,7 @@ def check_fixture(current, original=None, now=None):
         now = time.monotonic() if now is None else now
         docs = current.get('documents', {})
         count = current.get('expected_tabs')
-        allowed = (5, 20) if current['kind'] == 'cross-site-documents' else (5,)
+        allowed = (5, 20, 50) if current['kind'] == 'cross-site-documents' else (5,)
         if type(count) is not int or count not in allowed:
             raise ValueError('Unsupported document count')
         keys = {str(i) for i in range(1, count + 1)}
