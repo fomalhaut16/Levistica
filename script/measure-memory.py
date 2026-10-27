@@ -105,6 +105,41 @@ def process_executable_path(pid):
     return path
 
 
+class ProcessIdentitySetChanged(ValueError):
+    def __init__(self, missing):
+        self.missing_pids = frozenset(missing)
+        super().__init__("Process identity set changed; missing PIDs: " +
+                         ",".join(map(str, sorted(self.missing_pids))))
+
+
+class ConfirmedExitedChromeDescendants(ValueError):
+    def __init__(self, pids):
+        self.pids = tuple(sorted(pids))
+        super().__init__("Confirmed Chrome descendant exit during attribution")
+
+
+def classify_chrome_child_exit(error, root_pid, children, services):
+    """Never return an incomplete snapshot: distinguish only proven absent children."""
+    if isinstance(error, ProcessIdentitySetChanged):
+        missing = error.missing_pids
+    elif isinstance(error, OSError) and error.errno in (2, 3) and type(getattr(error, "process_id", None)) is int:
+        missing = {error.process_id}
+    else:
+        raise error
+    service_pids = {service["pid"] for service in services}
+    if not missing or not set(missing) <= (set(children) - {root_pid} - service_pids):
+        raise error
+    for pid in missing:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            raise error
+        raise error  # Still present, reused, or a zombie: not a confirmed exit.
+    raise ConfirmedExitedChromeDescendants(missing) from error
+
+
 def identities(pids, query=None):
     query = run if query is None else query
     text = query(["/bin/ps", "-p", ",".join(map(str, pids)), "-o", "pid=,lstart="])
@@ -115,8 +150,7 @@ def identities(pids, query=None):
             raise ValueError("Unrecognized ps identity row")
         result[int(fields[0])] = {"started": " ".join(fields[1:6])}
     if set(result) != set(pids):
-        raise ValueError("Process identity set changed; missing PIDs: " +
-                         ",".join(map(str, sorted(set(pids) - set(result)))))
+        raise ProcessIdentitySetChanged(set(pids) - set(result))
     for pid in result:
         result[pid]["executable"] = process_executable_path(pid)
     return result
@@ -226,6 +260,7 @@ def snapshot(pid, app=APP, binary=BINARY, chrome_profile=None, deadline=None):
     exited = set()
     checked_identity = {}
     external_helpers = {}
+    children = set()
     if chrome_profile:
         root_args = query(["/bin/ps", "-p", str(pid), "-o", "args="])
         if not has_path_argument(root_args, "--user-data-dir=", chrome_profile):
@@ -254,7 +289,10 @@ def snapshot(pid, app=APP, binary=BINARY, chrome_profile=None, deadline=None):
                 detached.append(child)
                 checked_identity[child] = candidate
         children, exited = live_descendants(rows, pid)
-        child_identity = identities(sorted(children), query=query)
+        try:
+            child_identity = identities(sorted(children), query=query)
+        except (ValueError, OSError) as error:
+            classify_chrome_child_exit(error, pid, children, services)
         unexpected = []
         verified_paths = {}
         for child, item in child_identity.items():
@@ -274,7 +312,12 @@ def snapshot(pid, app=APP, binary=BINARY, chrome_profile=None, deadline=None):
             raise ValueError("Unexpected Chrome descendant executable: " + repr(unexpected))
         checked_identity.update(child_identity)
         process_ids = sorted(set(process_ids) | children | set(detached))
-    identity = identities(process_ids, query=query)
+    try:
+        identity = identities(process_ids, query=query)
+    except (ValueError, OSError) as error:
+        if chrome_profile:
+            classify_chrome_child_exit(error, pid, children, services)
+        raise
     if any(identity.get(child) != item for child, item in checked_identity.items()):
         raise ValueError("Chrome identity changed during attribution")
     for child, verified in external_helpers.items():

@@ -109,6 +109,97 @@ class SamplingTests(unittest.TestCase):
             self.sampler.capture()
         self.assertEqual(self.calls, 0)
 
+    def chrome_sampler(self):
+        self.sampler.content_role = 'Renderer'
+        self.sampler.role_for = lambda pid, root, state: 'UI' if pid == root else 'Renderer'
+
+    def test_confirmed_exit_discards_preparation_and_requires_sixty_new_seconds(self):
+        self.chrome_sampler()
+        self.settle(60)
+        original = self.sampler.read_attribution
+        self.now = 65
+        self.sampler.read_attribution = lambda deadline: (_ for _ in ()).throw(memory.m.ConfirmedExitedChromeDescendants([2]))
+        self.sampler.tick()
+        self.assertIsNone(self.sampler.baseline)
+        self.assertIsNone(self.sampler.stable_since)
+        self.assertEqual(self.calls, 0)
+        self.assertEqual(len(self.sampler.confirmed_exits), 1)
+        self.sampler.read_attribution = original
+        self.now = 70
+        self.settle(125)
+        with self.assertRaises(ValueError): self.sampler.capture()
+        self.assertEqual(self.calls, 0)
+        self.now = 130
+        self.sampler.capture()
+        self.assertEqual(self.calls, 1)
+        self.assertEqual(self.sampler.sample['stableAttributionSeconds'], 60)
+
+    def test_root_identity_survives_a_discarded_chrome_preparation(self):
+        self.chrome_sampler()
+        self.sampler.tick()
+        original = self.sampler.read_attribution
+        self.now = 5
+        self.sampler.read_attribution = lambda deadline: (_ for _ in ()).throw(memory.m.ConfirmedExitedChromeDescendants([2]))
+        self.sampler.tick()
+        self.state['identities'][1]['started'] = 'reused PID'
+        self.now = 10
+        self.sampler.read_attribution = original
+        with self.assertRaisesRegex(ValueError, 'Root identity changed'): self.sampler.tick()
+        self.assertEqual(self.calls, 0)
+
+    def test_native_and_unclassified_failures_still_abort(self):
+        for error, chrome in [(memory.m.ConfirmedExitedChromeDescendants([2]), False), (ValueError('unverified domain'), True)]:
+            with self.subTest(chrome=chrome):
+                self.sampler.content_role = 'Renderer' if chrome else 'WebContent'
+                self.sampler.read_attribution = lambda deadline: (_ for _ in ()).throw(error)
+                with self.assertRaises(type(error)): self.sampler.tick(force=True)
+                self.assertEqual(self.sampler.confirmed_exits, [])
+                self.assertEqual(self.calls, 0)
+
+    def test_an_empty_or_root_exit_tag_cannot_reset_preparation(self):
+        self.chrome_sampler()
+        for pids in [[], [1]]:
+            with self.subTest(pids=pids):
+                self.sampler.read_attribution = lambda deadline: (_ for _ in ()).throw(memory.m.ConfirmedExitedChromeDescendants(pids))
+                with self.assertRaises(memory.m.ConfirmedExitedChromeDescendants): self.sampler.tick(force=True)
+                self.assertEqual(self.sampler.confirmed_exits, [])
+                self.assertEqual(self.calls, 0)
+
+    def test_confirmed_exit_during_capture_is_not_retried_or_omitted(self):
+        self.chrome_sampler()
+        self.settle(60)
+        self.sampler.read_attribution = lambda deadline: (_ for _ in ()).throw(memory.m.ConfirmedExitedChromeDescendants([2]))
+        with self.assertRaises(memory.m.ConfirmedExitedChromeDescendants): self.sampler.capture()
+        self.assertEqual(self.calls, 0)
+        self.assertEqual(self.sampler.confirmed_exits, [])
+
+    def test_exit_after_numeric_read_invalidates_the_only_attempt(self):
+        self.chrome_sampler()
+        self.settle(60)
+        original = self.sampler.read_values
+        def values(pids, deadline):
+            result = original(pids, deadline)
+            self.sampler.read_attribution = lambda deadline: (_ for _ in ()).throw(memory.m.ConfirmedExitedChromeDescendants([2]))
+            return result
+        self.sampler.read_values = values
+        with self.assertRaises(memory.m.ConfirmedExitedChromeDescendants): self.sampler.capture()
+        self.assertEqual(self.calls, 1)
+        self.assertEqual(self.sampler.attempts, 1)
+        self.assertIsNone(self.sampler.sample)
+        with self.assertRaises(ValueError): self.sampler.capture()
+        self.assertEqual(self.calls, 1)
+
+    def test_confirmed_exit_after_provisional_capture_aborts_finalization(self):
+        self.chrome_sampler()
+        self.settle(60)
+        self.sampler.capture()
+        self.now = 65
+        self.sampler.read_attribution = lambda deadline: (_ for _ in ()).throw(memory.m.ConfirmedExitedChromeDescendants([2]))
+        with self.assertRaises(memory.m.ConfirmedExitedChromeDescendants): self.sampler.tick()
+        with self.assertRaises(memory.m.ConfirmedExitedChromeDescendants): self.sampler.finish()
+        self.assertFalse(self.sampler.sample['valid'])
+        self.assertEqual(self.sampler.confirmed_exits, [])
+
     def test_explicit_chrome_roles_share_the_same_sampling_checks(self):
         previous = self.sampler
         self.sampler = memory.Sampler(1, previous.read_attribution, previous.read_context,
