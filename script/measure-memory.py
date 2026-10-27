@@ -6,6 +6,7 @@ launchctl's human-readable format is not a stable API: parsing fails closed.
 Raw launchctl output can contain environment values and is never saved or printed.
 """
 import argparse
+import ctypes
 import datetime
 import hashlib
 import functools
@@ -16,6 +17,7 @@ import pathlib
 import plistlib
 import re
 import statistics
+import sys
 import subprocess
 import tempfile
 import time
@@ -76,18 +78,45 @@ def parse_domain(text, pid, app, creator_name="Levistica"):
     return services
 
 
+@functools.lru_cache(maxsize=1)
+def _pidpath_function():
+    if sys.platform != "darwin":
+        raise OSError("Kernel executable lookup requires macOS")
+    function = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True).proc_pidpath
+    function.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+    function.restype = ctypes.c_int
+    return function
+
+
+def process_executable_path(pid):
+    """Read the public kernel path, never mutable argv[0] or ps display names."""
+    if type(pid) is not int or pid <= 0:
+        raise ValueError("Expected a positive process ID")
+    buffer = ctypes.create_string_buffer(4096)  # PROC_PIDPATHINFO_MAXSIZE
+    ctypes.set_errno(0)
+    length = _pidpath_function()(pid, buffer, len(buffer))
+    if length <= 0:
+        raise OSError(ctypes.get_errno(), "Kernel executable lookup failed")
+    path = buffer.value.decode("utf-8", errors="strict")
+    if length >= len(buffer) or not pathlib.Path(path).is_absolute():
+        raise ValueError("Invalid kernel executable path")
+    return path
+
+
 def identities(pids, query=None):
     query = run if query is None else query
-    text = query(["/bin/ps", "-p", ",".join(map(str, pids)), "-o", "pid=,lstart=,comm="])
+    text = query(["/bin/ps", "-p", ",".join(map(str, pids)), "-o", "pid=,lstart="])
     result = {}
     for line in text.splitlines():
-        fields = line.strip().split(None, 6)
-        if len(fields) != 7:
+        fields = line.strip().split()
+        if len(fields) != 6 or int(fields[0]) in result:
             raise ValueError("Unrecognized ps identity row")
-        result[int(fields[0])] = {"started": " ".join(fields[1:6]), "executable": fields[6]}
+        result[int(fields[0])] = {"started": " ".join(fields[1:6])}
     if set(result) != set(pids):
         raise ValueError("Process identity set changed; missing PIDs: " +
                          ",".join(map(str, sorted(set(pids) - set(result)))))
+    for pid in result:
+        result[pid]["executable"] = process_executable_path(pid)
     return result
 
 
@@ -133,30 +162,42 @@ def snapshot(pid, app=APP, binary=BINARY, chrome_profile=None, deadline=None):
             raise ValueError("Service PID changed during attribution")
     process_ids = sorted({pid, *(s["pid"] for s in services)})
     exited = set()
+    checked_identity = {}
     if chrome_profile:
         root_args = query(["/bin/ps", "-p", str(pid), "-o", "args="])
         if not has_path_argument(root_args, "--user-data-dir=", chrome_profile):
             raise ValueError("Chrome root does not use the isolated profile")
         rows = []
         detached = []
-        for line in query(["/bin/ps", "-axo", "pid=,ppid=,stat=,comm="]).splitlines():
+        for line in query(["/bin/ps", "-axo", "pid=,ppid=,stat=,ucomm="]).splitlines():
             fields = line.strip().split(None, 3)
             if len(fields) != 4:
                 raise ValueError("Unrecognized process table")
             child, parent = map(int, fields[:2])
             rows.append((child, parent, fields[2]))
-            if not fields[2].startswith("Z") and fields[3].startswith(str(app) + "/") and fields[3].endswith("/chrome_crashpad_handler"):
+            if not fields[2].startswith("Z") and fields[3].startswith("chrome_crashpad"):
+                uid = query(["/bin/ps", "-p", str(child), "-o", "uid="]).strip()
+                if uid != str(os.getuid()):
+                    continue
+                candidate = identities([child], query=query)[child]
+                path = pathlib.Path(candidate["executable"]).resolve()
+                if not path.is_relative_to(app.resolve()) or path.name != "chrome_crashpad_handler":
+                    continue
                 args = query(["/bin/ps", "-p", str(child), "-o", "args="])
                 if has_path_argument(args, "--database=", chrome_profile / "Crashpad"):
                     detached.append(child)
+                    checked_identity[child] = candidate
         children, exited = live_descendants(rows, pid)
         child_identity = identities(sorted(children), query=query)
         unexpected = [item["executable"] for item in child_identity.values()
-                      if not item["executable"].startswith(str(app) + "/")]
+                      if not pathlib.Path(item["executable"]).resolve().is_relative_to(app.resolve())]
         if unexpected:
             raise ValueError("Unexpected Chrome descendant executable: " + repr(unexpected))
+        checked_identity.update(child_identity)
         process_ids = sorted(set(process_ids) | children | set(detached))
     identity = identities(process_ids, query=query)
+    if any(identity.get(child) != item for child, item in checked_identity.items()):
+        raise ValueError("Chrome identity changed during attribution")
     if pathlib.Path(identity[pid]["executable"]).resolve() != binary.resolve():
         raise ValueError("PID no longer refers to this checkout's Release app")
     return {"services": sorted(services, key=lambda s: s["service"]), "identities": identity,

@@ -2,6 +2,8 @@ import importlib.util
 import pathlib
 import unittest
 import copy
+import subprocess
+import sys
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("measure_memory", pathlib.Path(__file__).parents[1] / "measure-memory.py")
@@ -146,9 +148,73 @@ class AttributionTests(unittest.TestCase):
                 self.assertFalse(measure.attribution_change(before, after)[0])
 
     def test_identity_race_reports_missing_pid_without_subprocess_output(self):
-        with patch.object(measure, "run", return_value="10 Wed Oct 21 16:00:00 2026 /tmp/app\n"):
+        with patch.object(measure, "run", return_value="10 Wed Oct 21 16:00:00 2026\n"):
             with self.assertRaisesRegex(ValueError, "missing PIDs: 11$"):
                 measure.identities([10, 11])
+
+    def test_identity_uses_kernel_path_and_rejects_mutable_display_columns(self):
+        row = "10 Wed Oct 21 16:00:00 2026\n"
+        with patch.object(measure, "run", return_value=row) as query, \
+             patch.object(measure, "process_executable_path", return_value="/real/app") as lookup:
+            self.assertEqual(measure.identities([10])[10]["executable"], "/real/app")
+            self.assertEqual(query.call_args.args[0][-1], "pid=,lstart=")
+            lookup.assert_called_once_with(10)
+        for invalid in [row + row, row.rstrip() + " mutable-display\n"]:
+            with patch.object(measure, "run", return_value=invalid), \
+                 patch.object(measure, "process_executable_path") as lookup:
+                with self.assertRaises(ValueError):
+                    measure.identities([10])
+                lookup.assert_not_called()
+
+    def test_kernel_lookup_failure_never_falls_back_to_ps_display(self):
+        with patch.object(measure, "run", return_value="10 Wed Oct 21 16:00:00 2026\n"), \
+             patch.object(measure, "process_executable_path", side_effect=PermissionError):
+            with self.assertRaises(PermissionError):
+                measure.identities([10])
+        with patch.object(measure, "_pidpath_function", side_effect=OSError):
+            with self.assertRaises(OSError):
+                measure.process_executable_path(10)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Public libproc is macOS-only")
+    def test_owned_child_with_changed_argv0_keeps_its_kernel_executable(self):
+        child = subprocess.Popen(["levistica-identity-fixture", "5"], executable="/bin/sleep")
+        try:
+            actual = measure.identities([child.pid])[child.pid]
+            self.assertEqual(pathlib.Path(actual["executable"]).resolve(), pathlib.Path("/bin/sleep").resolve())
+            display = measure.run(["/bin/ps", "-p", str(child.pid), "-o", "comm="]).strip()
+            self.assertNotEqual(display, actual["executable"])
+        finally:
+            child.terminate()
+            child.wait(timeout=5)
+
+    def test_chrome_roster_resolves_descendants_and_only_owned_detached_crashpad(self):
+        app = pathlib.Path("/synthetic/Chrome.app")
+        paths = {100: str(app / "Contents/MacOS/Chrome"),
+                 200: str(app / "Contents/Helpers/Renderer"),
+                 300: str(app / "Contents/Helpers/chrome_crashpad_handler"),
+                 400: str(app / "Contents/Helpers/chrome_crashpad_handler")}
+        domain = "pid/100 = {\n\toriginator = /synthetic/Chrome.app\n\tcreator = Google Chrome[100]\n\tservices = {\n\t}\n}"
+        def query(args):
+            if args[0] == "/bin/launchctl":
+                return domain
+            if "-axo" in args:
+                self.assertEqual(args[-1], "pid=,ppid=,stat=,ucomm=")
+                return "100 1 S Chrome\n200 100 S Renderer\n300 1 S chrome_crashpad\n400 1 S chrome_crashpad\n"
+            selected = [int(x) for x in args[2].split(",")]
+            if args[-1] == "uid=":
+                return str(measure.os.getuid())
+            if args[-1] == "args=":
+                return "--user-data-dir=/synthetic/profile" if selected == [100] else (
+                    "--database=/synthetic/profile/Crashpad" if selected == [300] else "--database=/foreign/Crashpad")
+            self.assertEqual(args[-1], "pid=,lstart=")
+            return "".join(f"{pid} Wed Oct 21 16:00:00 2026\n" for pid in selected)
+        with patch.object(measure, "run", side_effect=query), \
+             patch.object(measure, "process_executable_path", side_effect=paths.__getitem__):
+            result = measure.snapshot(100, app, pathlib.Path(paths[100]), pathlib.Path("/synthetic/profile"))
+            self.assertEqual(set(result["identities"]), {100, 200, 300})
+            paths[200] = "/foreign/Renderer"
+            with self.assertRaisesRegex(ValueError, "Unexpected Chrome descendant"):
+                measure.snapshot(100, app, pathlib.Path(paths[100]), pathlib.Path("/synthetic/profile"))
 
     def test_chrome_creator_must_match_the_explicit_browser(self):
         text = self.domain().replace("Levistica[100]", "Google Chrome[100]")

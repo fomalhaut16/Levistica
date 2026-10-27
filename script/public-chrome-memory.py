@@ -29,7 +29,29 @@ def chrome_role(pid, root, snapshot):
     path = Path(snapshot['identities'][pid]['executable'])
     names = {'Google Chrome Helper (Renderer)': 'Renderer', 'Google Chrome Helper (GPU)': 'GPU',
              'Google Chrome Helper': 'Utility', 'chrome_crashpad_handler': 'Crashpad'}
-    return names.get(path.name, 'Chrome helper') if path.is_relative_to(APP) else 'Owned XPC helper'
+    return names.get(path.name, 'Chrome helper') if path.resolve().is_relative_to(APP.resolve()) else 'Owned XPC helper'
+
+
+def display_identity_counts(snapshot):
+    """Discard mutable display strings; retain only counts for owned verified PIDs."""
+    identities = snapshot['identities']
+    text = m.run(['/bin/ps', '-p', ','.join(map(str, sorted(identities))), '-o', 'pid=,comm='], timeout=2)
+    seen = set()
+    mismatches = nonabsolute = 0
+    for line in text.splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) != 2 or not fields[0].isdigit():
+            raise ValueError('Unrecognized ps identity row')
+        pid = int(fields[0])
+        if pid not in identities or pid in seen:
+            raise ValueError('Unrecognized ps identity row')
+        seen.add(pid)
+        mismatches += fields[1] != identities[pid]['executable']
+        nonabsolute += not Path(fields[1]).is_absolute()
+    if seen != set(identities):
+        raise ValueError('Display diagnostic identity set changed')
+    return {'processCount': len(seen), 'displayDiffersFromKernelPath': mismatches,
+            'displayIsNotAbsolutePath': nonabsolute}
 
 
 def validate_observation(value, original=None):
@@ -145,7 +167,7 @@ def run(path):
     info = plistlib.loads(info_path.read_bytes())
     if owner.get('browserProduct') != 'Chrome/' + info['CFBundleShortVersionString']:
         raise ValueError('Chrome version is not bound to the controller')
-    expected = {'started': owner['started'], 'executable': str(BINARY)}
+    expected = {'started': owner['started'], 'executable': str(BINARY.resolve())}
     def verify():
         if m.identities([pid])[pid] != expected:
             raise ValueError('Chrome owner changed')
@@ -194,6 +216,9 @@ def run(path):
         while time.monotonic() < deadline:
             verify()
             sampler.tick()
+            if 'identityDisplayDiagnostic' not in result:
+                result['identityDisplayDiagnostic'] = display_identity_counts(sampler.baseline)
+                sampler.tick(force=True)
             if not select.select([sys.stdin], [], [], .5)[0]:
                 continue
             line = sys.stdin.readline(4097)

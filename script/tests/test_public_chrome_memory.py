@@ -15,6 +15,15 @@ def observation():
 
 
 class ChromeMemoryTests(unittest.TestCase):
+    def test_display_diagnostic_retains_counts_and_discards_mutable_labels(self):
+        snapshot = {'identities': {10: {'executable': '/app/root'}, 20: {'executable': '/app/renderer'}}}
+        with patch.object(chrome.m, 'run', return_value='10 /app/root\n20 mutable private label\n'):
+            self.assertEqual(chrome.display_identity_counts(snapshot), {
+                'processCount': 2, 'displayDiffersFromKernelPath': 1, 'displayIsNotAbsolutePath': 1})
+        for output in ['10 /app/root\n', '10 /app/root\n10 duplicate\n', '30 foreign\n']:
+            with patch.object(chrome.m, 'run', return_value=output), self.assertRaises(ValueError):
+                chrome.display_identity_counts(snapshot)
+
     def test_failure_details_confirm_vanished_children_without_copying_messages(self):
         with patch.object(chrome.os, 'kill', side_effect=ProcessLookupError):
             result = chrome.failure_detail(ValueError('Process identity set changed; missing PIDs: 456'), 123)

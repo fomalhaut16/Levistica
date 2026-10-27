@@ -124,9 +124,9 @@ class AttributionReadinessTests(unittest.TestCase):
         domain = 'pid/100 = {\n\toriginator = /synthetic/app\n\tcreator = Levistica[100]\n\tservices = {\n\t\t200 - synthetic.service\n\t}\n}'
         def query(args, timeout):
             if args[0] == '/bin/ps':
-                return '100 Sat Oct 24 10:00:00 2026 /synthetic/app/executable\n200 Sat Oct 24 10:00:00 2026 /synthetic/helper\n'
+                return '100 Sat Oct 24 10:00:00 2026\n200 Sat Oct 24 10:00:00 2026\n'
             return domain if args[-1] == 'pid/100' else '\tdomain = pid/100\n\tpid = 200\n'
-        with patch.object(measure.time, 'monotonic', return_value=10), patch.object(measure, 'run', side_effect=query) as run:
+        with patch.object(measure, 'process_executable_path', side_effect=lambda pid: '/synthetic/app/executable' if pid == 100 else '/synthetic/helper'), patch.object(measure.time, 'monotonic', return_value=10), patch.object(measure, 'run', side_effect=query) as run:
             result = measure.snapshot(100, pathlib.Path('/synthetic/app'), pathlib.Path('/synthetic/app/executable'), deadline=13)
         self.assertEqual(set(result['identities']), {100, 200})
         self.assertEqual(run.call_count, 3)
