@@ -22,8 +22,8 @@ base = m.ROOT / '.local/artifacts/comparison'
 
 
 def workload_urls(url, tabs, ready_file=None):
-    if tabs not in (1, 5, 20):
-        raise ValueError('Only one, five, or twenty fixture tabs are supported')
+    if type(tabs) is not int or tabs not in (1, 5, 20, 50):
+        raise ValueError('Only one, five, twenty, or fifty fixture tabs are supported')
     if tabs == 1:
         if not url or not re.fullmatch(r'http://127\.0\.0\.1:\d+/(document|video)', url):
             raise ValueError('Only the loopback memory fixture URL is allowed')
@@ -37,11 +37,13 @@ def workload_urls(url, tabs, ready_file=None):
         return [url + '/' + str(i) for i in range(1, 6)]
     keys = {str(i) for i in range(1, tabs + 1)}
     if (state.get('kind') != 'cross-site-documents' or state.get('transport') != 'same-origin-sse-v1'
-            or state.get('expected_tabs') != tabs or state.get('loads') != 0 or state.get('documents')
+            or type(state.get('expected_tabs')) is not int or state.get('expected_tabs') != tabs
+            or type(state.get('loads')) is not int or state.get('loads') != 0 or state.get('documents')
             or state.get('invalid_reason') or not state.get('run_id')
             or set(state.get('urls', {})) != keys or set(state.get('origins', {})) != keys
             or set(state.get('document_hashes', {})) != keys
-            or state.get('stream_connections') != dict.fromkeys(keys, 0)):
+            or state.get('stream_connections') != dict.fromkeys(keys, 0)
+            or any(type(v) is not int for v in state['stream_connections'].values())):
         raise ValueError('Cross-site tabs require a fresh matching fixture')
     ports = set()
     for key in keys:
@@ -119,6 +121,8 @@ def prepare_tabs(marker, urls, ready_file):
         if current['pid'] != marker['pid'] or current['identity'] != marker['identity']:
             raise ValueError('The original preparation process changed; no more URLs delivered')
     for index, url in enumerate(urls, start=1):
+        if time.monotonic() >= deadline:
+            raise ValueError('Document preparation exceeded its bounded time')
         pressure_normal()
         verify_original()
         if index > 1:
@@ -177,7 +181,7 @@ def main():
     parser.add_argument('--profile', type=pathlib.Path)
     parser.add_argument('--width', type=int, default=1100)
     parser.add_argument('--height', type=int, default=770)
-    parser.add_argument('--tabs', type=int, choices=[1, 5, 20], default=1)
+    parser.add_argument('--tabs', type=int, choices=[1, 5, 20, 50], default=1)
     parser.add_argument('--ready-file', type=pathlib.Path)
     args = parser.parse_args()
     try:
