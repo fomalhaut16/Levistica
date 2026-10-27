@@ -89,6 +89,30 @@ def validate_packet(packet, stage, run_id):
         raise ValueError('Unexpected parent phase, fields or trial')
 
 
+MAX_PREPARATION_STATUS_REQUESTS = 12
+
+
+def preparation_reply(packet, stage, run_id, sampler, requests, verify):
+    """Report fresh preparation without advancing capture or reading numeric memory."""
+    if (stage != 'capture' or not isinstance(packet, dict)
+            or set(packet) != {'phase', 'runID'} or packet.get('phase') != 'status'
+            or packet.get('runID') != run_id):
+        raise ValueError('Unexpected preparation status packet or phase')
+    if requests >= MAX_PREPARATION_STATUS_REQUESTS:
+        raise ValueError('Preparation status request limit exceeded')
+    verify()
+    sampler.tick(force=True)
+    verify()
+    now = sampler.clock()
+    verified = (sampler.baseline is not None and sampler.stable_since is not None
+                and sampler.last_check is not None and 0 <= now - sampler.last_check <= 5)
+    stable = max(0, now - sampler.stable_since) if verified else 0
+    ready = (verified and stable >= 60 and sampler.attempts == 0 and sampler.sample is None)
+    return {'ok': True, 'readyForCapture': ready, 'attributionVerified': verified,
+            'stableSeconds': stable, 'requiredStableSeconds': 60,
+            'memorySamplesTaken': sampler.attempts}, requests + 1
+
+
 def failure_detail(error, root):
     if isinstance(error, m.ConfirmedExitedChromeDescendants):
         return {'reason': 'confirmed_chrome_descendants_exited', 'pids': list(error.pids)}
@@ -226,6 +250,7 @@ def run(path):
     before = None
     before_received = None
     stage = 'capture'
+    status_requests = 0
     try:
         print('{"ready":true}', flush=True)
         while time.monotonic() < deadline:
@@ -240,6 +265,10 @@ def run(path):
             if not line or len(line) > 4096 or not line.endswith('\n'):
                 raise ValueError('Parent pipe closed or invalid packet')
             packet = json.loads(line)
+            if isinstance(packet, dict) and packet.get('phase') == 'status':
+                reply, status_requests = preparation_reply(packet, stage, owner['runID'], sampler, status_requests, verify)
+                print(json.dumps(reply), flush=True)
+                continue
             validate_packet(packet, stage, owner['runID'])
             received = time.monotonic()
             if stage == 'capture':
@@ -284,7 +313,8 @@ def run(path):
             result['sample'] = {**sampler.sample, 'valid': True}
         result['preparation'] = {'checks': sampler.checks, 'changes': sampler.changes,
                                  'lastSystemContext': sampler.last_context,
-                                 'confirmedExitedChildReads': sampler.confirmed_exits}
+                                 'confirmedExitedChildReads': sampler.confirmed_exits,
+                                 'statusRequests': status_requests}
         output = directory / 'chrome-memory-result.json'
         output.write_text(json.dumps(result, indent=2) + '\n')
         output.chmod(0o600)
