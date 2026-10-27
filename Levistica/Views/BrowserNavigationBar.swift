@@ -4,9 +4,17 @@ struct BrowserNavigationBar: View {
     @Bindable var session: BrowserSession
     @Bindable var tab: BrowserTab
     @FocusState private var addressFocused: Bool
+    @State private var layoutSaveFailed = false
 
     var body: some View {
         HStack(spacing: 10) {
+            Button(session.preferences.tabLayout == .vertical ? "横タブに切り替え" : "縦タブに切り替え",
+                   systemImage: session.preferences.tabLayout == .vertical ? "rectangle.topthird.inset.filled" : "sidebar.left") {
+                layoutSaveFailed = !session.preferences.saveTabLayout(session.preferences.tabLayout == .vertical ? .horizontal : .vertical)
+            }
+            .help(session.preferences.tabLayout == .vertical ? "横タブに切り替え" : "縦タブに切り替え")
+            .disabled(!session.preferences.canSave)
+            .accessibilityIdentifier("toggleTabLayoutButton")
             Button("閲覧履歴", systemImage: "clock") { session.showHistory() }
                 .accessibilityIdentifier("showHistoryButton")
             Button("ブックマーク", systemImage: "book") { session.showBookmarks() }
@@ -43,6 +51,11 @@ struct BrowserNavigationBar: View {
             }
         }
         .labelStyle(.iconOnly).padding(10)
+        .alert("タブの配置を保存できませんでした", isPresented: $layoutSaveFailed) {
+            Button("閉じる", role: .cancel) { }
+        } message: {
+            Text("これまでの配置を使います。一般設定の保存先を確認してください。")
+        }
         .onAppear {
             if !tab.hasEditedAddress, let url = tab.page?.url { tab.addressDraft = url.absoluteString }
             addressFocused = tab.page == nil && !tab.isSleeping

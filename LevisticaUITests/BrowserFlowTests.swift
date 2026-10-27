@@ -1144,6 +1144,99 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testSwitchingTabLayoutPreservesThePageAndUnsubmittedInput() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        submit(base + "/site-data-check", in: app)
+        let field = app.webViews.textFields["Storage draft"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.click()
+        waitForInputIndicator(in: app)
+        field.typeText("layout draft")
+        XCTAssertEqual(field.value as? String, "layout draft")
+        let address = app.textFields["addressField"]
+        address.click()
+        waitForInputIndicator(in: app)
+        address.typeKey("a", modifierFlags: .command)
+        address.typeText("unfinished layout address")
+        waitForInputIndicator(in: app)
+        let before = app.webViews.firstMatch.frame
+        let toggle = app.buttons["toggleTabLayoutButton"]
+        toggle.click()
+        XCTAssertTrue(app.scrollViews["horizontalTabList"].waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "layout draft")
+        XCTAssertEqual(address.value as? String, "unfinished layout address")
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].exists)
+        XCTAssertGreaterThan(app.webViews.firstMatch.frame.width, before.width + 80)
+        XCTAssertTrue(attachWindowImage(app, name: "horizontal-tabs-retained-draft"))
+        app.buttons["showTabListButton"].click()
+        XCTAssertTrue(app.textFields["tabSearchField"].waitForExistence(timeout: 5))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(app.textFields["tabSearchField"].waitForNonExistence(timeout: 5))
+        toggle.click()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "tabList").firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "layout draft")
+        XCTAssertEqual(address.value as? String, "unfinished layout address")
+        XCTAssertEqual(app.webViews.firstMatch.frame.width, before.width, accuracy: 2)
+        XCTAssertTrue(attachWindowImage(app, name: "vertical-tabs-retained-draft"))
+    }
+
+    @MainActor
+    func testHorizontalHundredTabsSearchAndRestoreWithoutLoadingEveryPage() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launchEnvironment["LEVISTICA_SESSION_FIXTURE_BASE"] = base
+        app.launchEnvironment["LEVISTICA_LARGE_SESSION_FIXTURE"] = "100"
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        app.buttons["toggleTabLayoutButton"].click()
+        XCTAssertTrue(app.scrollViews["horizontalTabList"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["100タブ・読み込み済み1"].exists)
+        app.buttons["showTabListButton"].click()
+        let search = app.textFields["tabSearchField"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.click()
+        waitForInputIndicator(in: app)
+        search.typeText("Scale tab 100")
+        waitForInputIndicator(in: app)
+        let last = app.outlines.staticTexts["Scale tab 100"].firstMatch
+        XCTAssertTrue(last.waitForExistence(timeout: 5))
+        last.click()
+        XCTAssertTrue(search.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        let address = app.textFields["addressField"]
+        XCTAssertEqual(address.value as? String, base + "/one#tab-100")
+        XCTAssertTrue(app.staticTexts["100タブ・読み込み済み2"].exists)
+        let selected = app.scrollViews["horizontalTabList"].buttons.matching(NSPredicate(format: "label CONTAINS %@", "Fixture one")).firstMatch
+        let visible = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: selected)
+        wait(for: [visible], timeout: 5)
+        XCTAssertTrue(attachWindowImage(app, name: "horizontal-hundred-selected"))
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.scrollViews["horizontalTabList"].exists)
+        XCTAssertEqual(address.value as? String, base + "/one#tab-100")
+        XCTAssertTrue(app.staticTexts["100タブ・読み込み済み1"].exists)
+        let restored = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: selected)
+        wait(for: [restored], timeout: 5)
+        XCTAssertTrue(attachWindowImage(app, name: "horizontal-hundred-restarted"))
+    }
+
+    @MainActor
     func testAddressSearchChoicePersistsWithoutChangingTheNewTabPage() throws {
         continueAfterFailure = false
         executionTimeAllowance = 120
@@ -3279,6 +3372,16 @@ final class BrowserFlowTests: XCTestCase {
 
     @MainActor
     func testNativeWindowFullscreenPreservesDraftAndRestoresLayout() throws {
+        try verifyNativeWindowFullscreen(horizontal: false)
+    }
+
+    @MainActor
+    func testHorizontalWindowFullscreenPreservesDraftAndRestoresLayout() throws {
+        try verifyNativeWindowFullscreen(horizontal: true)
+    }
+
+    @MainActor
+    private func verifyNativeWindowFullscreen(horizontal: Bool) throws {
         continueAfterFailure = false
         executionTimeAllowance = 120
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
@@ -3287,6 +3390,11 @@ final class BrowserFlowTests: XCTestCase {
         app.launch()
         app.activate()
         submit(base + "/fullscreen", in: app)
+        defer { app.terminate() }
+        if horizontal {
+            app.buttons["toggleTabLayoutButton"].click()
+            XCTAssertTrue(app.scrollViews["horizontalTabList"].waitForExistence(timeout: 5))
+        }
         let draft = app.webViews.textFields["Fullscreen draft"]
         XCTAssertTrue(draft.waitForExistence(timeout: 10))
         draft.click()
