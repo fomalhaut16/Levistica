@@ -96,7 +96,9 @@ def process_executable_path(pid):
     ctypes.set_errno(0)
     length = _pidpath_function()(pid, buffer, len(buffer))
     if length <= 0:
-        raise OSError(ctypes.get_errno(), "Kernel executable lookup failed")
+        error = OSError(ctypes.get_errno(), "Kernel executable lookup failed")
+        error.process_id = pid
+        raise error
     path = buffer.value.decode("utf-8", errors="strict")
     if length >= len(buffer) or not pathlib.Path(path).is_absolute():
         raise ValueError("Invalid kernel executable path")

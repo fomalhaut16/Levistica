@@ -88,6 +88,17 @@ def validate_packet(packet, stage, run_id):
 
 
 def failure_detail(error, root):
+    if isinstance(error, OSError) and type(getattr(error, 'process_id', None)) is int:
+        pid = error.process_id
+        try:
+            os.kill(pid, 0)
+            exists = True
+        except ProcessLookupError:
+            exists = False
+        except PermissionError:
+            exists = None
+        return {'reason': 'kernel_executable_lookup_failed', 'pid': pid, 'isRoot': pid == root,
+                'errno': error.errno if type(error.errno) is int else None, 'existsNow': exists}
     text = str(error) if isinstance(error, ValueError) else ''
     fixed = {'Chrome owner changed': 'owner_changed',
              'Chrome belongs to another user': 'owner_user_changed',

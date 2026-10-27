@@ -166,6 +166,18 @@ class AttributionTests(unittest.TestCase):
                     measure.identities([10])
                 lookup.assert_not_called()
 
+    def test_kernel_lookup_failure_retains_only_errno_and_process_id(self):
+        def failed(pid, buffer, size):
+            measure.ctypes.set_errno(2)
+            return 0
+        with patch.object(measure, "_pidpath_function", return_value=failed):
+            with self.assertRaises(OSError) as caught:
+                measure.process_executable_path(123)
+        self.assertEqual(caught.exception.errno, 2)
+        self.assertEqual(caught.exception.process_id, 123)
+        self.assertIsNone(caught.exception.filename)
+        self.assertEqual(caught.exception.strerror, "Kernel executable lookup failed")
+
     def test_kernel_lookup_failure_never_falls_back_to_ps_display(self):
         with patch.object(measure, "run", return_value="10 Wed Oct 21 16:00:00 2026\n"), \
              patch.object(measure, "process_executable_path", side_effect=PermissionError):

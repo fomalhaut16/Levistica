@@ -15,6 +15,15 @@ def observation():
 
 
 class ChromeMemoryTests(unittest.TestCase):
+    def test_kernel_failure_reports_numeric_pid_errno_and_existence_only(self):
+        error = OSError(2, 'private untrusted message')
+        error.process_id = 456
+        with patch.object(chrome.os, 'kill', side_effect=ProcessLookupError):
+            result = chrome.failure_detail(error, 123)
+        self.assertEqual(result, {'reason': 'kernel_executable_lookup_failed', 'pid': 456,
+                                 'isRoot': False, 'errno': 2, 'existsNow': False})
+        self.assertNotIn('private', str(result))
+
     def test_display_diagnostic_retains_counts_and_discards_mutable_labels(self):
         snapshot = {'identities': {10: {'executable': '/app/root'}, 20: {'executable': '/app/renderer'}}}
         with patch.object(chrome.m, 'run', return_value='10 /app/root\n20 mutable private label\n'):
