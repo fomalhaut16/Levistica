@@ -15,6 +15,11 @@ def observation():
 
 
 class ChromeMemoryTests(unittest.TestCase):
+    def test_verified_updater_is_labelled_separately_from_page_and_xpc_processes(self):
+        snapshot={'identities':{20:{'executable':'/home/GoogleUpdater'}},
+                  'chrome_external_roles':{20:'Chrome-started updater'}}
+        self.assertEqual(chrome.chrome_role(20,10,snapshot),'Chrome-started updater')
+
     def test_kernel_failure_reports_numeric_pid_errno_and_existence_only(self):
         error = OSError(2, 'private untrusted message')
         error.process_id = 456

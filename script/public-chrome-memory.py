@@ -26,6 +26,8 @@ m, observer = memory.m, memory.observer
 def chrome_role(pid, root, snapshot):
     if pid == root:
         return 'UI'
+    if pid in snapshot.get('chrome_external_roles', {}):
+        return snapshot['chrome_external_roles'][pid]
     path = Path(snapshot['identities'][pid]['executable'])
     names = {'Google Chrome Helper (Renderer)': 'Renderer', 'Google Chrome Helper (GPU)': 'GPU',
              'Google Chrome Helper': 'Utility', 'chrome_crashpad_handler': 'Crashpad'}
@@ -212,7 +214,7 @@ def run(path):
               'storage': 'new incognito profile; browser-owned cache files may exist',
               'scope': 'UI, verified PID-domain services, descendants and profile-matched Crashpad',
               'limits': ['Single pilot, not a browser comparison.', 'Shared memory can be charged multiple times.',
-                         'Outside-domain shared services are excluded.', 'Controller observation overhead differs from native XCTest.']}
+                         'Outside-domain shared services are excluded.', 'Verified Chrome-started updater descendants are included and labelled separately.', 'Helper roles are executable-based, not a per-site allocation.', 'Controller observation overhead differs from native XCTest.']}
     deadline = time.monotonic() + 240
     def interrupted(*_):
         raise InterruptedError('Owned worker interrupted')
