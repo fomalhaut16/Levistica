@@ -15,6 +15,10 @@ def observation():
 
 
 class ChromeMemoryTests(unittest.TestCase):
+    def test_confirmed_exit_classification_contains_only_numeric_pids(self):
+        error = chrome.m.ConfirmedExitedChromeDescendants([20, 10])
+        self.assertEqual(chrome.failure_detail(error, 1), {'reason':'confirmed_chrome_descendants_exited','pids':[10,20]})
+
     def test_verified_updater_is_labelled_separately_from_page_and_xpc_processes(self):
         snapshot={'identities':{20:{'executable':'/home/GoogleUpdater'}},
                   'chrome_external_roles':{20:'Chrome-started updater'}}

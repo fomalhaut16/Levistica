@@ -42,6 +42,8 @@ class Sampler:
         self.role_for = role_for or (lambda pid, root, snapshot: m.role(pid, root, snapshot['services']))
         self.content_role = content_role
         self.baseline = None
+        self.root_identity = None
+        self.confirmed_exits = []
         self.stable_since = None
         self.last_check = None
         self.last_context = None
@@ -50,16 +52,30 @@ class Sampler:
         self.attempts = 0
         self.sample = None
 
-    def tick(self, force=False, deadline=None):
+    def tick(self, force=False, deadline=None, *, allow_confirmed_exits=True):
         if not force and self.last_check is not None and self.clock() - self.last_check < 5:
             return
         deadline = min(self.clock() + 3, deadline) if deadline is not None else self.clock() + 3
         context = self.read_context(deadline)
         self.last_context = context
         require_context(context)
-        current = self.read_attribution(deadline)
+        try:
+            current = self.read_attribution(deadline)
+        except m.ConfirmedExitedChromeDescendants as error:
+            if (self.content_role != 'Renderer' or not allow_confirmed_exits or self.attempts
+                    or not error.pids or self.pid in error.pids
+                    or self.clock() > deadline or len(self.confirmed_exits) >= 64):
+                raise
+            self.confirmed_exits.append({'pids': list(error.pids), 'atMonotonic': self.clock()})
+            self.baseline = None
+            self.stable_since = None
+            self.last_check = self.clock()
+            self.changes += 1
+            return
         if self.pid not in current['identities']:
             raise ValueError('Missing root attribution')
+        if self.root_identity is not None and current['identities'][self.pid] != self.root_identity:
+            raise ValueError('Root identity changed')
         if self.baseline is None:
             self.stable_since = self.clock()
         else:
@@ -71,6 +87,8 @@ class Sampler:
                 self.changes += 1
         if self.clock() > deadline:
             raise TimeoutError('Attribution check exceeded deadline')
+        if self.root_identity is None:
+            self.root_identity = dict(current['identities'][self.pid])
         self.baseline = current
         self.last_check = self.clock()
         self.checks += 1
@@ -79,7 +97,7 @@ class Sampler:
         if self.attempts or self.sample is not None:
             raise ValueError('Only one capture is permitted')
         deadline = self.clock() + 3
-        self.tick(force=True, deadline=deadline)
+        self.tick(force=True, deadline=deadline, allow_confirmed_exits=False)
         stable = self.clock() - self.stable_since
         if stable < 60:
             raise ValueError('Attribution has not been stable for sixty seconds')
@@ -113,7 +131,7 @@ class Sampler:
         if self.sample is None:
             raise ValueError('No provisional footprint')
         old = self.baseline
-        self.tick(force=True)
+        self.tick(force=True, allow_confirmed_exits=False)
         if not m.attribution_change(old, self.baseline)[0]:
             raise ValueError('Attribution changed after capture')
 

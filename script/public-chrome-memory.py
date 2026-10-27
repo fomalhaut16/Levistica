@@ -90,6 +90,8 @@ def validate_packet(packet, stage, run_id):
 
 
 def failure_detail(error, root):
+    if isinstance(error, m.ConfirmedExitedChromeDescendants):
+        return {'reason': 'confirmed_chrome_descendants_exited', 'pids': list(error.pids)}
     if isinstance(error, OSError) and type(getattr(error, 'process_id', None)) is int:
         pid = error.process_id
         try:
@@ -229,7 +231,7 @@ def run(path):
         while time.monotonic() < deadline:
             verify()
             sampler.tick()
-            if 'identityDisplayDiagnostic' not in result:
+            if sampler.baseline is not None and 'identityDisplayDiagnostic' not in result:
                 result['identityDisplayDiagnostic'] = display_identity_counts(sampler.baseline)
                 sampler.tick(force=True)
             if not select.select([sys.stdin], [], [], .5)[0]:
@@ -281,7 +283,8 @@ def run(path):
         if result['valid']:
             result['sample'] = {**sampler.sample, 'valid': True}
         result['preparation'] = {'checks': sampler.checks, 'changes': sampler.changes,
-                                 'lastSystemContext': sampler.last_context}
+                                 'lastSystemContext': sampler.last_context,
+                                 'confirmedExitedChildReads': sampler.confirmed_exits}
         output = directory / 'chrome-memory-result.json'
         output.write_text(json.dumps(result, indent=2) + '\n')
         output.chmod(0o600)
