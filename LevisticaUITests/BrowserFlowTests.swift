@@ -1188,6 +1188,96 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testTabStatusReflectsKeepAndSleepInBothLayouts() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        app.buttons["toggleTabLayoutButton"].click()
+        let strip = app.scrollViews["horizontalTabList"]
+        XCTAssertTrue(strip.waitForExistence(timeout: 5))
+        let selected = strip.buttons.matching(NSPredicate(format: "label == %@", "Fixture one")).firstMatch
+        XCTAssertTrue(app.buttons["reloadButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue((selected.value as? String)?.contains("読み込み済み") == true)
+        pageMenu("このタブを保持", in: app)
+        XCTAssertTrue((selected.value as? String)?.contains("保持・読み込み済み") == true)
+        pageMenu("タブの保持を解除", in: app)
+        pageMenu("このタブを休眠…", in: app)
+        XCTAssertTrue(app.sheets.buttons["状態を破棄して休眠"].waitForExistence(timeout: 5))
+        app.sheets.buttons["状態を破棄して休眠"].click()
+        XCTAssertTrue(app.buttons["resumeSleepingTabButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue((selected.value as? String)?.contains("休眠中") == true)
+        XCTAssertTrue(attachWindowImage(app, name: "horizontal-sleep-status"))
+        app.buttons["toggleTabLayoutButton"].click()
+        let row = app.outlines.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "tab-")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertTrue((row.value as? String)?.contains("休眠中") == true)
+        XCTAssertTrue(attachWindowImage(app, name: "vertical-sleep-status"))
+        app.buttons["resumeSleepingTabButton"].click()
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+    }
+
+    @MainActor
+    func testCompactNavigationFitsBothTabLayoutsAndKeepsKeyboardAddressEditing() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        let window = app.windows["browser"]
+        let screen = try XCTUnwrap(NSScreen.main)
+        // Debug launches can inherit macOS's previous native fullscreen window state.
+        if abs(window.frame.width - screen.frame.width) <= 2 {
+            app.typeKey(.escape, modifierFlags: [])
+        }
+        XCTAssertTrue(attachWindowImage(app, name: "compact-before-resize", knownFrame: window.frame))
+        let before = window.frame
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -2, dy: -2))
+        corner.press(forDuration: 0.2, thenDragTo: corner.withOffset(CGVector(dx: 800 - before.width, dy: 600 - before.height)))
+        print("Compact resize frames: before=\(before); after=\(window.frame)")
+        XCTAssertTrue(attachWindowImage(app, name: "compact-after-resize", knownFrame: window.frame))
+        let resized = expectation(for: NSPredicate { _, _ in abs(window.frame.width - 800) <= 2 }, evaluatedWith: nil)
+        wait(for: [resized], timeout: 10)
+        let address = app.textFields["addressField"]
+        for horizontal in [false, true] {
+            if horizontal {
+                app.buttons["toggleTabLayoutButton"].click()
+                XCTAssertTrue(app.scrollViews["horizontalTabList"].waitForExistence(timeout: 5))
+            }
+            XCTAssertGreaterThanOrEqual(address.frame.width, 179)
+            XCTAssertTrue(address.isHittable)
+            for id in ["backButton", "forwardButton", "reloadButton", "toggleTabLayoutButton", "showHistoryButton", "showBookmarksButton"] {
+                let control = app.buttons[id]
+                XCTAssertTrue(control.exists)
+                XCTAssertFalse(control.frame.isEmpty)
+                XCTAssertTrue(window.frame.insetBy(dx: -2, dy: -2).contains(control.frame))
+                XCTAssertFalse(control.frame.intersects(address.frame))
+            }
+            app.activate()
+            app.typeKey("l", modifierFlags: .command)
+            waitForInputIndicator(in: app)
+            app.typeText("synthetic address draft")
+            waitForInputIndicator(in: app)
+            XCTAssertEqual(address.value as? String, "synthetic address draft")
+            address.typeKey(.escape, modifierFlags: [])
+            XCTAssertEqual(address.value as? String, base + "/one")
+            XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].exists)
+            XCTAssertTrue(attachWindowImage(app, name: horizontal ? "compact-horizontal" : "compact-vertical", knownFrame: window.frame))
+        }
+    }
+
+    @MainActor
     func testHorizontalHundredTabsSearchAndRestoreWithoutLoadingEveryPage() throws {
         continueAfterFailure = false
         executionTimeAllowance = 120
@@ -1204,6 +1294,11 @@ final class BrowserFlowTests: XCTestCase {
         app.buttons["toggleTabLayoutButton"].click()
         XCTAssertTrue(app.scrollViews["horizontalTabList"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["100タブ・読み込み済み1"].exists)
+        XCTAssertTrue(app.buttons["reloadButton"].waitForExistence(timeout: 5))
+        let loaded = app.scrollViews["horizontalTabList"].buttons.matching(NSPredicate(format: "label == %@", "Fixture two")).firstMatch
+        let deferred = app.scrollViews["horizontalTabList"].buttons.matching(NSPredicate(format: "label == %@", "Scale tab 002")).firstMatch
+        XCTAssertTrue((loaded.value as? String)?.contains("読み込み済み") == true)
+        XCTAssertTrue((deferred.value as? String)?.contains("未読込") == true)
         app.buttons["showTabListButton"].click()
         let search = app.textFields["tabSearchField"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
