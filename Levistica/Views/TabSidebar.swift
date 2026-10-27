@@ -41,8 +41,7 @@ struct TabSidebar: View {
                 )) {
                     ForEach(visibleTabs) { tab in
                         HStack {
-                            Image(systemName: tab.isKept ? "pin.fill" : (tab.isSleeping ? "moon.zzz" : (tab.page == nil ? "doc" : "globe")))
-                                .accessibilityLabel(tab.isKept ? "保持するタブ" : (tab.isSleeping ? "休眠中" : "ページ"))
+                            TabStatusIcon(tab: tab)
                             Text(tab.displayTitle).lineLimit(1)
                             if tab.page?.inputGuard.hasEditedInput == true {
                                 Image(systemName: "pencil").accessibilityLabel("入力操作あり")
@@ -57,6 +56,7 @@ struct TabSidebar: View {
                         .tag(tab.id)
                         .id(tab.id)
                         .accessibilityIdentifier("tab-\(tab.id)")
+                        .accessibilityValue(TabStatusIcon.description(for: tab))
                         .contextMenu {
                             TabContextMenu(session: session, tab: tab)
                         }
@@ -129,15 +129,18 @@ struct HorizontalTabBar: View {
                         ForEach(session.tabs) { tab in
                             HStack(spacing: 4) {
                                 Button { session.select(tab.id) } label: {
-                                    Label(tab.displayTitle,
-                                          systemImage: tab.isKept ? "pin.fill" : (tab.isSleeping ? "moon.zzz" : "globe"))
-                                        .lineLimit(1)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .contentShape(Rectangle())
+                                    HStack(spacing: 6) {
+                                        TabStatusIcon(tab: tab)
+                                        Text(tab.displayTitle).lineLimit(1)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityIdentifier("tab-\(tab.id)")
                                 .help(tab.displayTitle)
+                                .accessibilityLabel(tab.displayTitle)
+                                .accessibilityValue(TabStatusIcon.description(for: tab))
                                 .accessibilityAddTraits(tab.id == session.selectedID ? [.isSelected] : [])
                                 if tab.page?.inputGuard.hasEditedInput == true {
                                     Image(systemName: "pencil").accessibilityLabel("入力操作あり")
@@ -175,5 +178,37 @@ struct HorizontalTabBar: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
         .frame(height: 58)
+    }
+}
+
+
+private struct TabStatusIcon: View {
+    let tab: BrowserTab
+
+    static func description(for tab: BrowserTab) -> String {
+        let state: String
+        if tab.isSleeping { state = "休眠中" }
+        else if tab.page == nil { state = "未読込" }
+        else if tab.page?.isLoading == true { state = "読み込み中" }
+        else if tab.page?.failure != nil { state = "読み込みエラー" }
+        else { state = "読み込み済み" }
+        return tab.isKept ? "保持・" + state : state
+    }
+
+    private var symbol: String {
+        if tab.isKept { return "pin.fill" }
+        if tab.isSleeping { return "moon.zzz" }
+        if tab.page == nil { return "doc" }
+        if tab.page?.isLoading == true { return "arrow.triangle.2.circlepath" }
+        if tab.page?.failure != nil { return "exclamationmark.triangle" }
+        return "globe"
+    }
+
+    var body: some View {
+        Image(systemName: symbol)
+            .frame(width: 16)
+            .foregroundStyle(tab.isKept ? Color.accentColor : Color.secondary)
+            .accessibilityHidden(true)
+            .help(Self.description(for: tab))
     }
 }
