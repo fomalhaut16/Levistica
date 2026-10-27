@@ -109,6 +109,18 @@ class SamplingTests(unittest.TestCase):
             self.sampler.capture()
         self.assertEqual(self.calls, 0)
 
+    def test_explicit_chrome_roles_share_the_same_sampling_checks(self):
+        previous = self.sampler
+        self.sampler = memory.Sampler(1, previous.read_attribution, previous.read_context,
+                                     previous.read_values, clock=lambda: self.now,
+                                     role_for=lambda pid, root, state: 'UI' if pid == root else 'Renderer',
+                                     content_role='Renderer')
+        self.settle(60)
+        self.sampler.capture()
+        self.assertEqual([row['role'] for row in self.sampler.sample['processes']], ['UI', 'Renderer'])
+        self.assertEqual(self.sampler.sample['sumAttributedPhysicalFootprintsBytes'], 300)
+        self.assertFalse(self.sampler.sample['valid'])
+
 
 class FinalizationTests(unittest.TestCase):
     def fixture(self):
