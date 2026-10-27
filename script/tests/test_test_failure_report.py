@@ -1,5 +1,9 @@
 import importlib.util
+import json
 import pathlib
+import subprocess
+import sys
+import tempfile
 import unittest
 
 spec = importlib.util.spec_from_file_location('failure_report', pathlib.Path(__file__).parents[1] / 'report-test-failures.py')
@@ -8,6 +12,49 @@ spec.loader.exec_module(report)
 
 
 class TestFailureReportTests(unittest.TestCase):
+    def runner_timeout(self):
+        return {'targetName': 'LevisticaUITests',
+                'testIdentifierString': 'LevisticaUITests-Runner (123) encountered an error',
+                'failureText': 'The test runner failed to initialize for UI testing. '
+                               '(Underlying Error: Timed out while enabling automation mode.)'}
+
+    def test_runner_timeout_is_infrastructure_without_a_product_verdict(self):
+        result = report.failure_classification({'passedTests': 0, 'failedTests': 1,
+            'totalTestCount': 1, 'testFailures': [self.runner_timeout()]})
+        self.assertEqual(result['classification'], 'ui_automation_initialization_timeout')
+        self.assertEqual(result['appBehaviorVerdict'], 'not_determined')
+        self.assertFalse(result['successfulExecutionConfirmed'])
+
+    def test_matching_words_in_an_ordinary_assertion_do_not_hide_the_test_failure(self):
+        failure = {**self.runner_timeout(), 'testIdentifierString': 'ReportTests/quotedMessage()'}
+        result = report.failure_classification({'testFailures': [failure]})
+        self.assertEqual(result['classification'], 'test_failure')
+
+    def test_mixed_runner_and_test_failures_preserve_both_categories(self):
+        result = report.failure_classification({'testFailures': [self.runner_timeout(),
+            {'targetName': 'LevisticaTests', 'testIdentifierString': 'Tests/check()', 'failureText': 'assertion'}]})
+        self.assertEqual(result['classification'], 'mixed_runner_and_test_failure')
+
+    def test_machine_report_never_copies_private_metadata_or_invalid_counts(self):
+        result = report.failure_classification({'passedTests': True, 'failedTests': -1,
+            'totalTestCount': '1', 'testFailures': [self.runner_timeout()],
+            'devicesAndConfigurations': ['private'], 'environment': 'private', 'attachments': ['private']})
+        self.assertTrue(all(value is None for value in result['testCounts'].values()))
+        self.assertNotIn('private', json.dumps(result))
+        self.assertNotIn('failureText', json.dumps(result))
+
+    def test_cli_writes_only_the_bounded_classification_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            (path / 'summary.json').write_text(json.dumps({'testFailures': [self.runner_timeout()]}))
+            subprocess.run([sys.executable, str(pathlib.Path(report.__file__)), str(path / 'summary.json'),
+                            '--classification-json', str(path / 'classification.json')],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=5)
+            result = json.loads((path / 'classification.json').read_text())
+            self.assertEqual(result['classification'], 'ui_automation_initialization_timeout')
+            self.assertEqual((path / 'classification.json').stat().st_mode & 0o777, 0o600)
+            self.assertFalse((path / 'classification.json.partial').exists())
+
     def test_assertion_and_identifier_are_visible_without_other_result_data(self):
         text = report.failure_report({
             'passedTests': 135, 'failedTests': 1, 'totalTestCount': 136,
