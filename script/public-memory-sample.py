@@ -30,12 +30,17 @@ def require_context(context):
 
 
 class Sampler:
-    def __init__(self, pid, read_attribution, read_context, read_values, clock=time.monotonic):
+    def __init__(self, pid, read_attribution, read_context, read_values, clock=time.monotonic,
+                 *, role_for=None, content_role='WebContent'):
+        if content_role not in ('WebContent', 'Renderer') or (role_for is not None and not callable(role_for)):
+            raise ValueError('Expected an explicit page-process role provider')
         self.pid = pid
         self.read_attribution = read_attribution
         self.read_context = read_context
         self.read_values = read_values
         self.clock = clock
+        self.role_for = role_for or (lambda pid, root, snapshot: m.role(pid, root, snapshot['services']))
+        self.content_role = content_role
         self.baseline = None
         self.stable_since = None
         self.last_check = None
@@ -82,8 +87,8 @@ class Sampler:
         context_before = self.read_context(deadline)
         require_context(context_before)
         pids = sorted(before['identities'])
-        if not any(m.role(pid, self.pid, before['services']) == 'WebContent' for pid in pids):
-            raise ValueError('A browser sample must include attributed WebContent')
+        if not any(self.role_for(pid, self.pid, before) == self.content_role for pid in pids):
+            raise ValueError('Required page-process role is missing: ' + self.content_role)
         started = self.clock()
         self.attempts += 1
         document = self.read_values(pids, deadline)
@@ -99,7 +104,7 @@ class Sampler:
                        'stableAttributionSeconds': stable, 'attributionChecks': self.checks,
                        'attributionChanges': self.changes,
                        'systemBefore': context_before, 'systemAfter': context_after,
-                       'processes': [{'pid': pid, 'role': m.role(pid, self.pid, before['services']),
+                       'processes': [{'pid': pid, 'role': self.role_for(pid, self.pid, before),
                                       **before['identities'][pid], 'physicalFootprintBytes': values[pid]}
                                      for pid in pids],
                        'sumAttributedPhysicalFootprintsBytes': sum(values.values())}

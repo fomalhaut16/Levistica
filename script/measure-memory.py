@@ -6,6 +6,7 @@ launchctl's human-readable format is not a stable API: parsing fails closed.
 Raw launchctl output can contain environment values and is never saved or printed.
 """
 import argparse
+import ctypes
 import datetime
 import hashlib
 import functools
@@ -16,6 +17,7 @@ import pathlib
 import plistlib
 import re
 import statistics
+import sys
 import subprocess
 import tempfile
 import time
@@ -76,18 +78,47 @@ def parse_domain(text, pid, app, creator_name="Levistica"):
     return services
 
 
+@functools.lru_cache(maxsize=1)
+def _pidpath_function():
+    if sys.platform != "darwin":
+        raise OSError("Kernel executable lookup requires macOS")
+    function = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True).proc_pidpath
+    function.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+    function.restype = ctypes.c_int
+    return function
+
+
+def process_executable_path(pid):
+    """Read the public kernel path, never mutable argv[0] or ps display names."""
+    if type(pid) is not int or pid <= 0:
+        raise ValueError("Expected a positive process ID")
+    buffer = ctypes.create_string_buffer(4096)  # PROC_PIDPATHINFO_MAXSIZE
+    ctypes.set_errno(0)
+    length = _pidpath_function()(pid, buffer, len(buffer))
+    if length <= 0:
+        error = OSError(ctypes.get_errno(), "Kernel executable lookup failed")
+        error.process_id = pid
+        raise error
+    path = buffer.value.decode("utf-8", errors="strict")
+    if length >= len(buffer) or not pathlib.Path(path).is_absolute():
+        raise ValueError("Invalid kernel executable path")
+    return path
+
+
 def identities(pids, query=None):
     query = run if query is None else query
-    text = query(["/bin/ps", "-p", ",".join(map(str, pids)), "-o", "pid=,lstart=,comm="])
+    text = query(["/bin/ps", "-p", ",".join(map(str, pids)), "-o", "pid=,lstart="])
     result = {}
     for line in text.splitlines():
-        fields = line.strip().split(None, 6)
-        if len(fields) != 7:
+        fields = line.strip().split()
+        if len(fields) != 6 or int(fields[0]) in result:
             raise ValueError("Unrecognized ps identity row")
-        result[int(fields[0])] = {"started": " ".join(fields[1:6]), "executable": fields[6]}
+        result[int(fields[0])] = {"started": " ".join(fields[1:6])}
     if set(result) != set(pids):
         raise ValueError("Process identity set changed; missing PIDs: " +
                          ",".join(map(str, sorted(set(pids) - set(result)))))
+    for pid in result:
+        result[pid]["executable"] = process_executable_path(pid)
     return result
 
 
@@ -113,6 +144,66 @@ def live_descendants(rows, root):
     return members - exited, exited
 
 
+def code_file_stamp(path):
+    value = path.stat()
+    return {"device": value.st_dev, "inode": value.st_ino,
+            "size": value.st_size, "modifiedNS": value.st_mtime_ns}
+
+
+def signing_metadata(path, deadline=None):
+    remaining = 2 if deadline is None else min(2, deadline - time.monotonic())
+    if remaining <= 0:
+        raise TimeoutError("Signing inspection deadline expired")
+    result = subprocess.run(["/usr/bin/codesign", "--display", "--verbose=4", str(path)],
+                            capture_output=True, text=True, timeout=remaining)
+    if result.returncode:
+        raise ValueError("Signing metadata unavailable")
+    fields = {}
+    for name in ("Identifier", "TeamIdentifier"):
+        match = re.search(r"^" + name + r"=([A-Za-z0-9_.-]{1,160})$", result.stderr, re.M)
+        if not match or match[1] == "not set":
+            raise ValueError("Signing metadata unavailable")
+        fields[name] = match[1]
+    return fields
+
+
+def chrome_updater_identity(executable, app, query, deadline=None):
+    """Accept only the signed per-user updater, never arbitrary same-team code.
+
+    The caller must first prove that this PID is a live descendant of its owned
+    Chrome. This function neither starts nor stops the updater or reads profiles.
+    """
+    path = pathlib.Path(executable)
+    root = pathlib.Path.home() / "Library/Application Support/Google/GoogleUpdater"
+    try:
+        parts = path.resolve().relative_to(root.resolve()).parts
+    except ValueError:
+        return None
+    if (len(parts) != 5 or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", parts[0])
+            or parts[1:] != ("GoogleUpdater.app", "Contents", "MacOS", "GoogleUpdater")):
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Owned updater payload unavailable")
+    stamp = code_file_stamp(path)
+    bundle = path.parents[2]
+    info = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
+    if info.get("CFBundleIdentifier") != "com.google.GoogleUpdater" or info.get("CFBundleExecutable") != "GoogleUpdater":
+        raise ValueError("Owned updater bundle identity changed")
+    # Identify Chrome's signed executable, not the health of its entire bundle.
+    # Finder metadata may fail strict resource validation without changing code.
+    # The updater itself must still pass strict full-bundle validation.
+    chrome_executable = app / "Contents/MacOS/Google Chrome"
+    query(["/usr/bin/codesign", "--verify", "--ignore-resources", "-R", "=anchor apple generic", str(chrome_executable)])
+    query(["/usr/bin/codesign", "--verify", "--strict", "-R", "=anchor apple generic", str(bundle)])
+    chrome, updater = signing_metadata(chrome_executable, deadline), signing_metadata(bundle, deadline)
+    if (chrome["Identifier"] != "com.google.Chrome" or updater["Identifier"] != "com.google.GoogleUpdater"
+            or updater["TeamIdentifier"] != chrome["TeamIdentifier"]):
+        raise ValueError("Owned updater signing identity changed")
+    if code_file_stamp(path) != stamp:
+        raise ValueError("Owned updater payload changed during verification")
+    return {"role": "Chrome-started updater", "codeFileStamp": stamp}
+
+
 def snapshot(pid, app=APP, binary=BINARY, chrome_profile=None, deadline=None):
     def query(args):
         if deadline is None:
@@ -133,34 +224,68 @@ def snapshot(pid, app=APP, binary=BINARY, chrome_profile=None, deadline=None):
             raise ValueError("Service PID changed during attribution")
     process_ids = sorted({pid, *(s["pid"] for s in services)})
     exited = set()
+    checked_identity = {}
+    external_helpers = {}
     if chrome_profile:
         root_args = query(["/bin/ps", "-p", str(pid), "-o", "args="])
         if not has_path_argument(root_args, "--user-data-dir=", chrome_profile):
             raise ValueError("Chrome root does not use the isolated profile")
         rows = []
         detached = []
-        for line in query(["/bin/ps", "-axo", "pid=,ppid=,stat=,comm="]).splitlines():
+        for line in query(["/bin/ps", "-axo", "pid=,ppid=,stat=,ucomm="]).splitlines():
             fields = line.strip().split(None, 3)
             if len(fields) != 4:
                 raise ValueError("Unrecognized process table")
             child, parent = map(int, fields[:2])
             rows.append((child, parent, fields[2]))
-            if not fields[2].startswith("Z") and fields[3].startswith(str(app) + "/") and fields[3].endswith("/chrome_crashpad_handler"):
-                args = query(["/bin/ps", "-p", str(child), "-o", "args="])
-                if has_path_argument(args, "--database=", chrome_profile / "Crashpad"):
-                    detached.append(child)
+            if not fields[2].startswith("Z") and fields[3].startswith("chrome_crashpad"):
+                uid = query(["/bin/ps", "-p", str(child), "-o", "uid="]).strip()
+                if uid != str(os.getuid()):
+                    continue
+                # Filter unrelated Crashpad instances before executable lookup:
+                # an older browser may still run a removed/upgraded executable.
+                args = query(["/bin/ps", "-ww", "-p", str(child), "-o", "args="])
+                if not has_path_argument(args, "--database=", chrome_profile / "Crashpad"):
+                    continue
+                candidate = identities([child], query=query)[child]
+                path = pathlib.Path(candidate["executable"]).resolve()
+                if not path.is_relative_to(app.resolve()) or path.name != "chrome_crashpad_handler":
+                    raise ValueError("Owned Crashpad executable is outside the expected Chrome app")
+                detached.append(child)
+                checked_identity[child] = candidate
         children, exited = live_descendants(rows, pid)
         child_identity = identities(sorted(children), query=query)
-        unexpected = [item["executable"] for item in child_identity.values()
-                      if not item["executable"].startswith(str(app) + "/")]
+        unexpected = []
+        verified_paths = {}
+        for child, item in child_identity.items():
+            executable = pathlib.Path(item["executable"])
+            if executable.resolve().is_relative_to(app.resolve()):
+                continue
+            if item["executable"] not in verified_paths:
+                verified_paths[item["executable"]] = chrome_updater_identity(executable, app, query, deadline)
+            verified = verified_paths[item["executable"]]
+            if verified is None:
+                unexpected.append(item["executable"])
+                continue
+            if query(["/bin/ps", "-p", str(child), "-o", "uid="]).strip() != str(os.getuid()):
+                raise ValueError("Owned updater belongs to another user")
+            external_helpers[child] = verified
         if unexpected:
             raise ValueError("Unexpected Chrome descendant executable: " + repr(unexpected))
+        checked_identity.update(child_identity)
         process_ids = sorted(set(process_ids) | children | set(detached))
     identity = identities(process_ids, query=query)
+    if any(identity.get(child) != item for child, item in checked_identity.items()):
+        raise ValueError("Chrome identity changed during attribution")
+    for child, verified in external_helpers.items():
+        if code_file_stamp(pathlib.Path(identity[child]["executable"])) != verified["codeFileStamp"]:
+            raise ValueError("Owned updater payload changed during attribution")
+        identity[child]["codeFileStamp"] = verified["codeFileStamp"]
     if pathlib.Path(identity[pid]["executable"]).resolve() != binary.resolve():
         raise ValueError("PID no longer refers to this checkout's Release app")
     return {"services": sorted(services, key=lambda s: s["service"]), "identities": identity,
-            "exited_descendant_pids": sorted(exited)}
+            "exited_descendant_pids": sorted(exited),
+            "chrome_external_roles": {child: item["role"] for child, item in external_helpers.items()}}
 
 
 def metrics(document, expected):
