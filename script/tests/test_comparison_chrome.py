@@ -30,11 +30,39 @@ class ComparisonChromeTests(unittest.TestCase):
             with patch.object(chrome.m, 'ROOT', root):
                 return chrome.workload_urls(first or state['urls']['1'], state['expected_tabs'], path)
 
-    def test_fresh_five_and_twenty_cross_site_sets_are_accepted(self):
-        for count in [5, 20]:
+    def test_fresh_five_twenty_and_fifty_cross_site_sets_are_accepted(self):
+        for count in [5, 20, 50]:
             with self.subTest(count=count):
                 state = self.state(count)
                 self.assertEqual(self.urls(state), [state['urls'][str(n)] for n in range(1, count + 1)])
+
+    def test_fifty_requires_typed_counters_and_the_last_assigned_origin(self):
+        for value in [True, 50.0, '50', 100, None]:
+            with self.subTest(count=value), self.assertRaises(ValueError):
+                chrome.workload_urls('http://127.0.0.1:12345/document', value)
+        for field, value in [('loads', False), ('expected_tabs', 50.0)]:
+            state = self.state(50)
+            state[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError): self.urls(state)
+        for field, value in [('urls', 'http://document-51.localhost:12345/document/50'),
+                             ('origins', 'http://document-1.localhost:12345'),
+                             ('document_hashes', 'invalid'), ('stream_connections', False)]:
+            state = self.state(50)
+            state[field]['50'] = value
+            with self.subTest(field=field), self.assertRaises(ValueError): self.urls(state)
+
+    def test_expired_preparation_does_not_forward_another_url(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state = self.state(50)
+            ready = pathlib.Path(temporary) / 'state.json'
+            ready.write_text(json.dumps(state))
+            with patch.object(chrome.time, 'monotonic', side_effect=[0, 181]), \
+                    patch.object(chrome.subprocess, 'run') as send, \
+                    patch.object(chrome, 'verified_marker') as verify:
+                with self.assertRaisesRegex(ValueError, 'bounded time'):
+                    chrome.prepare_tabs({'profile': temporary}, list(state['urls'].values()), ready)
+                send.assert_not_called()
+                verify.assert_not_called()
 
     def test_reloaded_reconnected_or_used_sets_are_rejected(self):
         for key, value in [('loads', 1), ('invalid_reason', 'synthetic'),
@@ -112,6 +140,21 @@ class ComparisonChromeTests(unittest.TestCase):
                     patch.object(chrome.os, 'kill') as kill:
                 chrome.stop(profile)
                 kill.assert_called_once_with(123, chrome.signal.SIGTERM)
+
+    def test_kernel_disappearance_after_sigterm_completes_without_another_signal(self):
+        profile = pathlib.Path('/synthetic-owned-profile')
+        identity = {'started': 'original start', 'executable': str(chrome.binary)}
+        marker = {'pid': 123, 'profile': str(profile), 'identity': identity}
+        with patch.object(chrome, 'verified_marker', return_value=marker), \
+                patch.object(chrome.m, 'identities', side_effect=ProcessLookupError('exited')), \
+                patch.object(chrome.os, 'kill') as kill:
+            chrome.stop(profile)
+            kill.assert_called_once_with(123, chrome.signal.SIGTERM)
+        with patch.object(chrome, 'verified_marker', side_effect=ProcessLookupError('gone before verification')), \
+                patch.object(chrome.os, 'kill') as kill:
+            with self.assertRaises(ProcessLookupError):
+                chrome.stop(profile)
+            kill.assert_not_called()
 
     def test_verification_targets_recorded_pid_even_during_another_forwarder(self):
         with tempfile.TemporaryDirectory() as temporary:
