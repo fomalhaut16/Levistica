@@ -263,6 +263,65 @@ struct BrowserSessionTests {
         return folder.appendingPathComponent("browser-preferences.json")
     }
 
+    @Test func tabLayoutPersistsWithoutChangingOtherChoicesOrPageOwnership() throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let session = BrowserSession(dataStore: .nonPersistent(), preferencesFileURL: file)
+        let tab = session.activeTab
+        // A presentation preference must not replace the existing runtime.
+        let page = PageRuntime(dataStore: .nonPersistent())
+        tab.page = page
+        defer { page.stop() }
+        tab.addressDraft = "unfinished address"
+        tab.hasEditedAddress = true
+        let ids = session.tabs.map(\.id)
+        #expect(session.preferences.saveNewTabPage("https://example.org/"))
+        #expect(session.preferences.saveSearchEngine(.google))
+        #expect(session.preferences.tabLayout == .vertical)
+        for layout in [BrowserPreferences.TabLayout.horizontal, .vertical, .horizontal] {
+            #expect(session.preferences.saveTabLayout(layout))
+            let restored = BrowserPreferences(fileURL: file)
+            #expect(restored.tabLayout == layout)
+            #expect(restored.searchEngine == .google)
+            #expect(restored.newTabURL?.absoluteString == "https://example.org/")
+            #expect(session.tabs.map(\.id) == ids && session.selectedID == tab.id)
+            #expect(tab.page === page && tab.addressDraft == "unfinished address" && tab.hasEditedAddress)
+        }
+        #expect(session.preferences.saveSearchEngine(.duckDuckGo))
+        #expect(session.preferences.saveNewTabPage(""))
+        #expect(BrowserPreferences(fileURL: file).tabLayout == .horizontal)
+        #expect(BrowserPreferences().tabLayout == .vertical)
+    }
+
+    @Test(arguments: [#""diagonal""#, "17", "[]"])
+    func unknownTabLayoutPreservesOriginalSettings(_ value: String) throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let original = Data((#"{"version":1,"newTabURL":"https://example.org/","tabLayout":\#(value)}"#).utf8)
+        try original.write(to: file)
+        let preferences = BrowserPreferences(fileURL: file)
+        #expect(!preferences.canSave)
+        #expect(!preferences.saveTabLayout(.horizontal))
+        #expect(!preferences.saveSearchEngine(.google))
+        #expect(try Data(contentsOf: file) == original)
+    }
+
+    @Test func failedLayoutSaveRetainsPreviousSettings() throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let preferences = BrowserPreferences(fileURL: file)
+        #expect(preferences.saveNewTabPage("https://example.org/"))
+        #expect(preferences.saveSearchEngine(.google))
+        let retained = file.appendingPathExtension("previous")
+        try FileManager.default.moveItem(at: file, to: retained)
+        let before = try Data(contentsOf: retained)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        #expect(!preferences.saveTabLayout(.horizontal))
+        #expect(preferences.tabLayout == .vertical && preferences.searchEngine == .google)
+        #expect(preferences.newTabURL?.absoluteString == "https://example.org/")
+        #expect(try Data(contentsOf: retained) == before)
+    }
+
     @Test func oldPreferencesKeepTheirNewTabPageAndDefaultSearch() throws {
         let file = try preferencesFile()
         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
@@ -270,6 +329,7 @@ struct BrowserSessionTests {
         try original.write(to: file)
         let preferences = BrowserPreferences(fileURL: file)
         #expect(preferences.searchEngine == .duckDuckGo && preferences.canSave)
+        #expect(preferences.tabLayout == .vertical)
         #expect(preferences.newTabURL?.absoluteString == "https://example.org/")
         #expect(try Data(contentsOf: file) == original)
         #expect(preferences.saveSearchEngine(.google))

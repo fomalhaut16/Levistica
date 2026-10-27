@@ -48,6 +48,19 @@ private struct GeneralPreferencesView: View {
                 .disabled(!preferences.canSave)
                 Text("URL欄に検索語を入力してReturnを押すと、選んだ検索先を開きます。入力中の候補取得は行いません。新規タブのページや開いているタブは変わりません。")
                     .font(.callout).foregroundStyle(.secondary)
+                Divider()
+                Picker("タブの配置", selection: Binding(
+                    get: { preferences.tabLayout },
+                    set: { _ = preferences.saveTabLayout($0) }
+                )) {
+                    ForEach(BrowserPreferences.TabLayout.allCases, id: \.self) { layout in
+                        Text(layout.displayName).tag(layout)
+                    }
+                }
+                .accessibilityIdentifier("tabLayoutPicker")
+                .disabled(!preferences.canSave)
+                Text("配置を切り替えても、タブの並びと表示中のページを保ちます。横タブでは一覧ボタンからタブを検索できます。")
+                    .font(.callout).foregroundStyle(.secondary)
                 if let notice = preferences.notice { Text(notice).accessibilityIdentifier("newTabPageNotice") }
                 if !preferences.isPersistent { Text("この起動だけの設定です。終了すると消えます。").font(.caption) }
             }

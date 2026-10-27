@@ -3,14 +3,21 @@ import Observation
 
 @MainActor @Observable
 final class BrowserPreferences {
+    enum TabLayout: String, Codable, CaseIterable {
+        case vertical, horizontal
+        var displayName: String { self == .vertical ? "縦タブ" : "横タブ" }
+    }
+
     private struct Saved: Codable {
         let version: Int
         let newTabURL: String?
         let searchEngine: SearchEngine?
+        let tabLayout: TabLayout?
     }
     private let fileURL: URL?
     private(set) var newTabURL: URL?
     private(set) var searchEngine: SearchEngine = .duckDuckGo
+    private(set) var tabLayout: TabLayout = .vertical
     private(set) var canSave = true
     private(set) var notice: String?
     var isPersistent: Bool { fileURL != nil }
@@ -34,6 +41,7 @@ final class BrowserPreferences {
                 newTabURL = url
             }
             searchEngine = saved.searchEngine ?? .duckDuckGo
+            tabLayout = saved.tabLayout ?? .vertical
         } catch {
             canSave = false
             notice = "一般設定を読み込めませんでした。元の保存ファイルを残しています。"
@@ -66,18 +74,25 @@ final class BrowserPreferences {
             notice = "HTTPまたはHTTPSのURLを入力してください。空欄にすると空白ページになります。"
             return false
         }
-        return save(page: page, engine: searchEngine,
+        return save(page: page, engine: searchEngine, layout: tabLayout,
                     message: "設定を保存しました。次に追加するタブから適用します。")
     }
 
     @discardableResult
     func saveSearchEngine(_ engine: SearchEngine) -> Bool {
         guard canSave else { return false }
-        return save(page: newTabURL, engine: engine,
+        return save(page: newTabURL, engine: engine, layout: tabLayout,
                     message: "検索先を保存しました。次にURL欄で検索するときから適用します。")
     }
 
-    private func save(page: URL?, engine: SearchEngine, message: String) -> Bool {
+    @discardableResult
+    func saveTabLayout(_ layout: TabLayout) -> Bool {
+        guard canSave else { return false }
+        return save(page: newTabURL, engine: searchEngine, layout: layout,
+                    message: "タブの配置を保存しました。")
+    }
+
+    private func save(page: URL?, engine: SearchEngine, layout: TabLayout, message: String) -> Bool {
         do {
             if let fileURL {
                 let manager = FileManager.default
@@ -87,7 +102,7 @@ final class BrowserPreferences {
                    attributes[.type] as? FileAttributeType != .typeRegular { throw CocoaError(.fileWriteUnknown) }
                 let temporary = fileURL.deletingLastPathComponent().appendingPathComponent(".browser-preferences-" + UUID().uuidString)
                 defer { try? manager.removeItem(at: temporary) }
-                let data = try JSONEncoder().encode(Saved(version: 1, newTabURL: page?.absoluteString, searchEngine: engine))
+                let data = try JSONEncoder().encode(Saved(version: 1, newTabURL: page?.absoluteString, searchEngine: engine, tabLayout: layout))
                 guard manager.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
                     throw CocoaError(.fileWriteUnknown)
                 }
@@ -97,6 +112,7 @@ final class BrowserPreferences {
             }
             newTabURL = page
             searchEngine = engine
+            tabLayout = layout
             notice = message
             return true
         } catch {

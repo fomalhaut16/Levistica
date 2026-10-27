@@ -8,9 +8,19 @@ struct BrowserRootView: View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 HSplitView {
-                    TabSidebar(session: session)
-                    tabContent(session.activeTab)
-                        .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
+                    if session.preferences.tabLayout == .vertical {
+                        TabSidebar(session: session)
+                    }
+                    // Keep the content in the same structural slot across layout changes.
+                    // Only the tab controls change; the session retains the page runtime.
+                    VStack(spacing: 0) {
+                        if session.preferences.tabLayout == .horizontal {
+                            HorizontalTabBar(session: session)
+                            Divider()
+                        }
+                        tabContent(session.activeTab)
+                    }
+                    .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
                 }
                 DownloadShelf(manager: session.downloads)
             }
