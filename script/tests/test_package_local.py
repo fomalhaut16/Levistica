@@ -130,6 +130,32 @@ class PackagePipelineTests(unittest.TestCase):
         self.assertEqual(len(list(self.root.glob('.local/packages/*/failure.json'))), 1)
         self.assertEqual(p.bundles.tree_digest(self.app), self.original)
 
+    def test_failed_signature_has_no_success_manifest(self):
+        original_run = self.run_command
+        def reject_signature(command, **kwargs):
+            if command[0] == '/usr/bin/codesign':
+                raise p.subprocess.CalledProcessError(1, command)
+            original_run(command, **kwargs)
+        with patch.object(self, 'run_command', side_effect=reject_signature):
+            with self.assertRaises(p.subprocess.CalledProcessError): self.invoke()
+        self.assertEqual(list(self.root.glob('.local/packages/*/manifest.json')), [])
+        self.assertEqual(list(self.root.glob('.local/packages/*/Levistica-*.zip')), [])
+        failure = json.loads(next(self.root.glob('.local/packages/*/failure.json')).read_text())
+        self.assertEqual(failure['phase'], 'verify_roundtrip')
+
+    def test_invalid_zip_is_rejected_before_extraction(self):
+        with patch.object(p, 'validate_zip', side_effect=ValueError('injected invalid ZIP')):
+            with self.assertRaises(ValueError): self.invoke()
+        self.assertEqual(len(self.commands), 1)
+        self.assertEqual(list(self.root.glob('.local/packages/*/unpacked')), [])
+
+    def test_symlinked_archive_parent_rejected(self):
+        linked = self.root / 'linked'
+        linked.symlink_to(self.root / '.local/archives', target_is_directory=True)
+        self.archive = linked / 'local-abcdef12/Levistica.xcarchive'
+        with self.assertRaises(ValueError): self.invoke()
+        self.assertEqual(self.commands, [])
+
     def test_hardlink_rejected_before_any_external_command(self):
         os.link(self.app / 'Contents/MacOS/Levistica', self.root / 'hardlink')
         with self.assertRaises(ValueError): self.invoke()
