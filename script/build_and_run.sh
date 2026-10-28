@@ -39,10 +39,10 @@ case "$PERSIST_METADATA" in 0|1) ;; *) echo 'MEASUREMENT_PERSIST_METADATA must b
 if [[ "$PERSIST_METADATA" == 1 && ( "$MEASUREMENT" != 1 || -z "$STORE_ID" ) ]]; then
     echo 'Persistent metadata requires Measurement and an owned store UUID' >&2; exit 2
 fi
-case "$MODE" in run|--build|--verify|--debug|--logs|--telemetry|--archive-local) ;; *) echo "usage: $0 [--build|--verify|--debug|--logs|--telemetry|--archive-local]" >&2; exit 2;; esac
+case "$MODE" in run|--build|--verify|--debug|--logs|--telemetry|--archive-local|--package-local) ;; *) echo "usage: $0 [--build|--verify|--debug|--logs|--telemetry|--archive-local|--package-local]" >&2; exit 2;; esac
 case "$CONFIGURATION" in Debug|Release) ;; *) echo 'CONFIGURATION must be Debug or Release' >&2; exit 2;; esac
 ARCHIVE_LOCAL=0
-if [[ "$MODE" == --archive-local ]]; then
+if [[ "$MODE" == --archive-local || "$MODE" == --package-local ]]; then
     if [[ "$CONFIGURATION" != Release || "$PROFILE" != 0 || "$MEASUREMENT" != 0 || "$MALLOC_STACKS" != 0 || "${LEVISTICA_EPHEMERAL:-0}" != 0 || -n "$STORE_ID" || "$PERSIST_METADATA" != 0 || -n "${LEVISTICA_SESSION_TEST_ID:-}" ]]; then
         echo 'Local archiving requires ordinary Release without test or diagnostic flags' >&2
         exit 2
@@ -215,6 +215,11 @@ fi
 echo "Built $APP_BUNDLE"
 case "$MODE" in
     --build) exit 0 ;;
+    --package-local)
+        echo "Local archive: $ARCHIVE_PATH"
+        python3 "$ROOT_DIR/script/package-local.py" --archive "$ARCHIVE_PATH"
+        echo 'Local validation only; Developer ID distribution and notarization are not performed.'
+        exit 0 ;;
     --archive-local)
         echo "Local archive: $ARCHIVE_PATH"
         echo 'Local validation only; Developer ID distribution and notarization are not performed.'
