@@ -159,6 +159,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.path == "/redirect-tls":
+            self.fixture_redirect(302, self.server.fixture_tls_url + "/two")
+            return
         if self.path in ["/redirect-two", "/redirect-download", "/redirect-failure"]:
             target = {"/redirect-two": "/two", "/redirect-download": "/download",
                       "/redirect-failure": self.server.fixture_failure_url + "/failure"}[self.path]
@@ -610,6 +613,7 @@ def main():
     tls_server = FixtureHTTPServer(("127.0.0.1", 0), Handler)
     for fixture_server in (server, tls_server):
         fixture_server.fixture_failure_url = f"http://127.0.0.1:{failed.server_address[1]}"
+        fixture_server.fixture_tls_url = f"https://127.0.0.1:{tls_server.server_port}"
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(sys.argv[2], sys.argv[3])
     tls_server.socket = context.wrap_socket(tls_server.socket, server_side=True)

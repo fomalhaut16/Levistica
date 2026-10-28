@@ -35,6 +35,53 @@ struct BrowserSessionTests {
         #expect(child.webView.configuration.websiteDataStore.isPersistent == false)
     }
 
+    @Test(arguments: [false, true])
+    func invalidTLSCannotCommitRecordHistoryOrBypassTrustOnRetry(redirected: Bool) async throws {
+        func fixture(_ key: String, scheme: String) throws -> URL {
+            let raw = try #require(ProcessInfo.processInfo.environment[key])
+            let url = try #require(URL(string: raw))
+            try #require(url.scheme == scheme && url.host == "127.0.0.1" && url.port != nil
+                         && url.user == nil && url.password == nil && url.query == nil && url.fragment == nil
+                         && (url.path.isEmpty || url.path == "/"))
+            return url
+        }
+        let http = try fixture("LEVISTICA_FIXTURE_URL", scheme: "http")
+        let tls = try fixture("LEVISTICA_TLS_FIXTURE_URL", scheme: "https").appendingPathComponent("two")
+        let initial = http.appendingPathComponent("one")
+        let destination = redirected ? http.appendingPathComponent("redirect-tls") : tls
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        var visits: [URL] = []
+        runtime.onVisit = { url, _, _ in visits.append(url) }
+        defer { runtime.onVisit = nil; runtime.stop() }
+        runtime.load(initial)
+        let loaded = ContinuousClock.now + .seconds(10)
+        while runtime.webView.title != "Fixture one" || runtime.webView.isLoading || visits.isEmpty,
+              ContinuousClock.now < loaded { try await Task.sleep(for: .milliseconds(20)) }
+        try #require(runtime.webView.title == "Fixture one" && visits == [initial])
+        for attempt in 0..<2 {
+            if attempt == 0 { runtime.load(destination) } else { runtime.retry() }
+            let deadline = ContinuousClock.now + .seconds(15)
+            while runtime.failure == nil, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            let failure = try #require(runtime.failure, "TLS rejection did not reach the browser")
+            #expect(failure.contains("安全な接続"))
+            #expect(runtime.url == tls)
+            #expect(runtime.canRetry)
+            #expect(runtime.webView.title == "Fixture one")
+            #expect(runtime.webView.backForwardList.currentItem?.url == initial)
+            #expect(runtime.webView.backForwardList.backList.isEmpty)
+            #expect(visits == [initial])
+        }
+        runtime.load(http.appendingPathComponent("two"))
+        let recovered = ContinuousClock.now + .seconds(10)
+        while runtime.webView.title != "Fixture two" || runtime.webView.isLoading || visits.count != 2,
+              ContinuousClock.now < recovered { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(runtime.failure == nil)
+        #expect(runtime.webView.title == "Fixture two")
+        #expect(visits == [initial, http.appendingPathComponent("two")])
+    }
+
     @Test func pageFindMatchesDocumentTextWithoutKeyboardAutomation() async throws {
         let runtime = PageRuntime(dataStore: .nonPersistent())
         defer { runtime.clearFind(); runtime.stop() }
