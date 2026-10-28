@@ -1,4 +1,5 @@
 import copy
+import errno
 import importlib.util
 import json
 import pathlib
@@ -194,6 +195,57 @@ class ComparisonChromeTests(unittest.TestCase):
                 with self.assertRaises((ValueError, TimeoutError)):
                     chrome.quit_normally(pathlib.Path(marker['profile']))
                 kill.assert_not_called()
+
+    def disappearing_path(self, pid=123, code=errno.ESRCH):
+        error = ProcessLookupError(code, 'synthetic disappearing executable')
+        error.process_id = pid
+        return error
+
+    def test_normal_quit_rechecks_transient_original_path_loss_without_a_second_request(self):
+        marker = self.normal_marker()
+        with patch.object(chrome, 'verified_marker', return_value=marker), \
+                patch.object(chrome.m, 'run', return_value='requested') as request, \
+                patch.object(chrome, 'original_root_exited', side_effect=[self.disappearing_path(), True]) as probe, \
+                patch.object(chrome.time, 'sleep'), patch.object(chrome.os, 'kill') as kill:
+            chrome.quit_normally(pathlib.Path(marker['profile']))
+            request.assert_called_once()
+            self.assertEqual(probe.call_count, 2)
+            kill.assert_not_called()
+
+    def test_missing_path_without_proven_exit_still_times_out_without_signals(self):
+        marker = self.normal_marker()
+        with patch.object(chrome, 'verified_marker', return_value=marker), \
+                patch.object(chrome.m, 'run', return_value='requested') as request, \
+                patch.object(chrome, 'original_root_exited', side_effect=self.disappearing_path()), \
+                patch.object(chrome.time, 'monotonic', side_effect=[0, 0, 11]), \
+                patch.object(chrome.time, 'sleep'), patch.object(chrome.os, 'kill') as kill:
+            with self.assertRaises(TimeoutError): chrome.quit_normally(pathlib.Path(marker['profile']))
+            request.assert_called_once()
+            kill.assert_not_called()
+
+    def test_exit_wait_does_not_retry_unrelated_missing_paths_or_permission_and_identity_errors(self):
+        marker = self.normal_marker()
+        errors = [self.disappearing_path(456), self.disappearing_path(code=errno.EPERM),
+                  ProcessLookupError('no PID context'), PermissionError('synthetic denied'),
+                  ValueError('synthetic changed identity')]
+        for error in errors:
+            with self.subTest(error=type(error).__name__), \
+                    patch.object(chrome, 'verified_marker', return_value=marker), \
+                    patch.object(chrome.m, 'run', return_value='requested') as request, \
+                    patch.object(chrome, 'original_root_exited', side_effect=error) as probe, \
+                    patch.object(chrome.time, 'sleep') as wait, patch.object(chrome.os, 'kill') as kill:
+                with self.assertRaises(type(error)): chrome.quit_normally(pathlib.Path(marker['profile']))
+                request.assert_called_once()
+                probe.assert_called_once()
+                wait.assert_not_called()
+                kill.assert_not_called()
+
+    def test_initial_missing_identity_is_never_retried_or_sent_a_quit_request(self):
+        with patch.object(chrome, 'verified_marker', side_effect=self.disappearing_path()), \
+                patch.object(chrome.m, 'run') as request, patch.object(chrome.time, 'sleep') as wait:
+            with self.assertRaises(ProcessLookupError): chrome.quit_normally(pathlib.Path('/synthetic'))
+            request.assert_not_called()
+            wait.assert_not_called()
 
     def test_normal_quit_handles_exit_race_but_not_permission_uncertainty(self):
         marker = self.normal_marker()
