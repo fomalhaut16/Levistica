@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Launch/stop only Chrome instances created here with a fresh project-local profile."""
 import argparse
+import errno
 import importlib.util
 import json
 import os
@@ -226,8 +227,15 @@ function run(args) {
         raise ValueError('Normal quit request was not acknowledged')
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
-        if original_root_exited(marker):
-            return
+        try:
+            if original_root_exited(marker):
+                return
+        except ProcessLookupError as error:
+            # The executable can disappear before the parent reaps the PID.
+            # This is not proof of exit: keep observing, never resend quit or
+            # signal. Only the original PID's kernel ESRCH may be transient.
+            if error.errno != errno.ESRCH or getattr(error, 'process_id', None) != marker['pid']:
+                raise
         time.sleep(0.1)
     raise TimeoutError('Comparison Chrome did not quit normally; no signal fallback attempted')
 
