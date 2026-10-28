@@ -48,6 +48,8 @@ jobs:
         run: python3 -m unittest discover -s script/tests -p test_rehearse_update.py -v
       - name: Build Release app
         run: CONFIGURATION=Release ./script/build_and_run.sh --build
+      - name: Verify normal Release security baseline
+        run: python3 script/check-release-security.py
       - name: Build isolated profiling app
         run: CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=1 ./script/build_and_run.sh --build
       - name: Build isolated measurement app without debugger entitlement
@@ -63,6 +65,7 @@ jobs:
             echo 'Expected exactly one archive from this fresh CI checkout.' >&2
             exit 1
           fi
+          python3 script/check-release-security.py --app "${archives[0]}/Products/Applications/Levistica.app"
           python3 script/rehearse-update.py --archive "${archives[0]}"
       - name: Run unit tests
         run: ./script/test.sh --unit
