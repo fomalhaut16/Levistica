@@ -156,6 +156,62 @@ class ComparisonChromeTests(unittest.TestCase):
                 chrome.stop(profile)
             kill.assert_not_called()
 
+    def normal_marker(self):
+        return {'pid': 123, 'profile': '/synthetic-owned-profile',
+                'identity': {'started': 'Wed Oct 28 10:30:00 2026', 'executable': str(chrome.binary)}}
+
+    def test_normal_quit_requires_ownership_before_requesting_appkit(self):
+        with patch.object(chrome.m, 'run') as request, patch.object(chrome.os, 'kill') as kill:
+            with self.assertRaises(ValueError):
+                chrome.quit_normally(pathlib.Path('/normal/Chrome'))
+            request.assert_not_called()
+            kill.assert_not_called()
+
+    def test_normal_quit_targets_only_original_app_and_waits_for_confirmed_exit(self):
+        marker = self.normal_marker()
+        with patch.object(chrome, 'verified_marker', return_value=marker), \
+                patch.object(chrome.m, 'run', return_value='requested\n') as request, \
+                patch.object(chrome, 'original_root_exited', side_effect=[False, True]), \
+                patch.object(chrome.time, 'sleep'), patch.object(chrome.os, 'kill') as kill:
+            chrome.quit_normally(pathlib.Path(marker['profile']))
+            args = request.call_args.args[0]
+            self.assertEqual(args[:4], ['/usr/bin/osascript', '-l', 'JavaScript', '-e'])
+            self.assertEqual(args[5:7], ['123', str(chrome.binary)])
+            self.assertIn('application.launchDate', args[4])
+            self.assertIn('com.google.Chrome', args[4])
+            self.assertNotIn('forceTerminate', args[4])
+            kill.assert_not_called()
+
+    def test_normal_quit_refusal_or_timeout_never_falls_back_to_a_signal(self):
+        marker = self.normal_marker()
+        for output in ['refused', 'requested']:
+            with self.subTest(output=output), patch.object(chrome, 'verified_marker', return_value=marker), \
+                    patch.object(chrome.m, 'run', return_value=output), \
+                    patch.object(chrome.time, 'monotonic', side_effect=[0, 0, 11]), \
+                    patch.object(chrome.time, 'sleep'), \
+                    patch.object(chrome, 'original_root_exited', return_value=False), \
+                    patch.object(chrome.os, 'kill') as kill:
+                with self.assertRaises((ValueError, TimeoutError)):
+                    chrome.quit_normally(pathlib.Path(marker['profile']))
+                kill.assert_not_called()
+
+    def test_normal_quit_handles_exit_race_but_not_permission_uncertainty(self):
+        marker = self.normal_marker()
+        present = chrome.subprocess.CompletedProcess([], 0, '123\n', '')
+        absent = chrome.subprocess.CompletedProcess([], 1, '', '')
+        denied = chrome.subprocess.CompletedProcess([], 2, '', 'denied')
+        with patch.object(chrome.subprocess, 'run', side_effect=[present, absent]), \
+                patch.object(chrome.m, 'identities', side_effect=ProcessLookupError('exited')):
+            self.assertTrue(chrome.original_root_exited(marker))
+        with patch.object(chrome.subprocess, 'run', return_value=denied), \
+                patch.object(chrome.m, 'identities') as identity:
+            with self.assertRaises(ValueError):
+                chrome.original_root_exited(marker)
+            identity.assert_not_called()
+        with patch.object(chrome.subprocess, 'run', return_value=present), \
+                patch.object(chrome.m, 'identities', return_value={123: {'started': 'replacement PID'}}):
+            self.assertTrue(chrome.original_root_exited(marker))
+
     def test_verification_targets_recorded_pid_even_during_another_forwarder(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = pathlib.Path(temporary).resolve()
