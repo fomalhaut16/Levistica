@@ -99,5 +99,12 @@ class AppProcessIdentityTests(unittest.TestCase):
             guard.check_snapshot(f'43 {path}\n', self.root, lambda *_: identity, 501)
 
 
+    def test_build_preflight_refuses_installed_release_even_without_variant_filter(self):
+        path = str(pathlib.Path.home() / 'Applications/Levistica.app/Contents/MacOS/Levistica')
+        identity = {'path': path, 'uid': 501, 'name': 'Levistica', 'identifier': 'dev.fomalhaut16.Levistica'}
+        with self.assertRaisesRegex(ValueError, 'close it before rebuilding'):
+            guard.check_snapshot(f'43 {path}\n', self.root, lambda *_: identity, 501, reject_installed=True)
+
+
 if __name__ == '__main__':
     unittest.main()

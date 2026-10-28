@@ -146,9 +146,9 @@ fi
 # Discover by executable path first. A renamed process must not bypass the stop checks.
 if [[ "$ARCHIVE_LOCAL" != 1 ]]; then
     if [[ "$MEASUREMENT" == 1 ]]; then
-        python3 "$ROOT_DIR/script/check-app-processes.py" --only Measurement
+        python3 "$ROOT_DIR/script/check-app-processes.py" --only Measurement --reject-installed
     else
-        python3 "$ROOT_DIR/script/check-app-processes.py"
+        python3 "$ROOT_DIR/script/check-app-processes.py" --reject-installed
     fi
 fi
 mkdir -p "$LOG_DIR"
