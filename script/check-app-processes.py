@@ -16,6 +16,7 @@ def known_apps(root):
         str(root / '.local/DerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica'): 'dev.fomalhaut16.Levistica',
         str(root / '.local/ProfileDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica'): 'dev.fomalhaut16.Levistica.profile',
         str(root / '.local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica'): 'dev.fomalhaut16.Levistica.measurement',
+        str(pathlib.Path.home() / 'Applications/Levistica.app/Contents/MacOS/Levistica'): 'dev.fomalhaut16.Levistica',
     }
 
 
