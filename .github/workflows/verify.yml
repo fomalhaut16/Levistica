@@ -54,8 +54,8 @@ jobs:
         run: CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=1 ./script/build_and_run.sh --build
       - name: Build isolated measurement app without debugger entitlement
         run: CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_MEASUREMENT=1 ./script/build_and_run.sh --build
-      - name: Validate local archive without launching apps
-        run: CONFIGURATION=Release ./script/build_and_run.sh --archive-local
+      - name: Package and validate local archive without launching apps
+        run: CONFIGURATION=Release ./script/build_and_run.sh --package-local
       - name: Rehearse signed bundle replacement and rollback on private copies
         shell: bash
         run: |

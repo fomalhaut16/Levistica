@@ -12,6 +12,14 @@ CONFIGURATION=Release ./script/build_and_run.sh
 
 次回からは `.local/DerivedData/Build/Products/Release/Levistica.app` をFinderから開けます。
 
+ZIPにまとめる場合は、次を実行してください。
+
+```sh
+CONFIGURATION=Release ./script/build_and_run.sh --package-local
+```
+
+表示されたZIPを展開すると、`Levistica.app` をFinderから開けます。このZIPは手元のMacでの利用向けです。配布用の署名・公証は行いません。
+
 ## 操作
 
 アドレス欄へURLや検索語を入力し、Returnを押してください。検索先は設定の「一般」でDuckDuckGo／Googleから選べます。
