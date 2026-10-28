@@ -46,6 +46,8 @@ jobs:
         run: python3 -m unittest discover -s script/tests -p test_observe_memory.py -v
       - name: Check isolated bundle exchange on macOS
         run: python3 -m unittest discover -s script/tests -p test_rehearse_update.py -v
+      - name: Check first-install safeguards and exclusive rename on macOS
+        run: python3 -m unittest discover -s script/tests -p test_install_local.py -v
       - name: Build Release app
         run: CONFIGURATION=Release ./script/build_and_run.sh --build
       - name: Verify normal Release security baseline

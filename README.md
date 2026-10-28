@@ -20,6 +20,14 @@ CONFIGURATION=Release ./script/build_and_run.sh --package-local
 
 表示されたZIPを展開すると、`Levistica.app` をFinderから開けます。このZIPは手元のMacでの利用向けです。配布用の署名・公証は行いません。
 
+初めてApplicationsフォルダーへ設置する場合は、表示されたパッケージディレクトリを指定します。
+
+```sh
+CONFIGURATION=Release ./script/build_and_run.sh --install-package-local PACKAGE_DIRECTORY
+```
+
+設置後は、ユーザーのApplicationsフォルダーにある `Levistica.app` を開いてください。同名のアプリが既にある場合は、上書きせず停止します。
+
 ## 操作
 
 アドレス欄へURLや検索語を入力し、Returnを押してください。検索先は設定の「一般」でDuckDuckGo／Googleから選べます。

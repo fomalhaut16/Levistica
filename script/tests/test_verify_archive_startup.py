@@ -225,3 +225,31 @@ class ArchiveStartupTests(unittest.TestCase):
                 self.assertFalse(any(command[0] == '/usr/bin/open' for command in self.commands))
                 listing.assert_not_called()
                 stop.assert_not_called()
+
+
+    def test_installed_app_must_match_the_verified_package(self):
+        folder, app, _ = self.make_package()
+        installed = self.root / 'Applications/Levistica.app'
+        shutil.copytree(app, installed)
+        with patch.object(s.pathlib.Path, 'home', return_value=self.root):
+            self.assertEqual(s.installed_bundle(folder), installed)
+            (installed / 'Contents/MacOS/Levistica').write_bytes(b'changed')
+            with self.assertRaises(ValueError): s.installed_bundle(folder)
+
+    def test_installed_startup_uses_exact_installed_process_and_isolation(self):
+        folder, app, _ = self.make_package()
+        installed = self.root / 'Applications/Levistica.app'
+        shutil.copytree(app, installed)
+        exe = installed / 'Contents/MacOS/Levistica'
+        process = dict(self.process, path=str(exe))
+        with patch.object(s.pathlib.Path, 'home', return_value=self.root), \
+             patch.object(s, 'run', side_effect=self.run_command), \
+             patch.object(s, 'candidates', side_effect=[[], [(123456, str(exe))], [(123456, str(exe))]]), \
+             patch.object(s, 'identity', return_value=process), \
+             patch.object(s, 'stop_owned') as stop, patch.object(s.time, 'sleep'):
+            result = s.verify(folder, package=True, installed=True)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['artifactKind'], 'installed')
+        self.assertFalse(result['guiVerified'])
+        self.assertIn(['/usr/bin/open', '-n', '--env', 'LEVISTICA_EPHEMERAL=1', str(installed)], self.commands)
+        stop.assert_called_once_with(process, exe)

@@ -83,5 +83,28 @@ class AppProcessIdentityTests(unittest.TestCase):
             guard.check_snapshot(profile + normal, self.root, lambda pid, _: identities[pid], 501, only='Profile')
 
 
+    def test_installed_app_is_recognized_and_blocks_isolated_variants(self):
+        path = str(pathlib.Path.home() / 'Applications/Levistica.app/Contents/MacOS/Levistica')
+        snapshot = f'43 {path}\n'
+        identity = {'path': path, 'uid': 501, 'name': 'Levistica', 'identifier': 'dev.fomalhaut16.Levistica'}
+        self.assertEqual(guard.check_snapshot(snapshot, self.root, lambda *_: identity, 501), [43])
+        for variant in ['Debug', 'Profile', 'Measurement']:
+            with self.subTest(variant=variant), self.assertRaisesRegex(ValueError, 'Unexpected Release'):
+                guard.check_snapshot(snapshot, self.root, Mock(), 501, only=variant)
+
+    def test_installed_app_still_requires_matching_owner_and_bundle(self):
+        path = str(pathlib.Path.home() / 'Applications/Levistica.app/Contents/MacOS/Levistica')
+        identity = {'path': path, 'uid': 0, 'name': 'Levistica', 'identifier': 'dev.fomalhaut16.Levistica'}
+        with self.assertRaisesRegex(ValueError, 'identity mismatch'):
+            guard.check_snapshot(f'43 {path}\n', self.root, lambda *_: identity, 501)
+
+
+    def test_build_preflight_refuses_installed_release_even_without_variant_filter(self):
+        path = str(pathlib.Path.home() / 'Applications/Levistica.app/Contents/MacOS/Levistica')
+        identity = {'path': path, 'uid': 501, 'name': 'Levistica', 'identifier': 'dev.fomalhaut16.Levistica'}
+        with self.assertRaisesRegex(ValueError, 'close it before rebuilding'):
+            guard.check_snapshot(f'43 {path}\n', self.root, lambda *_: identity, 501, reject_installed=True)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -79,6 +79,17 @@ def package_bundle(value):
     return app
 
 
+def installed_bundle(value):
+    source = package_bundle(value)
+    app = pathlib.Path.home() / 'Applications/Levistica.app'
+    if any(path.is_symlink() for path in [app, *app.parents]):
+        raise ValueError('Linked installation paths are not accepted')
+    deadline = time.monotonic() + 10
+    if bundle_rehearsal.tree_digest(app, deadline) != bundle_rehearsal.tree_digest(source, deadline):
+        raise ValueError('Installed application differs from its verified package')
+    return app
+
+
 def archive_bundle(value):
     archive = pathlib.Path(value).absolute()
     parts = archive.relative_to(ROOT / '.local/archives').parts
@@ -138,8 +149,8 @@ def stop_owned(value, executable):
     raise TimeoutError('Archive process did not exit; no force kill attempted')
 
 
-def verify(value, *, package=False):
-    app = package_bundle(value) if package else archive_bundle(value)
+def verify(value, *, package=False, installed=False):
+    app = installed_bundle(value) if installed else package_bundle(value) if package else archive_bundle(value)
     executable = app / 'Contents/MacOS/Levistica'
     if executable.is_symlink() or not executable.is_file():
         raise ValueError('A real archive executable is required')
@@ -162,7 +173,7 @@ def verify(value, *, package=False):
     work = pathlib.Path(tempfile.mkdtemp(prefix='archive-startup.', dir=parent))
     record = {'success': False, 'guiVerified': False, 'profileMigrationTested': False,
               'source': info['LevisticaSourceRevision'], 'executableSHA256': digest,
-              'artifactKind': 'package' if package else 'archive'}
+              'artifactKind': 'installed' if installed else 'package' if package else 'archive'}
     process = None
     try:
         record['verificationRevision'] = run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']).decode().strip()
@@ -215,11 +226,12 @@ def verify(value, *, package=False):
 
 if __name__ == '__main__':
     try:
-        package_mode = len(sys.argv) == 3 and sys.argv[1] == '--package'
+        package_mode = len(sys.argv) == 3 and sys.argv[1] in ('--package', '--installed')
+        installed_mode = package_mode and sys.argv[1] == '--installed'
         if len(sys.argv) != 2 and not package_mode:
             raise ValueError('One archive or explicit package path is required')
         value = sys.argv[2] if package_mode else sys.argv[1]
-        raise SystemExit(0 if verify(value, package=package_mode)['success'] else 1)
+        raise SystemExit(0 if verify(value, package=package_mode, installed=installed_mode)['success'] else 1)
     except (ValueError, OSError, subprocess.SubprocessError, plistlib.InvalidFileException) as error:
         print('Archive startup rejected ('+type(error).__name__+').')
         raise SystemExit(1) from None

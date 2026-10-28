@@ -16,10 +16,11 @@ def known_apps(root):
         str(root / '.local/DerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica'): 'dev.fomalhaut16.Levistica',
         str(root / '.local/ProfileDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica'): 'dev.fomalhaut16.Levistica.profile',
         str(root / '.local/MeasurementDerivedData/Build/Products/Release/Levistica.app/Contents/MacOS/Levistica'): 'dev.fomalhaut16.Levistica.measurement',
+        str(pathlib.Path.home() / 'Applications/Levistica.app/Contents/MacOS/Levistica'): 'dev.fomalhaut16.Levistica',
     }
 
 
-def check_snapshot(snapshot, root, describe, uid, only=None):
+def check_snapshot(snapshot, root, describe, uid, only=None, reject_installed=False):
     expected = known_apps(root)
     found = []
     for row in snapshot.splitlines():
@@ -39,6 +40,9 @@ def check_snapshot(snapshot, root, describe, uid, only=None):
         if (info['path'] != fields[1] or info['name'] != 'Levistica'
                 or info['uid'] != uid or info['identifier'] != expected[fields[1]]):
             raise ValueError(f'App identity mismatch for PID {pid}; do not stop or relaunch it until ownership is confirmed.')
+        installed = pathlib.Path.home() / 'Applications/Levistica.app/Contents/MacOS/Levistica'
+        if reject_installed and fields[1] == str(installed):
+            raise ValueError('Installed Levistica is running; close it before rebuilding. No process was stopped.')
         found.append(pid)
     return found
 
@@ -68,11 +72,12 @@ def describe_process(pid, expected_path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--only', choices=['Debug', 'Release', 'Profile', 'Measurement'])
+    parser.add_argument('--reject-installed', action='store_true')
     args = parser.parse_args()
     snapshot = run_ps(['-axo', 'pid=,comm='])
     if snapshot is None:
         raise ValueError('Process enumeration failed')
-    found = check_snapshot(snapshot, ROOT, describe_process, os.getuid(), only=args.only)
+    found = check_snapshot(snapshot, ROOT, describe_process, os.getuid(), only=args.only, reject_installed=args.reject_installed)
     print(f'App identity preflight: {len(found)} matching process(es).')
 
 
