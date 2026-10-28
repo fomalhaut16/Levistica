@@ -1,3 +1,6 @@
+import hashlib
+import json
+import shutil
 import importlib.util
 import os
 import pathlib
@@ -19,6 +22,8 @@ class ArchiveStartupTests(unittest.TestCase):
         self.root = pathlib.Path(temporary.name).resolve()
         self.addCleanup(patch.stopall)
         patch.object(s, 'ROOT', self.root).start()
+        patch.object(s.bundle_rehearsal, 'ROOT', self.root).start()
+        patch.object(s.screen, 'query_state', return_value={'screenState': 'unlocked'}).start()
         self.archive = self.root/'.local/archives/local-abcdefgh/Levistica.xcarchive'
         self.app = self.archive/'Products/Applications/Levistica.app'
         self.executable = self.app/'Contents/MacOS/Levistica'
@@ -119,3 +124,104 @@ class ArchiveStartupTests(unittest.TestCase):
         result = self.evidence()
         self.assertTrue(result['manualInspectionRequired'])
         self.assertNotIn('private information', str(result))
+
+
+    def make_package(self):
+        folder = self.root / '.local/packages/local-abcdefgh'
+        app = folder / 'unpacked/Levistica.app'
+        shutil.copytree(self.app, app)
+        info_path = app / 'Contents/Info.plist'
+        info = plistlib.loads(info_path.read_bytes())
+        info['CFBundleShortVersionString'] = '0.1.0'
+        info_path.write_bytes(plistlib.dumps(info))
+        name = 'Levistica-0.1.0-local-aaaaaaa.zip'
+        (folder / name).write_bytes(b'synthetic zip checksum fixture')
+        data = {'success': True, 'scope': 'local-validation', 'roundtripVerified': True,
+                'signatureVerified': True, 'sandbox': True, 'hardenedRuntime': True,
+                'source': 'a'*40, 'version': '0.1.0', 'zipFile': name,
+                'zipSHA256': hashlib.sha256((folder / name).read_bytes()).hexdigest(),
+                'bundleTreeSHA256': s.bundle_rehearsal.tree_digest(app)}
+        (folder / 'manifest.json').write_text(json.dumps(data))
+        return folder, app, data
+
+    def test_verified_package_uses_shared_ephemeral_start_and_exact_cleanup(self):
+        folder, app, _ = self.make_package()
+        exe = app / 'Contents/MacOS/Levistica'
+        process = dict(self.process, path=str(exe))
+        with patch.object(s, 'run', side_effect=self.run_command), \
+             patch.object(s, 'candidates', side_effect=[[], [(123456, str(exe))], [(123456, str(exe))]]), \
+             patch.object(s, 'identity', return_value=process), \
+             patch.object(s, 'stop_owned') as stop, patch.object(s.time, 'sleep'):
+            result = s.verify(folder, package=True)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['artifactKind'], 'package')
+        self.assertFalse(result['guiVerified'])
+        self.assertIn(['/usr/bin/open', '-n', '--env', 'LEVISTICA_EPHEMERAL=1', str(app)], self.commands)
+        stop.assert_called_once_with(process, exe)
+
+    def test_changed_zip_blocks_package_launch(self):
+        folder, _, data = self.make_package()
+        (folder / data['zipFile']).write_bytes(b'changed')
+        with patch.object(s, 'run') as run:
+            with self.assertRaises(ValueError): s.verify(folder, package=True)
+            run.assert_not_called()
+
+    def test_changed_extracted_app_blocks_package_launch(self):
+        folder, app, _ = self.make_package()
+        (app / 'Contents/MacOS/Levistica').write_bytes(b'changed')
+        with patch.object(s, 'run') as run:
+            with self.assertRaises(ValueError): s.verify(folder, package=True)
+            run.assert_not_called()
+
+    def test_manifest_identity_must_match_extracted_app(self):
+        folder, _, data = self.make_package()
+        data['source'] = 'b'*40
+        name = 'Levistica-0.1.0-local-bbbbbbb.zip'
+        (folder / data['zipFile']).rename(folder / name)
+        data['zipFile'] = name
+        (folder / 'manifest.json').write_text(json.dumps(data))
+        with self.assertRaises(ValueError): s.package_bundle(folder)
+
+    def test_incomplete_or_non_boolean_manifest_is_rejected(self):
+        folder, _, data = self.make_package()
+        for value in [False, 1, 'true', None]:
+            data['success'] = value
+            (folder / 'manifest.json').write_text(json.dumps(data))
+            with self.subTest(value=value), self.assertRaises(ValueError): s.package_bundle(folder)
+
+    def test_linked_package_parent_and_manifest_are_rejected(self):
+        folder, _, _ = self.make_package()
+        manifest = folder / 'manifest.json'
+        external = self.root / 'other-manifest'
+        manifest.rename(external)
+        manifest.symlink_to(external)
+        with self.assertRaises(ValueError): s.package_bundle(folder)
+        linked = self.root / '.local/packages/local-linkedxx'
+        linked.symlink_to(folder, target_is_directory=True)
+        with self.assertRaises(ValueError): s.package_bundle(linked)
+
+    def test_manifest_cannot_choose_an_external_zip_filename(self):
+        folder, _, data = self.make_package()
+        data['zipFile'] = '../../../outside.zip'
+        (folder / 'manifest.json').write_text(json.dumps(data))
+        with self.assertRaises(ValueError): s.package_bundle(folder)
+
+    def test_linked_unpacked_directory_is_rejected(self):
+        folder, _, _ = self.make_package()
+        external = self.root / 'other-unpacked'
+        (folder / 'unpacked').rename(external)
+        (folder / 'unpacked').symlink_to(external, target_is_directory=True)
+        with self.assertRaises(ValueError): s.package_bundle(folder)
+
+    def test_locked_or_unknown_screen_blocks_open_without_stopping_apps(self):
+        for state in ['locked', 'unknown']:
+            with self.subTest(state=state), patch.object(s.screen, 'query_state', return_value={'screenState': state}), \
+                 patch.object(s, 'run', side_effect=self.run_command), patch.object(s, 'candidates') as listing, \
+                 patch.object(s, 'stop_owned') as stop:
+                self.commands.clear()
+                result = s.verify(self.archive)
+                self.assertFalse(result['success'])
+                self.assertEqual(result['screenStateBeforeLaunch'], state)
+                self.assertFalse(any(command[0] == '/usr/bin/open' for command in self.commands))
+                listing.assert_not_called()
+                stop.assert_not_called()

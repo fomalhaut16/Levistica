@@ -23,6 +23,61 @@ spec = importlib.util.spec_from_file_location('bundle_rehearsal', ROOT/'script/r
 bundle_rehearsal = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bundle_rehearsal)
 
+screen_spec = importlib.util.spec_from_file_location('startup_ui_session', ROOT/'script/check-ui-session.py')
+screen = importlib.util.module_from_spec(screen_spec)
+screen_spec.loader.exec_module(screen)
+
+
+def package_bundle(value):
+    """Resolve only a previously verified private package, without extracting it."""
+    folder = bundle_rehearsal.within_project(pathlib.Path(value))
+    parts = folder.relative_to(ROOT / '.local/packages').parts
+    if len(parts) != 1 or not re.fullmatch(r'local-[a-z0-9_]{8}', parts[0]):
+        raise ValueError('Use a project local package directory')
+    manifest = folder / 'manifest.json'
+    if manifest.is_symlink() or not manifest.is_file() or manifest.stat().st_size > 32768:
+        raise ValueError('A bounded, real package manifest is required')
+    data = json.loads(manifest.read_text())
+    if not isinstance(data, dict):
+        raise ValueError('Invalid manifest object')
+    for key in ['success', 'roundtripVerified', 'signatureVerified', 'sandbox', 'hardenedRuntime']:
+        if data.get(key) is not True:
+            raise ValueError('Package verification is incomplete')
+    if data.get('scope') != 'local-validation':
+        raise ValueError('Unexpected package scope')
+    source = data.get('source')
+    version = data.get('version')
+    if (not isinstance(source, str) or not re.fullmatch('[0-9a-f]{40}', source)
+            or not isinstance(version, str) or len(version) > 32
+            or not re.fullmatch(r'[0-9]+(?:\.[0-9]+){0,2}', version)):
+        raise ValueError('Invalid package source or version')
+    expected_name = f'Levistica-{version}-local-{source[:7]}.zip'
+    if data.get('zipFile') != expected_name:
+        raise ValueError('Package filename does not match its identity')
+    archive = folder / expected_name
+    if archive.is_symlink() or not archive.is_file() or archive.stat().st_size > 512 * 1024**2:
+        raise ValueError('A bounded, real package ZIP is required')
+    deadline = time.monotonic() + 10
+    digest = hashlib.sha256()
+    with archive.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            if time.monotonic() > deadline:
+                raise TimeoutError('Package integrity check deadline exceeded')
+            digest.update(chunk)
+    if digest.hexdigest() != data.get('zipSHA256'):
+        raise ValueError('Package ZIP changed')
+    app = bundle_rehearsal.within_project(folder / 'unpacked/Levistica.app')
+    if bundle_rehearsal.tree_digest(app, deadline) != data.get('bundleTreeSHA256'):
+        raise ValueError('Extracted app changed')
+    # The bounded tree check runs before enumerating the verified small bundle.
+    for path in [folder / 'unpacked', app, *app.rglob('*')]:
+        if path.is_symlink():
+            raise ValueError('Linked extracted bundles are not accepted')
+    info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+    if info.get('LevisticaSourceRevision') != source or info.get('CFBundleShortVersionString') != version:
+        raise ValueError('Extracted app identity differs from the manifest')
+    return app
+
 
 def archive_bundle(value):
     archive = pathlib.Path(value).absolute()
@@ -83,8 +138,8 @@ def stop_owned(value, executable):
     raise TimeoutError('Archive process did not exit; no force kill attempted')
 
 
-def verify(value):
-    app = archive_bundle(value)
+def verify(value, *, package=False):
+    app = package_bundle(value) if package else archive_bundle(value)
     executable = app / 'Contents/MacOS/Levistica'
     if executable.is_symlink() or not executable.is_file():
         raise ValueError('A real archive executable is required')
@@ -106,11 +161,16 @@ def verify(value):
     parent.mkdir(parents=True, exist_ok=True)
     work = pathlib.Path(tempfile.mkdtemp(prefix='archive-startup.', dir=parent))
     record = {'success': False, 'guiVerified': False, 'profileMigrationTested': False,
-              'source': info['LevisticaSourceRevision'], 'executableSHA256': digest}
+              'source': info['LevisticaSourceRevision'], 'executableSHA256': digest,
+              'artifactKind': 'package' if package else 'archive'}
     process = None
     try:
         record['verificationRevision'] = run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']).decode().strip()
         record['verificationDirty'] = bool(run(['git', '-C', str(ROOT), 'status', '--porcelain', '--untracked-files=normal']).strip())
+        state = screen.query_state()['screenState']
+        record['screenStateBeforeLaunch'] = state
+        if state != 'unlocked':
+            raise ValueError('An unlocked screen is required; no app launched')
         if candidates():
             raise ValueError('Close existing Levistica before this isolated check')
         run(['/usr/bin/open', '-n', '--env', 'LEVISTICA_EPHEMERAL=1', str(app)])
@@ -155,9 +215,11 @@ def verify(value):
 
 if __name__ == '__main__':
     try:
-        if len(sys.argv) != 2:
-            raise ValueError('One archive path is required')
-        raise SystemExit(0 if verify(sys.argv[1])['success'] else 1)
+        package_mode = len(sys.argv) == 3 and sys.argv[1] == '--package'
+        if len(sys.argv) != 2 and not package_mode:
+            raise ValueError('One archive or explicit package path is required')
+        value = sys.argv[2] if package_mode else sys.argv[1]
+        raise SystemExit(0 if verify(value, package=package_mode)['success'] else 1)
     except (ValueError, OSError, subprocess.SubprocessError, plistlib.InvalidFileException) as error:
         print('Archive startup rejected ('+type(error).__name__+').')
         raise SystemExit(1) from None
