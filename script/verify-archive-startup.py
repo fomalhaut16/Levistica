@@ -67,11 +67,12 @@ def package_bundle(value):
     if digest.hexdigest() != data.get('zipSHA256'):
         raise ValueError('Package ZIP changed')
     app = bundle_rehearsal.within_project(folder / 'unpacked/Levistica.app')
+    if bundle_rehearsal.tree_digest(app, deadline) != data.get('bundleTreeSHA256'):
+        raise ValueError('Extracted app changed')
+    # The bounded tree check runs before enumerating the verified small bundle.
     for path in [folder / 'unpacked', app, *app.rglob('*')]:
         if path.is_symlink():
             raise ValueError('Linked extracted bundles are not accepted')
-    if bundle_rehearsal.tree_digest(app, deadline) != data.get('bundleTreeSHA256'):
-        raise ValueError('Extracted app changed')
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     if info.get('LevisticaSourceRevision') != source or info.get('CFBundleShortVersionString') != version:
         raise ValueError('Extracted app identity differs from the manifest')
