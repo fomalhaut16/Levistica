@@ -18,14 +18,25 @@ if [[ "${1:-}" == --rehearse-session-update ]]; then
     fi
     exec python3 "$ROOT_DIR/script/rehearse-session-update.py" "${@:2}"
 fi
+# First installation only, from an already validated local package. No rebuild
+# or launch, and no replacement of an existing destination.
+if [[ "${1:-}" == --install-package-local ]]; then
+    if [[ $# != 2 || "${CONFIGURATION:-Debug}" != Release || "${LEVISTICA_EPHEMERAL:-0}" != 0 || "${LEVISTICA_PROFILE:-0}" != 0 || "${LEVISTICA_MEASUREMENT:-0}" != 0 ]]; then
+        echo 'Use CONFIGURATION=Release with --install-package-local PACKAGE_DIRECTORY' >&2
+        exit 2
+    fi
+    exec python3 "$ROOT_DIR/script/install-local.py" "$2"
+fi
 # Package startup reuses the bounded archive checker after manifest integrity
 # validation. It never rebuilds, installs, or stops a pre-existing application.
-if [[ "${1:-}" == --verify-package-local ]]; then
+if [[ "${1:-}" == --verify-package-local || "${1:-}" == --verify-installed-local ]]; then
     if [[ $# != 2 || "${CONFIGURATION:-Debug}" != Release || "${LEVISTICA_EPHEMERAL:-0}" != 1 ]]; then
         echo 'Use CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 with --verify-package-local PACKAGE_DIRECTORY' >&2
         exit 2
     fi
-    exec python3 "$ROOT_DIR/script/verify-archive-startup.py" --package "$2"
+    verification_kind=--package
+    [[ "$1" != --verify-installed-local ]] || verification_kind=--installed
+    exec python3 "$ROOT_DIR/script/verify-archive-startup.py" "$verification_kind" "$2"
 fi
 # Archive smoke checks do not rebuild or stop an existing app. The helper refuses
 # any pre-existing Levistica and launches only the validated archive, ephemerally.
