@@ -230,4 +230,48 @@ import Testing
         await session.history.flush()
         #expect(session.history.items.count == 1)
     }
+
+    @Test func unicodeSearchMatchesCaseAndCanonicalSpellingWithoutDroppingAccents() async throws {
+        let store = HistoryStore(fileURL: nil)
+        let url = try #require(URL(string: "https://example.com/unicode"))
+        try await store.record(url: url, title: "École ΑΒΓ Café Straße")
+        for query in ["éCOLE", "αβγ", "cafe\u{0301}", "STRASSE"] {
+            #expect(try await store.search(query).map(\.url) == [url], "Expected Unicode match for \(query)")
+        }
+        #expect(try await store.search("Cafe").isEmpty)
+        #expect(try await store.search("\0").isEmpty)
+        #expect(try await store.search("École\0unexpected").isEmpty)
+        #expect(try await store.search("%' OR 1=1--").isEmpty)
+    }
+
+    @Test func combiningCharacterQueryIsBoundedBeforeDatabaseSearch() async throws {
+        let store = HistoryStore(fileURL: nil)
+        let title = "a" + String(repeating: "\u{0301}", count: 511)
+        let url = try #require(URL(string: "https://example.com/bounded"))
+        try await store.record(url: url, title: title)
+        let query = title + String(repeating: "\u{0301}", count: 100_000)
+        #expect(try await store.search(query).map(\.url) == [url])
+    }
+
+
+    @Test func unicodeSearchIncludesOlderRecordsAfterReopeningWithoutExpandingTheDisplayLimit() async throws {
+        let file = try file()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let store = HistoryStore(fileURL: file)
+        let now = Date()
+        let older = try #require(URL(string: "https://example.com/older"))
+        try await store.record(url: older, title: "École ΑΒΓ", now: now.addingTimeInterval(-1000))
+        var db: OpaquePointer?
+        try #require(sqlite3_open(file.path, &db) == SQLITE_OK)
+        defer { sqlite3_close(db) }
+        let sql = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<225) INSERT INTO history SELECT 'https://example.com/newer-'||x,'Synthetic',\(now.timeIntervalSince1970)-x FROM n"
+        try #require(sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK)
+        let reopened = HistoryStore(fileURL: file)
+        #expect(try await reopened.search(now: now).count == 200)
+        #expect(try await reopened.search(now: now).contains(where: { $0.url == older }) == false)
+        #expect(try await reopened.search("école", now: now).map(\.url) == [older])
+        #expect(try await reopened.search("αβγ", now: now).map(\.url) == [older])
+        #expect(try await reopened.search("EXAMPLE.COM/OLDER", now: now).map(\.url) == [older])
+    }
+
 }

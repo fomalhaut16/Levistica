@@ -1,6 +1,28 @@
 import Foundation
 import SQLite3
 
+// A pure per-connection scalar: no database handle, I/O or actor state crosses
+// SQLite's C callback. Per-row pools release Foundation comparison temporaries.
+private func historyContains(_ context: OpaquePointer?, _ count: Int32,
+                             _ values: UnsafeMutablePointer<OpaquePointer?>?) {
+    func text(_ value: OpaquePointer?, limit: Int) -> String? {
+        guard sqlite3_value_type(value) == SQLITE_TEXT else { return nil }
+        let bytes = Int(sqlite3_value_bytes(value))
+        guard bytes <= limit, let pointer = sqlite3_value_text(value) else { return nil }
+        return String(data: Data(bytes: pointer, count: bytes), encoding: .utf8)
+    }
+    guard count == 2, let values, let value = text(values[0], limit: 16_384),
+          let query = text(values[1], limit: 2048) else {
+        sqlite3_result_error(context, "Invalid bounded history search data", -1)
+        return
+    }
+    let found = autoreleasepool {
+        query.isEmpty || value.range(of: query, options: .caseInsensitive,
+                                     locale: Locale(identifier: "en_US_POSIX")) != nil
+    }
+    sqlite3_result_int(context, found ? 1 : 0)
+}
+
 struct HistoryEntry: Identifiable, Sendable {
     var id: String { url.absoluteString }
     let url: URL
@@ -69,9 +91,9 @@ actor HistoryStore {
     func search(_ query: String = "", now: Date = Date()) throws -> [HistoryEntry] {
         let db = try source()
         try db.transaction { try db.prune(now: now) }
-        let row = try db.statement("SELECT url,title,visited FROM history WHERE instr(lower(title),lower(?))>0 OR instr(lower(url),lower(?))>0 ORDER BY visited DESC,url LIMIT 200")
+        let row = try db.statement("SELECT url,title,visited FROM history WHERE history_contains(title,?) OR history_contains(url,?) ORDER BY visited DESC,url LIMIT 200")
         defer { sqlite3_finalize(row) }
-        let bounded = String(query.prefix(512))
+        let bounded = String(decoding: query.utf16.prefix(512), as: UTF16.self)
         try db.bind(bounded, row, 1); try db.bind(bounded, row, 2)
         var result: [HistoryEntry] = []
         var step = sqlite3_step(row)
@@ -144,6 +166,10 @@ private final class HistoryDatabase {
         }
         do {
             sqlite3_busy_timeout(db, 100)
+            guard sqlite3_create_function_v2(db, "history_contains", 2,
+                                             SQLITE_UTF8 | SQLITE_DETERMINISTIC | SQLITE_DIRECTONLY,
+                                             nil, historyContains, nil, nil, nil) == SQLITE_OK else { throw Failure.unavailable }
+
             let version = try statement("PRAGMA user_version")
             defer { sqlite3_finalize(version) }
             guard sqlite3_step(version) == SQLITE_ROW else { throw Failure.invalidData }
@@ -231,6 +257,7 @@ private final class HistoryDatabase {
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else { throw Failure.unavailable }
     }
     func bind(_ text: String, _ row: OpaquePointer, _ index: Int32) throws {
-        guard text.withCString({ sqlite3_bind_text(row, index, $0, -1, transient) }) == SQLITE_OK else { throw Failure.unavailable }
+        guard let length = Int32(exactly: text.utf8.count),
+              text.withCString({ sqlite3_bind_text(row, index, $0, length, transient) }) == SQLITE_OK else { throw Failure.unavailable }
     }
 }
