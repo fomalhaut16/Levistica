@@ -7,6 +7,10 @@ final class BookmarkLibrary {
     private(set) var isLoaded = false
     var selectedID: UUID?
     var notice: String?
+    private(set) var importPreview: BookmarkImportPreview?
+    private(set) var isPreparingImport = false
+    private(set) var importCompletionCount: Int?
+    @ObservationIgnored private var importTask: Task<Void, Never>?
     private(set) var recentlyDeleted: Bookmark?
     @ObservationIgnored private let fileURL: URL?
     @ObservationIgnored private var store: BookmarkStore?
@@ -56,8 +60,47 @@ final class BookmarkLibrary {
     func undoRemoval() {
         guard let item = recentlyDeleted else { return }
         mutate { store in
-            selectedID = try store.add(url: item.url, title: item.title, id: item.id)
+            selectedID = try store.add(url: item.url, title: item.title, id: item.id, folders: item.folders)
             recentlyDeleted = nil
+        }
+    }
+
+    func prepareImport(from url: URL) {
+        guard !isPreparingImport, importPreview == nil else { return }
+        if !isLoaded { load() }
+        guard isLoaded else { return }
+        importCompletionCount = nil
+        notice = nil
+        isPreparingImport = true
+        importTask = Task { [weak self] in
+            do {
+                let preview = try await Task.detached(priority: .userInitiated) { try BookmarkHTMLImport.read(url) }.value
+                guard let self, !Task.isCancelled else { return }
+                importPreview = preview
+                isPreparingImport = false
+                importTask = nil
+            } catch {
+                self?.notice = error.localizedDescription
+                self?.isPreparingImport = false
+                self?.importTask = nil
+            }
+        }
+    }
+
+    var plannedImportCount: Int {
+        importPreview?.entries.filter { entry in
+            !items.contains { $0.url == entry.url && $0.folders == entry.folders }
+        }.count ?? 0
+    }
+
+    func cancelImport() { importPreview = nil }
+
+    func confirmImport() {
+        guard let preview = importPreview else { return }
+        mutate { store in
+            let added = try store.importEntries(preview.entries)
+            importPreview = nil
+            importCompletionCount = added
         }
     }
 

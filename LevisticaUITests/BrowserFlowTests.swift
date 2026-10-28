@@ -2238,6 +2238,72 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testBookmarkHTMLImportPreviewsCancelsPreservesFoldersAndSurvivesRestart() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let (app, folder) = try fileTestApplication()
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        defer { app.terminate(); try? FileManager.default.removeItem(at: folder) }
+        let html = """
+        <!DOCTYPE NETSCAPE-Bookmark-file-1><TITLE>Bookmarks</TITLE><DL><p>
+        <DT><A HREF="\(base)/one">Do not replace existing name</A>
+        <DT><H3>Research</H3><DL><p>
+        <DT><A HREF="\(base)/one">Imported One</A><DT><A HREF="\(base)/two">Imported Two</A>
+        <DT><A HREF="\(base)/two">Duplicate</A><DT><A HREF="javascript:alert(1)">Rejected</A>
+        </DL><p><DT><H3>Empty</H3><DL><p></DL><p></DL>
+        """
+        let file = folder.appendingPathComponent("bookmarks.html")
+        try Data(html.utf8).write(to: file)
+        app.launch(); app.activate()
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        app.typeKey("d", modifierFlags: .command)
+        app.buttons["showBookmarksButton"].click()
+        let importer = app.buttons["importBookmarksButton"]
+        XCTAssertTrue(importer.waitForExistence(timeout: 5))
+        func chooseFile() throws {
+            app.activate()
+            XCTAssertEqual(app.state, .runningForeground)
+            importer.click()
+            let open = try nativeDialogButton("選択", in: app)
+            let fileRow = app.descendants(matching: .any).matching(
+                NSPredicate(format: "label == %@ OR value == %@", "bookmarks.html", "bookmarks.html")).firstMatch
+            XCTAssertTrue(fileRow.waitForExistence(timeout: 10))
+            fileRow.click()
+            open.click()
+            XCTAssertTrue(app.staticTexts["bookmarkImportCounts"].waitForExistence(timeout: 10))
+        }
+        try chooseFile()
+        XCTAssertEqual(app.staticTexts["bookmarkImportCounts"].value as? String
+            ?? app.staticTexts["bookmarkImportCounts"].label, "追加予定2件・既存と重複1件")
+        app.sheets.buttons["キャンセル"].click()
+        XCTAssertTrue(app.staticTexts["bookmarkImportCounts"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["1件・上限1000件"].waitForExistence(timeout: 5))
+        try chooseFile()
+        app.buttons["confirmImportBookmarksButton"].click()
+        XCTAssertTrue(app.staticTexts["2件のブックマークを取り込みました。"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["3件・上限1000件"].exists)
+        XCTAssertEqual(app.webViews.count, 1)
+        XCTAssertFalse(app.staticTexts["Do not replace existing name"].exists)
+        XCTAssertTrue(app.staticTexts["Imported One"].exists)
+        let picker = app.popUpButtons["bookmarkFolderPicker"]
+        picker.click(); app.menuItems["Research"].click()
+        XCTAssertTrue(app.staticTexts["Imported Two"].waitForExistence(timeout: 5))
+        XCTAssertTrue(attachWindowImage(app, name: "bookmark-import-folder", knownFrame: app.windows["browser"].frame))
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch(); app.activate()
+        XCTAssertTrue(app.buttons["showBookmarksButton"].waitForExistence(timeout: 10))
+        app.buttons["showBookmarksButton"].click()
+        XCTAssertTrue(app.staticTexts["3件・上限1000件"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Imported One"].exists)
+        XCTAssertTrue(app.staticTexts["Imported Two"].exists)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
+    @MainActor
     func testPostPDFCannotBeAddedAsAReloadableBookmark() throws {
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
         let app = XCUIApplication()

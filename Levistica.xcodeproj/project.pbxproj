@@ -5,6 +5,12 @@
 	objectVersion = "56";
 	archiveVersion = "1";
 	objects = {
+		1A49C9660D7D960C1A3DE762 = { isa = PBXFileReference; path = "LevisticaTests/Stores/BookmarkImportStoreTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		DA78AB7BBF9358C45F4F5697 = { isa = PBXBuildFile; fileRef = 1A49C9660D7D960C1A3DE762; };
+		38A790C253E08FBE11D8D09F = { isa = PBXFileReference; path = "LevisticaTests/Browser/BookmarkHTMLImportTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		B14E2B4D7C15ECC76B963DAB = { isa = PBXBuildFile; fileRef = 38A790C253E08FBE11D8D09F; };
+		6FB71BAAC7037DC226ED70FA = { isa = PBXFileReference; path = "Levistica/Browser/BookmarkHTMLImport.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		9006A699FC48F3CE40D66C8F = { isa = PBXBuildFile; fileRef = 6FB71BAAC7037DC226ED70FA; };
 		71C1548D70B371DAA0D0456D = { isa = PBXFileReference; path = "Levistica/Browser/MeasurementViewport.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
 		492B2DD7EB42A857302B17A5 = { isa = PBXBuildFile; fileRef = 71C1548D70B371DAA0D0456D; };
 		B3CA9B22BCB7911B8CB9B9EC = { isa = PBXFileReference; path = "Levistica/Views/MeasurementViewportStatus.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
@@ -348,6 +354,7 @@
 			isa = "PBXSourcesBuildPhase";
 			buildActionMask = "2147483647";
 			files = (
+				9006A699FC48F3CE40D66C8F,
 				74D34A8746C151C4448FB2AB,
 				492B2DD7EB42A857302B17A5,
 				04A1139D2C0128F848875553,
@@ -430,6 +437,7 @@
 			isa = "PBXGroup";
 			name = "Levistica";
 			children = (
+				6FB71BAAC7037DC226ED70FA,
 				B3CA9B22BCB7911B8CB9B9EC,
 				71C1548D70B371DAA0D0456D,
 				FD852BD7C6E6FDEF84743F16,
@@ -481,6 +489,8 @@
 			isa = "PBXGroup";
 			name = "LevisticaTests";
 			children = (
+				1A49C9660D7D960C1A3DE762,
+				38A790C253E08FBE11D8D09F,
 				BF7653BCF5F4057F06C951FC,
 				AD7088C74305D62C68AD80D3,
 				F33CDB952F8497650CE70C03,
@@ -699,6 +709,8 @@
 			isa = "PBXSourcesBuildPhase";
 			buildActionMask = "2147483647";
 			files = (
+				DA78AB7BBF9358C45F4F5697,
+				B14E2B4D7C15ECC76B963DAB,
 				1F6DF2B09CE07E7B7D73B27C,
 				1DC57427B849C429C39A80C8,
 				9EEF9369977FADEA57406577,

@@ -70,7 +70,7 @@ import Testing
         let store = try BookmarkStore(fileURL: file)
         var db: OpaquePointer?
         #expect(sqlite3_open(file.path, &db) == SQLITE_OK)
-        let sql = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1000) INSERT INTO bookmarks SELECT printf('00000000-0000-0000-0000-%012d',x),'https://example.com/'||x,'Synthetic',x FROM n"
+        let sql = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1000) INSERT INTO bookmarks (id,url,title,created) SELECT printf('00000000-0000-0000-0000-%012d',x),'https://example.com/'||x,'Synthetic',x FROM n"
         #expect(sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK)
         sqlite3_close(db)
         _ = try store.add(url: #require(URL(string: "https://example.com/1")), title: "Duplicate")
