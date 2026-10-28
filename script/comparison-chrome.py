@@ -181,14 +181,24 @@ def original_root_exited(marker):
         probe = subprocess.run(['/bin/ps', '-p', str(pid), '-o', 'pid='],
                                capture_output=True, text=True, timeout=3)
         if probe.returncode == 1 and not probe.stdout.strip():
-            return True
+            try:
+                os.kill(pid, 0)  # Existence check only; never sends a signal.
+            except ProcessLookupError:
+                return True
+            raise ValueError('Process listing was empty but original PID still exists')
         if probe.returncode != 0 or probe.stdout.strip() != str(pid):
             raise ValueError('Cannot verify original comparison Chrome exit')
         return False
     if absent():
         return True
     try:
-        return m.identities([pid]).get(pid) != marker['identity']
+        current = m.identities([pid]).get(pid)
+        if current == marker['identity']:
+            return False
+        if (isinstance(current, dict) and isinstance(current.get('started'), str)
+                and current['started'] and current['started'] != marker['identity']['started']):
+            return True  # Different birth proves original exited; never operate on replacement.
+        raise ValueError('Original executable identity is uncertain; exit not confirmed')
     except (ProcessLookupError, subprocess.CalledProcessError):
         if absent():
             return True

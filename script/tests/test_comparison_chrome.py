@@ -201,7 +201,8 @@ class ComparisonChromeTests(unittest.TestCase):
         absent = chrome.subprocess.CompletedProcess([], 1, '', '')
         denied = chrome.subprocess.CompletedProcess([], 2, '', 'denied')
         with patch.object(chrome.subprocess, 'run', side_effect=[present, absent]), \
-                patch.object(chrome.m, 'identities', side_effect=ProcessLookupError('exited')):
+                patch.object(chrome.m, 'identities', side_effect=ProcessLookupError('exited')), \
+                patch.object(chrome.os, 'kill', side_effect=ProcessLookupError('gone')):
             self.assertTrue(chrome.original_root_exited(marker))
         with patch.object(chrome.subprocess, 'run', return_value=denied), \
                 patch.object(chrome.m, 'identities') as identity:
@@ -211,6 +212,21 @@ class ComparisonChromeTests(unittest.TestCase):
         with patch.object(chrome.subprocess, 'run', return_value=present), \
                 patch.object(chrome.m, 'identities', return_value={123: {'started': 'replacement PID'}}):
             self.assertTrue(chrome.original_root_exited(marker))
+
+    def test_same_birth_path_change_and_empty_listing_are_not_confirmed_exits(self):
+        marker = self.normal_marker()
+        present = chrome.subprocess.CompletedProcess([], 0, '123\n', '')
+        absent = chrome.subprocess.CompletedProcess([], 1, '', '')
+        changed = {**marker['identity'], 'executable': '/different/executable'}
+        with patch.object(chrome.subprocess, 'run', return_value=present), \
+                patch.object(chrome.m, 'identities', return_value={123: changed}):
+            with self.assertRaises(ValueError):
+                chrome.original_root_exited(marker)
+        with patch.object(chrome.subprocess, 'run', return_value=absent), \
+                patch.object(chrome.os, 'kill', return_value=None) as probe:
+            with self.assertRaises(ValueError):
+                chrome.original_root_exited(marker)
+            probe.assert_called_once_with(123, 0)
 
     def test_verification_targets_recorded_pid_even_during_another_forwarder(self):
         with tempfile.TemporaryDirectory() as temporary:
