@@ -174,9 +174,67 @@ def stop(profile):
     raise ValueError('Comparison Chrome is still running; no force-kill attempted')
 
 
+def original_root_exited(marker):
+    """Confirm absence or PID reuse; uncertainty never counts as a clean exit."""
+    pid = marker['pid']
+    def absent():
+        probe = subprocess.run(['/bin/ps', '-p', str(pid), '-o', 'pid='],
+                               capture_output=True, text=True, timeout=3)
+        if probe.returncode == 1 and not probe.stdout.strip():
+            try:
+                os.kill(pid, 0)  # Existence check only; never sends a signal.
+            except ProcessLookupError:
+                return True
+            raise ValueError('Process listing was empty but original PID still exists')
+        if probe.returncode != 0 or probe.stdout.strip() != str(pid):
+            raise ValueError('Cannot verify original comparison Chrome exit')
+        return False
+    if absent():
+        return True
+    try:
+        current = m.identities([pid]).get(pid)
+        if current == marker['identity']:
+            return False
+        if (isinstance(current, dict) and isinstance(current.get('started'), str)
+                and current['started'] and current['started'] != marker['identity']['started']):
+            return True  # Different birth proves original exited; never operate on replacement.
+        raise ValueError('Original executable identity is uncertain; exit not confirmed')
+    except (ProcessLookupError, subprocess.CalledProcessError):
+        if absent():
+            return True
+        raise
+
+
+def quit_normally(profile):
+    """Ask exactly the recorded app instance to quit, without signal fallback."""
+    marker = verified_marker(profile)
+    epoch = time.mktime(time.strptime(marker['identity']['started'], '%a %b %d %H:%M:%S %Y'))
+    script = """ObjC.import('AppKit');
+function run(args) {
+    const application=$.NSRunningApplication.runningApplicationWithProcessIdentifier(Number(args[0]));
+    if (!application || application.isTerminated || !application.launchDate ||
+        ObjC.unwrap(application.executableURL.path)!==args[1] ||
+        ObjC.unwrap(application.bundleIdentifier)!=='com.google.Chrome' ||
+        Math.abs(Number(application.launchDate.timeIntervalSince1970)-Number(args[2]))>1)
+        throw Error('Original application identity changed; quit refused');
+    if (!application.terminate) throw Error('Normal quit request refused');
+    return 'requested';
+}"""
+    output = m.run(['/usr/bin/osascript', '-l', 'JavaScript', '-e', script,
+                    str(marker['pid']), str(binary), str(epoch)])
+    if output.strip() != 'requested':
+        raise ValueError('Normal quit request was not acknowledged')
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if original_root_exited(marker):
+            return
+        time.sleep(0.1)
+    raise TimeoutError('Comparison Chrome did not quit normally; no signal fallback attempted')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['start', 'stop'])
+    parser.add_argument('action', choices=['start', 'stop', 'quit'])
     parser.add_argument('--url')
     parser.add_argument('--profile', type=pathlib.Path)
     parser.add_argument('--width', type=int, default=1100)
@@ -185,10 +243,10 @@ def main():
     parser.add_argument('--ready-file', type=pathlib.Path)
     args = parser.parse_args()
     try:
-        if args.action == 'stop':
+        if args.action in ('stop', 'quit'):
             if args.profile is None:
                 parser.error('Stopping requires --profile from the start result')
-            stop(args.profile)
+            (quit_normally if args.action == 'quit' else stop)(args.profile)
             print('Stopped only the isolated comparison instance')
             return
         urls = workload_urls(args.url, args.tabs, args.ready_file)
