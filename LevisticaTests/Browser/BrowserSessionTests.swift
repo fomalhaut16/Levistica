@@ -16,6 +16,25 @@ struct BrowserSessionTests {
         }
     }
 
+    @Test(arguments: [false, true])
+    func pageSecuritySettingsSurviveRelatedConfiguration(supplied: Bool) {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        // A supplied configuration must not disable the browser's warnings.
+        configuration.preferences.isFraudulentWebsiteWarningEnabled = false
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        let page = supplied ? PageRuntime(configuration: configuration) : PageRuntime(dataStore: .nonPersistent())
+        #expect(page.webView.configuration.preferences.isFraudulentWebsiteWarningEnabled)
+        #expect(page.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically == false)
+        #expect(page.webView.isInspectable == false)
+        #expect(page.webView.configuration.websiteDataStore.isPersistent == false)
+        let child = PageRuntime(configuration: page.webView.configuration, permitsInitialBlankPage: true)
+        #expect(child.webView.configuration.preferences.isFraudulentWebsiteWarningEnabled)
+        #expect(child.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically == false)
+        #expect(child.webView.isInspectable == false)
+        #expect(child.webView.configuration.websiteDataStore.isPersistent == false)
+    }
+
     @Test func pageFindMatchesDocumentTextWithoutKeyboardAutomation() async throws {
         let runtime = PageRuntime(dataStore: .nonPersistent())
         defer { runtime.clearFind(); runtime.stop() }
