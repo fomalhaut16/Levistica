@@ -58,6 +58,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         configuration.applicationNameForUserAgent = WebKitBrowserIdentity.applicationName
         if localPDF != nil { configuration.defaultWebpagePreferences.allowsContentJavaScript = false }
         self.permitsInitialBlankPage = permitsInitialBlankPage
+        configuration.preferences.isFraudulentWebsiteWarningEnabled = true
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.preferences.isElementFullscreenEnabled = true
         inputGuard = PageInputGuard(configuration: configuration)
