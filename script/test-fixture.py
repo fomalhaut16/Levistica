@@ -474,8 +474,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         }
         pages["/fullscreen-dark"] = pages["/fullscreen"].replace(
             "<style>", "<style>html, body { background: #181818; color: white; }", 1)
-        body = ("<!doctype html><meta charset=utf-8>" + pages.get(self.path, "Not found")).encode()
-        self.send_response(200 if self.path in pages else 404)
+        route = self.path.split("?", 1)[0]
+        body = ("<!doctype html><meta charset=utf-8>" + pages.get(route, "Not found")).encode()
+        self.send_response(200 if route in pages else 404)
         if self.path == "/pdf-cookie": self.send_header("Set-Cookie", "levistica_pdf=synthetic; HttpOnly; SameSite=Lax; Path=/")
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

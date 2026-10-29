@@ -2567,7 +2567,7 @@ final class BrowserFlowTests: XCTestCase {
         app.activate()
         submit(base + "/search-flow", in: app)
         for query in ["first query", "second query"] {
-            let field = app.webViews.textFields["Search query"]
+            let field = app.webViews.searchFields["Search query"]
             XCTAssertTrue(field.waitForExistence(timeout: 10))
             field.click()
             waitForInputIndicator(in: app)
