@@ -30,7 +30,7 @@ CONFIGURATION=Release ./script/build_and_run.sh --install-package-local PACKAGE_
 
 ## 操作
 
-アドレス欄へURLや検索語を入力し、Returnを押してください。検索先は設定の「一般」でDuckDuckGo／Googleから選べます。
+アドレス欄へURLや検索語を入力し、Returnを押してください。検索先は設定の「一般」でDuckDuckGo／Googleから選べます。 URL欄の左にある接続情報から、表示中のページの接続先と暗号化の状態を確認できます。
 
 | 操作 | ショートカット |
 |---|---|

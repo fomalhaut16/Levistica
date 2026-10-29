@@ -28,6 +28,14 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     private(set) var canGoBack = false
     private(set) var canGoForward = false
     private(set) var progress = 0.0
+    private(set) var connectionDocumentURL: URL?
+    private(set) var hasOnlySecureContent = false
+    @ObservationIgnored private var connectionDocumentAvailable = false
+    var connectionInfo: PageConnectionInfo {
+        PageConnectionInfo(documentURL: connectionDocumentURL, isLoading: isLoading,
+                           hasOnlySecureContent: hasOnlySecureContent, failed: failure != nil,
+                           isLocalPDF: localPDF != nil)
+    }
     var findQuery = ""
     private(set) var findMatchFound: Bool?
     private(set) var zoom = 1.0
@@ -77,7 +85,8 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
             webView.observe(\.isLoading, options: [.new]) { [weak self] _, _ in self?.scheduleSnapshot() },
             webView.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in self?.scheduleSnapshot() },
             webView.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in self?.scheduleSnapshot() },
-            webView.observe(\.estimatedProgress, options: [.new]) { [weak self] _, _ in self?.scheduleSnapshot() }
+            webView.observe(\.estimatedProgress, options: [.new]) { [weak self] _, _ in self?.scheduleSnapshot() },
+            webView.observe(\.hasOnlySecureContent, options: [.new]) { [weak self] _, _ in self?.scheduleSnapshot() }
         ]
     }
 
@@ -94,6 +103,8 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
            current.absoluteString != "about:blank", webView.backForwardList.currentItem?.url == current { url = current }
         title = localPDF?.url.lastPathComponent ?? (isPDF ? pdfTitle : nil)
             ?? webView.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Levistica"
+        if connectionDocumentAvailable { connectionDocumentURL = displayedDocumentURL }
+        hasOnlySecureContent = webView.hasOnlySecureContent
         isLoading = webView.isLoading
         canGoBack = webView.canGoBack
         canGoForward = webView.canGoForward
@@ -483,6 +494,8 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         inputGuard.beginDocument()
         committedRequest = lastRequest
         committedURL = webView.url
+        connectionDocumentAvailable = true
+        connectionDocumentURL = displayedDocumentURL
         url = displayedDocumentURL
         committedUserAgent = webView.customUserAgent
         invalidateFindResult()
@@ -506,6 +519,8 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
            let requestedURL = lastRequest?.url, failedURL != requestedURL { return }
         restoreDisplayedIdentity()
         guard !(error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled) else { return }
+        connectionDocumentAvailable = false
+        connectionDocumentURL = nil
         updateSnapshot()
         url = lastRequest?.url ?? url
         failure = error.domain == NSURLErrorDomain && (-1206 ... -1200).contains(error.code)
@@ -515,6 +530,8 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         dialogs.cancel()
+        connectionDocumentAvailable = false
+        connectionDocumentURL = nil
         updateSnapshot()
         failure = "ページの処理が終了しました。再試行すると、入力内容などが失われる場合があります。"
     }
@@ -524,5 +541,40 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
                  decisionHandler: @escaping @MainActor (WKPermissionDecision) -> Void) {
         failure = "カメラとマイクの使用には、まだ対応していません。"
         decisionHandler(.deny)
+    }
+}
+
+
+// Only a committed document can describe the connection. A requested URL or
+// address-field draft must never acquire an HTTPS label before it is loaded.
+struct PageConnectionInfo: Equatable {
+    enum Kind: Equatable { case none, loading, http, https, mixedContent, localPDF, unavailable }
+    let kind: Kind
+    let origin: String?
+
+    init(documentURL: URL?, isLoading: Bool, hasOnlySecureContent: Bool, failed: Bool, isLocalPDF: Bool) {
+        let scheme = documentURL?.scheme?.lowercased()
+        var origin: String?
+        if let url = documentURL, let host = url.host, !host.isEmpty,
+           ["http", "https"].contains(scheme), url.user == nil, url.password == nil {
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            components?.scheme = scheme
+            let encodedHost = components?.percentEncodedHost?.lowercased()
+            components?.percentEncodedHost = encodedHost
+            components?.path = ""
+            components?.query = nil
+            components?.fragment = nil
+            if scheme == "https" && url.port == 443 || scheme == "http" && url.port == 80 {
+                components?.port = nil
+            }
+            origin = components?.url?.absoluteString
+        }
+        self.origin = origin
+        if failed { kind = .unavailable }
+        else if isLoading { kind = .loading }
+        else if scheme == "file" && isLocalPDF { kind = .localPDF }
+        else if origin != nil && scheme == "http" { kind = .http }
+        else if origin != nil && scheme == "https" { kind = hasOnlySecureContent ? .https : .mixedContent }
+        else { kind = .none }
     }
 }
