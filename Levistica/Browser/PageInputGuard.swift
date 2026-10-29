@@ -26,6 +26,7 @@ final class PageInputGuard: NSObject, WKScriptMessageHandler {
         const frame = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
         let revision = 0;
         const originals = new WeakMap();
+        const reported = new WeakMap();
         const changed = new Set();
         const control = event => {
             const target = event.composedPath()[0];
@@ -39,12 +40,15 @@ final class PageInputGuard: NSObject, WKScriptMessageHandler {
         };
         const value = target => {
             if (target instanceof HTMLInputElement && ['checkbox','radio'].includes(target.type)) return target.checked;
-            if (target instanceof HTMLInputElement && target.type === 'file') return target.files.length > 0;
+            if (target instanceof HTMLInputElement && target.type === 'file') return JSON.stringify([...target.files].map(file => [file.name, file.size, file.lastModified]));
             if (target instanceof HTMLSelectElement) return JSON.stringify([...target.options].map(option => option.selected));
             return target.isContentEditable ? target.innerHTML : target.value;
         };
         const remember = target => {
-            if (!originals.has(target)) originals.set(target, value(target));
+            if (!originals.has(target)) {
+                const current = value(target);
+                originals.set(target, current); reported.set(target, current);
+            }
         };
         const search = target => target.type === 'search' || target.getAttribute('role') === 'searchbox'
             || target.closest('search, [role="search"]') !== null;
@@ -65,7 +69,9 @@ final class PageInputGuard: NSObject, WKScriptMessageHandler {
             if (!target) return;
             // focusin/beforeinput record the pre-edit value. A control edited
             // without either event remains conservatively pending.
-            revision += 1;
+            const current = value(target);
+            if (!reported.has(target) || reported.get(target) !== current) revision += 1;
+            reported.set(target, current);
             if (!search(target) && (!originals.has(target) || value(target) !== originals.get(target))) changed.add(target);
             else changed.delete(target);
             notify();

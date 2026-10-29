@@ -598,6 +598,16 @@ struct PagePendingInputTests {
         #expect(js.exception == nil)
     }
 
+    @Test func blurChangeDoesNotCountTheSameValueAsANewEdit() throws {
+        let js = try context()
+        js.evaluateScript("edit('draft');fire('change',field);")
+        #expect(js.evaluateScript("messages.at(-1).revision")?.toInt32() == 1)
+        #expect(js.evaluateScript("lastPending()")?.toBool() == true)
+        js.evaluateScript("edit('new draft');fire('change',field);")
+        #expect(js.evaluateScript("messages.at(-1).revision")?.toInt32() == 2)
+        #expect(js.exception == nil)
+    }
+
     @Test func syntheticLifecycleEventsCannotClearPendingDrafts() throws {
         let js = try context()
         js.evaluateScript("field.form={};edit('draft');fire('submit',field.form,{isTrusted:false});fire('pagehide',null,{isTrusted:false});")
