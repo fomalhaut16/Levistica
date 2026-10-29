@@ -113,6 +113,8 @@ class Trial:
         self.work.chmod(0o700)
         self.deadline = time.monotonic() + 600
         self.active = None
+        self.launcher = None
+        self.launch_app = None
         self.store_id = None
         self.marker_digest = None
         self.metadata_folder = None
@@ -157,14 +159,14 @@ class Trial:
             raise ValueError('Store ownership marker changed')
         return marker
 
-    def identity(self, pid, app):
+    def identity(self, pid, app, *, exclusive=True):
         self.owned()
         executable = str(app / 'Contents/MacOS/Levistica')
         value = {'pid': pid, 'path': self.run(['/bin/ps', '-p', str(pid), '-o', 'comm=']).decode().strip(),
                  'started': self.run(['/bin/ps', '-p', str(pid), '-o', 'lstart=']).decode().strip(),
                  'uid': int(self.run(['/bin/ps', '-p', str(pid), '-o', 'uid=']).strip())}
         if (value['path'] != executable or not value['started'] or value['uid'] != os.getuid()
-                or self.apps() != [(pid, executable)]
+                or (exclusive and self.apps() != [(pid, executable)])
                 or stores.runtime_flags(pid) != {stores.STORE_KEY: self.store_id, stores.METADATA_KEY: '1', 'LEVISTICA_EPHEMERAL': '1'}):
             raise ValueError('Unexpected process or missing isolation; no signal sent')
         return value
@@ -175,34 +177,66 @@ class Trial:
         self.owned()
         if self.inspect(app) != expected:
             raise ValueError('Changed input bundle')
+        if time.monotonic() >= self.deadline:
+            raise TimeoutError('Launch deadline exceeded; no app started')
+        executable = app / 'Contents/MacOS/Levistica'
+        if executable.is_symlink() or not executable.is_file():
+            raise ValueError('A real verified executable is required')
         self.arm_startup()
-        self.run(['/usr/bin/open', '-n', '--env', 'LEVISTICA_EPHEMERAL=1', '--env',
-                  stores.STORE_KEY + '=' + self.store_id, '--env', stores.METADATA_KEY + '=1', str(app)])
+        environment = {k: v for k, v in os.environ.items() if not k.startswith('LEVISTICA_')}
+        environment.update(LEVISTICA_EPHEMERAL='1', **{stores.STORE_KEY: self.store_id, stores.METADATA_KEY: '1'})
+        self.launch_app = app
+        self.launcher = subprocess.Popen([str(executable)], env=environment,
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.result['launchMethod'] = 'verified-executable'
+        self.result.setdefault('requestedPIDs', []).append(self.launcher.pid)
         limit = min(self.deadline, time.monotonic() + 15)
         while time.monotonic() < limit:
+            if self.launcher.poll() is not None:
+                raise ValueError('The requested executable exited before verification')
             found = self.apps()
             if found:
-                if len(found) != 1:
-                    raise ValueError('Unexpected additional application')
-                value = self.identity(found[0][0], app)
+                value = self.identity(self.launcher.pid, app, exclusive=False)
+                if value['pid'] != self.launcher.pid:
+                    raise ValueError('Requested child PID differs')
                 self.active = (app, value)
+                if found != [(self.launcher.pid, str(executable))]:
+                    raise ValueError('Unexpected application; only the verified child may be stopped')
+                if self.inspect(app) != expected:
+                    raise ValueError('Input bundle changed during launch')
                 return value['pid']
             time.sleep(.1)
         raise TimeoutError('Measurement launch did not complete')
 
     def stop(self):
+        if self.launcher is not None and self.launcher.poll() is not None:
+            self.active = self.launcher = self.launch_app = None
+            return
+        # A failed/interrupted startup may still have a live owned child. Never
+        # obtain cleanup authority from another PID found in the inventory.
+        if self.active is None and self.launcher is not None:
+            value = self.identity(self.launcher.pid, self.launch_app, exclusive=False)
+            if value['pid'] != self.launcher.pid:
+                raise ValueError('Cleanup child PID differs; no signal sent')
+            self.active = (self.launch_app, value)
         if self.active is None:
             return
         app, value = self.active
-        if self.identity(value['pid'], app) != value:
+        if self.launcher is not None and value['pid'] != self.launcher.pid:
+            raise ValueError('Cleanup must target the requested child')
+        if self.identity(value['pid'], app, exclusive=False) != value:
             raise ValueError('Process changed; no signal sent')
         os.kill(value['pid'], signal.SIGTERM)
         limit = min(self.deadline, time.monotonic() + 10)
         while time.monotonic() < limit:
-            if not self.apps():
-                self.active = None
+            if ((self.launcher is not None and self.launcher.poll() is not None)
+                    or (self.launcher is None and not self.apps())):
+                self.active = self.launcher = self.launch_app = None
                 return
-            if self.identity(value['pid'], app) != value:
+            # Once SIGTERM has been sent, an exiting child's ps/environment
+            # fields may disappear before waitpid reports completion. Poll the
+            # original Popen child; never re-adopt a PID or send another signal.
+            if self.launcher is None and self.identity(value['pid'], app, exclusive=False) != value:
                 raise ValueError('Shutdown identity changed')
             time.sleep(.1)
         raise TimeoutError('Shutdown did not finish; no force kill attempted')
@@ -404,6 +438,9 @@ class Trial:
         self.session_name = name
 
     def finish(self):
+        operation_deadline = self.deadline
+        self.deadline = time.monotonic() + 30
+        self.result['cleanupBudgetSeconds'] = 30
         try:
             self.stop()
             remaining = len(self.apps())
@@ -412,7 +449,8 @@ class Trial:
                 self.result.update(success=False, manualInspectionRequired=True)
         except (Exception, KeyboardInterrupt) as error:
             self.result.update(success=False, manualInspectionRequired=True, cleanupErrorType=type(error).__name__)
-        self.result['elapsedSeconds'] = 600 - (self.deadline - time.monotonic())
+        self.deadline = operation_deadline
+        self.result['elapsedSeconds'] = 600 - (operation_deadline - time.monotonic())
         path = self.work / 'result.json'
         path.write_text(json.dumps(self.result, indent=2) + '\n')
         path.chmod(0o600)

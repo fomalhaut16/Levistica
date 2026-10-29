@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('session_update_test', ROOT / 'script/rehearse-session-update.py')
@@ -146,6 +146,84 @@ class SessionUpdateTests(unittest.TestCase):
             self.trial.finish()
         self.assertFalse(self.trial.result['success'])
         self.assertTrue(self.trial.result['manualInspectionRequired'])
+        kill.assert_not_called()
+
+    def launch_fixture(self):
+        executable = self.baseline / 'Contents/MacOS/Levistica'
+        executable.parent.mkdir(parents=True)
+        executable.write_bytes(b'synthetic executable; never executed')
+        self.trial.store_id = 'generated-owned-uuid'
+        child = Mock(pid=3)
+        child.poll.return_value = None
+        value = {'pid':3,'path':str(executable),'started':'original','uid':os.getuid()}
+        return executable, child, value
+
+    def test_start_uses_verified_executable_exact_child_and_filtered_environment(self):
+        executable, child, value = self.launch_fixture()
+        inherited = {'SAFE':'synthetic','LEVISTICA_EPHEMERAL':'0',s.stores.STORE_KEY:'unowned',
+                     s.stores.REQUEST_KEY:'cleanup','LEVISTICA_MALLOC_STACKS':'1','LEVISTICA_SESSION_TEST_ID':'unrelated'}
+        with patch.dict(s.os.environ,inherited,clear=True), patch.object(self.trial,'apps',side_effect=[[],[(3,str(executable))]]), patch.object(self.trial,'owned'), patch.object(self.trial,'inspect',return_value={'source':'verified'}), patch.object(self.trial,'arm_startup'), patch.object(self.trial,'identity',return_value=value) as identity, patch.object(s.subprocess,'Popen',return_value=child) as launch:
+            self.assertEqual(self.trial.start(self.baseline,{'source':'verified'}),3)
+        args, kwargs = launch.call_args
+        self.assertEqual(args,([str(executable)],))
+        self.assertEqual(kwargs['env'],{'SAFE':'synthetic','LEVISTICA_EPHEMERAL':'1',s.stores.STORE_KEY:'generated-owned-uuid',s.stores.METADATA_KEY:'1'})
+        self.assertEqual(kwargs['stdout'],s.subprocess.DEVNULL)
+        self.assertEqual(kwargs['stderr'],s.subprocess.DEVNULL)
+        identity.assert_called_once_with(3,self.baseline,exclusive=False)
+        self.assertEqual(self.trial.result['requestedPIDs'],[3])
+
+    def test_foreign_inventory_pid_is_not_adopted_and_only_child_is_cleaned(self):
+        executable, child, value = self.launch_fixture()
+        foreign=(99,'/foreign/Levistica.app/Contents/MacOS/Levistica')
+        def stopped(pid, signal):
+            self.assertEqual(pid,3)
+            child.poll.return_value=0
+        with patch.object(self.trial,'apps',side_effect=[[],[foreign],[foreign]]), patch.object(self.trial,'owned'), patch.object(self.trial,'inspect',return_value={'source':'verified'}), patch.object(self.trial,'arm_startup'), patch.object(self.trial,'identity',return_value=value) as identity, patch.object(s.subprocess,'Popen',return_value=child), patch.object(s.os,'kill',side_effect=stopped) as kill:
+            with self.assertRaises(ValueError):self.trial.start(self.baseline,{'source':'verified'})
+            self.trial.finish()
+        self.assertEqual(identity.call_args_list[0].args[0],3)
+        kill.assert_called_once_with(3,s.signal.SIGTERM)
+        self.assertEqual(self.trial.result['remainingAppCount'],1)
+        self.assertTrue(self.trial.result['manualInspectionRequired'])
+
+    def test_early_child_exit_and_expired_launch_do_not_adopt_another_process(self):
+        executable, child, value=self.launch_fixture()
+        child.poll.return_value=1
+        with patch.object(self.trial,'apps',return_value=[]), patch.object(self.trial,'owned'), patch.object(self.trial,'inspect',return_value={}), patch.object(self.trial,'arm_startup'), patch.object(self.trial,'identity') as identity, patch.object(s.subprocess,'Popen',return_value=child), self.assertRaises(ValueError):
+            self.trial.start(self.baseline,{})
+        identity.assert_not_called()
+        self.trial.deadline=s.time.monotonic()-1
+        with patch.object(self.trial,'apps',return_value=[]), patch.object(self.trial,'owned'), patch.object(self.trial,'inspect',return_value={}), patch.object(self.trial,'arm_startup') as arm, patch.object(s.subprocess,'Popen') as launch, self.assertRaises(TimeoutError):
+            self.trial.start(self.baseline,{})
+        launch.assert_not_called();arm.assert_not_called()
+
+    def test_interrupted_startup_can_clean_its_verified_child_after_main_deadline(self):
+        executable, child, value=self.launch_fixture()
+        self.trial.launcher=child;self.trial.launch_app=self.baseline
+        self.trial.deadline=s.time.monotonic()-1
+        def stopped(pid, signal):child.poll.return_value=0
+        with patch.object(self.trial,'identity',return_value=value), patch.object(s.os,'kill',side_effect=stopped) as kill, patch.object(self.trial,'apps',return_value=[]):self.trial.finish()
+        kill.assert_called_once_with(3,s.signal.SIGTERM)
+        self.assertEqual(self.trial.result['remainingAppCount'],0)
+        self.assertIsNone(self.trial.active)
+
+    def test_shutdown_polls_original_child_when_exit_metadata_disappears(self):
+        executable, child, value=self.launch_fixture()
+        self.trial.launcher=child;self.trial.launch_app=self.baseline
+        self.trial.active=(self.baseline,value)
+        child.poll.side_effect=[None,None,None,0]
+        with patch.object(self.trial,'identity',side_effect=[value,ValueError('exiting metadata')]) as identity, patch.object(s.os,'kill') as kill, patch.object(s.time,'sleep'):
+            self.trial.stop()
+        identity.assert_called_once_with(3,self.baseline,exclusive=False)
+        kill.assert_called_once_with(3,s.signal.SIGTERM)
+        self.assertIsNone(self.trial.active)
+
+    def test_changed_requested_child_or_bundle_is_never_adopted(self):
+        executable, child, value=self.launch_fixture()
+        with patch.object(self.trial,'apps',side_effect=[[],[(3,str(executable))]]), patch.object(self.trial,'owned'), patch.object(self.trial,'inspect',side_effect=[{}, {'changed':True}]), patch.object(self.trial,'arm_startup'), patch.object(self.trial,'identity',return_value=value), patch.object(s.subprocess,'Popen',return_value=child), self.assertRaises(ValueError):
+            self.trial.start(self.baseline,{})
+        self.trial.active=None
+        with patch.object(self.trial,'identity',return_value=dict(value,pid=99)), patch.object(s.os,'kill') as kill, self.assertRaises(ValueError):self.trial.stop()
         kill.assert_not_called()
 
     def test_generated_pair_is_restored_with_the_old_revision_and_newer_data_retained(self):
