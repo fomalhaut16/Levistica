@@ -175,6 +175,7 @@ def verify(value, *, package=False, installed=False):
               'source': info['LevisticaSourceRevision'], 'executableSHA256': digest,
               'artifactKind': 'installed' if installed else 'package' if package else 'archive'}
     process = None
+    launcher = None
     try:
         record['verificationRevision'] = run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']).decode().strip()
         record['verificationDirty'] = bool(run(['git', '-C', str(ROOT), 'status', '--porcelain', '--untracked-files=normal']).strip())
@@ -184,17 +185,26 @@ def verify(value, *, package=False, installed=False):
             raise ValueError('An unlocked screen is required; no app launched')
         if candidates():
             raise ValueError('Close existing Levistica before this isolated check')
-        run(['/usr/bin/open', '-n', '--env', 'LEVISTICA_EPHEMERAL=1', str(app)])
+        # Launch the verified executable directly, without bundle-ID resolution
+        # or environment forwarding through another launcher. Never log env.
+        environment = {k: v for k, v in os.environ.items() if not k.startswith('LEVISTICA_')}
+        environment['LEVISTICA_EPHEMERAL'] = '1'
+        launcher = subprocess.Popen([str(executable)], env=environment,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        record['launchMethod'] = 'verified-executable'
+        record['requestedPID'] = launcher.pid
         limit = time.monotonic() + 10
         while time.monotonic() < limit:
+            if launcher.poll() is not None:
+                raise ValueError('The requested executable exited before verification')
             found = candidates()
             if found:
-                if len(found) != 1 or found[0][1] != str(executable):
-                    raise ValueError('Unexpected application launched; no signal sent')
-                observed = identity(found[0][0])
-                if not owned(observed, executable):
-                    raise ValueError('Isolation could not be verified; no signal sent')
+                observed = identity(launcher.pid)
+                if observed['pid'] != launcher.pid or not owned(observed, executable):
+                    raise ValueError('Requested process isolation could not be verified; no signal sent')
                 process = observed
+                if found != [(launcher.pid, str(executable))]:
+                    raise ValueError('Unexpected application present; only the owned child may be stopped')
                 break
             time.sleep(.1)
         if process is None:
@@ -213,9 +223,19 @@ def verify(value, *, package=False, installed=False):
     except (Exception, KeyboardInterrupt) as error:
         record.update(errorType=type(error).__name__, manualInspectionRequired=True)
     finally:
+        # An interruption or a foreign app must not orphan our own verified
+        # child. A PID from the process inventory never becomes cleanup authority.
+        if process is None and launcher is not None and launcher.poll() is None:
+            try:
+                observed = identity(launcher.pid)
+                if observed['pid'] == launcher.pid and owned(observed, executable):
+                    process = observed
+            except (OSError, ValueError, subprocess.SubprocessError):
+                record['childIdentityUnavailable'] = True
         if process is not None:
             try:
                 stop_owned(process, executable)
+                launcher.wait(timeout=2)
                 record['ownedProcessStopped'] = True
             except (Exception, KeyboardInterrupt) as error:
                 record.update(success=False, cleanupErrorType=type(error).__name__, manualInspectionRequired=True)
