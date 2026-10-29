@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import WebKit
 @testable import Levistica
 
 struct NavigationPolicyTests {
@@ -76,5 +77,56 @@ struct WebKitBrowserIdentityTests {
         #expect(WebKitBrowserIdentity.applicationName(safariVersion: nil, appVersion: nil) == "Levistica")
         #expect(WebKitBrowserIdentity.applicationName(safariVersion: "26.6", appVersion: "1 Fake/99")
                 == "Version/26.6 Safari/605.1.15 Levistica")
+    }
+}
+
+struct PageConnectionInfoTests {
+    private func info(_ value: String?, loading: Bool = false, secure: Bool = true,
+                      failed: Bool = false, localPDF: Bool = false) -> PageConnectionInfo {
+        PageConnectionInfo(documentURL: value.flatMap(URL.init(string:)), isLoading: loading,
+                           hasOnlySecureContent: secure, failed: failed, isLocalPDF: localPDF)
+    }
+
+    @Test func onlyCommittedHTTPSGetsAnHTTPSLabel() {
+        #expect(info(nil).kind == .none)
+        #expect(info(nil, loading: true).kind == .loading)
+        #expect(info("https://example.org/", loading: true).kind == .loading)
+        #expect(info("https://example.org/", failed: true).kind == .unavailable)
+        #expect(info("https://example.org/").kind == .https)
+        #expect(info("https://example.org/", secure: false).kind == .mixedContent)
+        #expect(info("http://example.org/").kind == .http)
+    }
+
+    @Test func originOmitsPathsQueriesFragmentsAndDefaultPorts() {
+        #expect(info("https://EXAMPLE.org:443/synthetic?private=fixture#fragment").origin == "https://example.org")
+        #expect(info("http://example.org:80/path").origin == "http://example.org")
+        #expect(info("https://example.org:8443/path").origin == "https://example.org:8443")
+        #expect(info("http://[::1]:8080/path").origin == "http://[::1]:8080")
+        #expect(info("https://例え.テスト/path").origin == "https://xn--r8jz45g.xn--zckzah")
+    }
+
+    @Test(arguments: ["https://synthetic:fixture@example.org/", "about:blank", "data:text/html,fixture", "file:///tmp/synthetic.pdf"])
+    func unsupportedOrCredentialBearingURLsDoNotClaimTLS(value: String) {
+        #expect(info(value).kind == .none)
+        #expect(info(value).origin == nil)
+    }
+
+    @Test func localPDFHasNoNetworkOrigin() {
+        let result = info("file:///tmp/synthetic.pdf", localPDF: true)
+        #expect(result.kind == .localPDF)
+        #expect(result.origin == nil)
+    }
+
+    @Test @MainActor func uncommittedRequestsAndProcessFailureNeverKeepATLSLabel() {
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        #expect(runtime.connectionInfo.kind == .none)
+        runtime.load(URLRequest(url: URL(string: "https://example.invalid/synthetic")!))
+        #expect(runtime.connectionInfo.kind != .https)
+        runtime.webViewWebContentProcessDidTerminate(runtime.webView)
+        #expect(runtime.connectionInfo.kind == .unavailable)
+        runtime.dismissFailure()
+        #expect(runtime.connectionInfo.kind != .https)
+        #expect(runtime.connectionDocumentURL == nil)
+        runtime.webView.stopLoading()
     }
 }

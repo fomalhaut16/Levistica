@@ -19,6 +19,7 @@ struct BrowserNavigationBar: View {
                 Button("再読み込み", systemImage: "arrow.clockwise") { tab.page?.reload() }
                     .disabled(tab.page == nil).accessibilityIdentifier("reloadButton").help("再読み込み")
             }
+            PageConnectionBadge(info: tab.page?.connectionInfo)
             TextField("URLまたは検索語を入力", text: Binding(
                 get: { tab.addressDraft },
                 set: {
@@ -73,6 +74,66 @@ struct BrowserNavigationBar: View {
         }
         .onChange(of: addressFocused) { _, focused in
             if !focused, !tab.hasEditedAddress, tab.inputError == nil, let url = tab.page?.url { tab.addressDraft = url.absoluteString }
+        }
+    }
+}
+
+
+private struct PageConnectionBadge: View {
+    let info: PageConnectionInfo?
+    @State private var showingDetails = false
+    private var kind: PageConnectionInfo.Kind { info?.kind ?? .none }
+    private var title: String {
+        switch kind {
+        case .none: "接続"
+        case .loading: "確認中"
+        case .http: "HTTP"
+        case .https: "HTTPS"
+        case .mixedContent: "混在"
+        case .localPDF: "PDF"
+        case .unavailable: "未確認"
+        }
+    }
+    private var symbol: String {
+        switch kind {
+        case .http, .mixedContent, .unavailable: "exclamationmark.triangle"
+        case .https: "network"
+        case .localPDF: "doc"
+        default: "info.circle"
+        }
+    }
+    private var explanation: String {
+        switch kind {
+        case .none: "読み込み済みのページがありません。"
+        case .loading: "読み込み中です。接続情報の更新を待っています。"
+        case .http: "HTTP接続です。通信内容は暗号化されていません。"
+        case .https: "HTTPS接続です。ページ内容の正当性は別に確認してください。"
+        case .mixedContent: "HTTPSページですが、すべてのリソースが暗号化された接続で読み込まれたとは確認できません。"
+        case .localPDF: "選択したローカルPDFを表示しています。"
+        case .unavailable: "現在の接続を確認できません。表示されたエラーとURLを確認してください。"
+        }
+    }
+    var body: some View {
+        Button { showingDetails.toggle() } label: {
+            Label { Text(title) } icon: {
+                Image(systemName: symbol)
+                    .foregroundStyle(kind == .http || kind == .mixedContent ? Color.orange : Color.secondary)
+            }
+        }
+        .labelStyle(.titleAndIcon).font(.caption).fixedSize()
+        .accessibilityIdentifier("connectionInfoButton")
+        .help(explanation)
+        .popover(isPresented: $showingDetails) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("接続情報").font(.headline)
+                Text(explanation).accessibilityIdentifier("connectionExplanation")
+                if let origin = info?.origin {
+                    Text("表示中のページ")
+                    Text(origin).textSelection(.enabled).accessibilityIdentifier("connectionOrigin")
+                }
+                Button("閉じる") { showingDetails = false }
+                    .accessibilityIdentifier("closeConnectionInfoButton")
+            }.padding(16).frame(width: 300, alignment: .leading)
         }
     }
 }

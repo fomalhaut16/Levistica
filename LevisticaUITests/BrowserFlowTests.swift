@@ -3415,6 +3415,51 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testConnectionInfoUsesDisplayedPageAndRejectsTLSFailure() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let tls = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_TLS_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        defer { app.terminate() }
+        app.activate()
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        let status = app.buttons["connectionInfoButton"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        let http = expectation(for: NSPredicate(format: "label CONTAINS 'HTTP'"), evaluatedWith: status)
+        wait(for: [http], timeout: 5)
+        app.typeKey("l", modifierFlags: .command)
+        let address = app.textFields["addressField"]
+        waitForInputIndicator(in: app)
+        address.typeKey("a", modifierFlags: .command)
+        address.typeText("https://not-displayed.invalid/synthetic")
+        waitForInputIndicator(in: app)
+        status.click()
+        XCTAssertTrue(app.staticTexts["connectionExplanation"].waitForExistence(timeout: 5))
+        let origin = app.staticTexts["connectionOrigin"]
+        XCTAssertEqual(origin.value as? String ?? origin.label, base)
+        XCTAssertTrue((app.staticTexts["connectionExplanation"].value as? String
+                       ?? app.staticTexts["connectionExplanation"].label).contains("暗号化されていません"))
+        XCTAssertTrue(attachWindowImage(app, name: "connection-http-draft-origin", knownFrame: app.windows["browser"].frame))
+        app.buttons["closeConnectionInfoButton"].click()
+        XCTAssertEqual(address.value as? String, "https://not-displayed.invalid/synthetic")
+        app.typeKey("l", modifierFlags: .command)
+        app.typeKey(.escape, modifierFlags: [])
+        submit(tls + "/one", in: app)
+        XCTAssertTrue(app.staticTexts["errorMessage"].waitForExistence(timeout: 15))
+        let failed = expectation(for: NSPredicate(format: "label CONTAINS '未確認'"), evaluatedWith: status)
+        wait(for: [failed], timeout: 5)
+        status.click()
+        XCTAssertTrue(app.staticTexts["connectionExplanation"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["connectionOrigin"].exists)
+        XCTAssertTrue(attachWindowImage(app, name: "connection-tls-rejected", knownFrame: app.windows["browser"].frame))
+        app.buttons["closeConnectionInfoButton"].click()
+    }
+
+    @MainActor
     func testUntrustedCertificateIsRejected() throws {
         let url = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_TLS_FIXTURE_URL"])
         XCTAssertTrue(url.hasPrefix("https://127.0.0.1:"))
