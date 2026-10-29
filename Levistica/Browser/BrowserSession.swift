@@ -51,6 +51,7 @@ final class BrowserSession {
     private(set) var tabs: [BrowserTab]
     private(set) var selectedID: UUID
     var addressFocusRequest = 0
+    var tabSearchFocusRequest = 0
     var findFocusRequest = 0
     private var dataStore: WKWebsiteDataStore?
     private var store: SessionStore?

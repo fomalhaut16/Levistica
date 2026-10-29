@@ -116,6 +116,8 @@ private struct BrowserCommands: Commands {
                 Button("このタブを休眠…") { session.requestSelectedTabSleep() }
                     .disabled(session.page == nil || session.isRequestingSleep)
                 Divider()
+                Button("タブを検索") { session.tabSearchFocusRequest += 1 }
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
                 Button("次のタブ") { session.selectAdjacent(1) }
                     .keyboardShortcut("]", modifiers: [.command, .shift])
                 Button("前のタブ") { session.selectAdjacent(-1) }

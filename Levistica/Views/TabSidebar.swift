@@ -3,6 +3,8 @@ import SwiftUI
 struct TabSidebar: View {
     @Bindable var session: BrowserSession
     var didSelectTab: (() -> Void)? = nil
+    var focusSearchOnAppear = false
+    @FocusState private var searchFocused: Bool
     @State private var filter = ""
 
     private var visibleTabs: [BrowserTab] {
@@ -26,6 +28,14 @@ struct TabSidebar: View {
             TextField("タブを検索", text: $filter)
                 .textFieldStyle(.roundedBorder).padding(.horizontal, 10)
                 .accessibilityIdentifier("tabSearchField")
+                .focused($searchFocused)
+                .onSubmit {
+                    if let tab = visibleTabs.first {
+                        filter = ""
+                        session.select(tab.id)
+                        didSelectTab?()
+                    }
+                }
             ScrollViewReader { proxy in
                 List(selection: Binding<UUID?>(
                     get: { session.selectedID },
@@ -80,6 +90,13 @@ struct TabSidebar: View {
             Text("\(session.tabs.count)タブ・読み込み済み\(session.loadedPageCount)")
                 .font(.caption).foregroundStyle(.secondary)
                 .padding(.bottom, 8).accessibilityIdentifier("tabLoadSummary")
+        }
+        .onChange(of: session.tabSearchFocusRequest) { searchFocused = true }
+        .task {
+            guard focusSearchOnAppear else { return }
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            searchFocused = true
         }
         .onChange(of: session.selectedID) {
             if !visibleTabs.contains(where: { $0.id == session.selectedID }) { filter = "" }
@@ -169,7 +186,7 @@ struct HorizontalTabBar: View {
             Button("タブ一覧", systemImage: "list.bullet") { showingList.toggle() }
                 .labelStyle(.iconOnly).accessibilityIdentifier("showTabListButton")
                 .popover(isPresented: $showingList) {
-                    TabSidebar(session: session, didSelectTab: { showingList = false })
+                    TabSidebar(session: session, didSelectTab: { showingList = false }, focusSearchOnAppear: true)
                         .frame(width: 280, height: 420)
                 }
             Text("\(session.tabs.count)タブ・読み込み済み\(session.loadedPageCount)")
@@ -178,6 +195,7 @@ struct HorizontalTabBar: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
         .frame(height: 58)
+        .onChange(of: session.tabSearchFocusRequest) { showingList = true }
     }
 }
 

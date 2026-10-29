@@ -1278,6 +1278,72 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testKeyboardTabSearchWorksInBothLayoutsWithoutLosingPageInput() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 150
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launchEnvironment["LEVISTICA_SESSION_FIXTURE_BASE"] = base
+        app.launchEnvironment["LEVISTICA_LARGE_SESSION_FIXTURE"] = "100"
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        submit(base + "/site-data-check", in: app)
+        let draft = app.webViews.textFields["Storage draft"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        draft.click()
+        waitForInputIndicator(in: app)
+        draft.typeText("tab search draft")
+        waitForInputIndicator(in: app)
+        for horizontal in [false, true] {
+            if horizontal {
+                app.buttons["toggleTabLayoutButton"].click()
+                XCTAssertTrue(app.scrollViews["horizontalTabList"].waitForExistence(timeout: 5))
+            }
+            XCTAssertTrue(app.buttons["reloadButton"].waitForExistence(timeout: 10))
+            app.activate()
+            waitForInputIndicator(in: app)
+            app.typeKey("a", modifierFlags: [.command, .shift])
+            let search = app.textFields["tabSearchField"]
+            XCTAssertTrue(search.waitForExistence(timeout: 5))
+            waitForInputIndicator(in: app)
+            // Type through the application's current focus; do not click the field.
+            app.typeText("no matching fixture tab")
+            app.typeKey(.return, modifierFlags: [])
+            XCTAssertEqual(search.value as? String, "no matching fixture tab")
+            XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/site-data-check")
+            app.typeKey("a", modifierFlags: .command)
+            let query = horizontal ? "#tab-100" : "Scale tab 100"
+            app.typeText(query)
+            waitForInputIndicator(in: app)
+            XCTAssertEqual(search.value as? String, query)
+            XCTAssertTrue(attachWindowImage(app, name: horizontal ? "keyboard-tab-search-horizontal" : "keyboard-tab-search-vertical", knownFrame: app.windows["browser"].frame))
+            app.typeKey(.return, modifierFlags: [])
+            XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+            XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/one#tab-100")
+            XCTAssertTrue(app.staticTexts["100タブ・読み込み済み2"].exists)
+            if horizontal { XCTAssertTrue(search.waitForNonExistence(timeout: 5)) }
+            XCTAssertTrue(app.buttons["reloadButton"].waitForExistence(timeout: 10))
+            app.activate()
+            waitForInputIndicator(in: app)
+            app.typeKey("a", modifierFlags: [.command, .shift])
+            XCTAssertTrue(search.waitForExistence(timeout: 5))
+            waitForInputIndicator(in: app)
+            app.typeText("site-data-check")
+            waitForInputIndicator(in: app)
+            XCTAssertEqual(search.value as? String, "site-data-check")
+            app.typeKey(.return, modifierFlags: [])
+            XCTAssertTrue(draft.waitForExistence(timeout: 5))
+            XCTAssertEqual(draft.value as? String, "tab search draft")
+            XCTAssertTrue(app.staticTexts["100タブ・読み込み済み2"].exists)
+            if horizontal { XCTAssertTrue(search.waitForNonExistence(timeout: 5)) }
+        }
+    }
+
+    @MainActor
     func testHorizontalHundredTabsSearchAndRestoreWithoutLoadingEveryPage() throws {
         continueAfterFailure = false
         executionTimeAllowance = 120
