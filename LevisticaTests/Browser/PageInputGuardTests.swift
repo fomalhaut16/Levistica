@@ -746,13 +746,14 @@ extension WebKitIntegrationTests {
                 let width = try #require(result["width"] as? Int)
                 let version = Bundle(for: WKWebView.self).object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
                 let affectedOrder = sourceFirst && (crossOrigin ? policy != "origin" : policy != "same-origin")
-                if version == "21624.4.5.11.5" && affectedOrder {
+                let reproducedVersions = ["21624.4.5.11.5", "21624.5.1.11.3"]
+                if reproducedVersions.contains(version) && affectedOrder {
                     // Reproduced in this OS's Safari and normal document scripts,
                     // not just native evaluation. Keep the expected policy check
                     // visible; other values or an engine fix must not be hidden.
                     let defaultWidth = crossOrigin ? 2 : 3
                     #expect(width == expected || width == defaultWidth)
-                    withKnownIssue("System WebKit 21624.4.5.11.5 can send the default referrer when src precedes referrerPolicy") {
+                    withKnownIssue("System WebKit \(version) can send the default referrer when src precedes referrerPolicy") {
                         #expect(width == expected)
                     }
                 } else {
