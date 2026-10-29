@@ -51,7 +51,7 @@ if [[ "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" ==
     IDLE_TEST=testReleaseTwentyTabIdleRevisit
     IDLE_BUILD_ENV=(CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=0 LEVISTICA_MEASUREMENT=1)
 fi
-unset LEVISTICA_PROFILE_WORKLOAD LEVISTICA_PROFILE_IDLE_WORKLOAD LEVISTICA_DEADLINE_WORKLOAD LEVISTICA_VIEWPORT_PROBE
+unset LEVISTICA_LEGACY_BOOKMARK_FIXTURE LEVISTICA_PROFILE_WORKLOAD LEVISTICA_PROFILE_IDLE_WORKLOAD LEVISTICA_DEADLINE_WORKLOAD LEVISTICA_VIEWPORT_PROBE
 if [[ "$MODE" == --public-viewport-ui || "$MODE" == --public-video-ui ]]; then
     IDLE_BUILD_ENV+=(LEVISTICA_VIEWPORT_PROBE=1)
 fi
@@ -283,6 +283,11 @@ else
     export LEVISTICA_FAILURE_FIXTURE_URL
     if [[ "$MODE" == --ui && -z "${TEST_ONLY:-}" ]]; then BUILD_ARGS+=(-only-testing:LevisticaUITests); fi
 fi
+if [[ ( "$MODE" == --ui || "$MODE" == --all ) && ( -z "${TEST_ONLY:-}" || "$TEST_ONLY" == LevisticaUITests || "$TEST_ONLY" == LevisticaUITests/BrowserFlowTests || "$TEST_ONLY" == LevisticaUITests/BrowserFlowTests/testLegacyBookmarksMigrateAndPersistAcrossRestart ) ]]; then
+    LEVISTICA_LEGACY_BOOKMARK_FIXTURE="$RUN_DIR/legacy-bookmark-fixture.json"
+    python3 "$ROOT_DIR/script/legacy-bookmark-fixture.py" prepare "$LEVISTICA_LEGACY_BOOKMARK_FIXTURE"
+    BUILD_ARGS+=("LEVISTICA_LEGACY_BOOKMARK_FIXTURE=$LEVISTICA_LEGACY_BOOKMARK_FIXTURE")
+fi
 if [[ -n "${LEVISTICA_FIXTURE_URL:-}" ]]; then BUILD_ARGS+=("LEVISTICA_FIXTURE_URL=$LEVISTICA_FIXTURE_URL"); fi
 if [[ -n "${LEVISTICA_TLS_FIXTURE_URL:-}" ]]; then BUILD_ARGS+=("LEVISTICA_TLS_FIXTURE_URL=$LEVISTICA_TLS_FIXTURE_URL"); fi
 if [[ -n "${LEVISTICA_FAILURE_FIXTURE_URL:-}" ]]; then BUILD_ARGS+=("LEVISTICA_FAILURE_FIXTURE_URL=$LEVISTICA_FAILURE_FIXTURE_URL"); fi
@@ -323,6 +328,9 @@ if (any(type(value) is not int or value < 0 for value in counts)
     raise SystemExit('No successful test execution in the result bundle; check TEST_ONLY and test results.')
 print(f'Verified test result: {counts[1]} passed of {counts[0]} total, {counts[2]} failed.')
 PYRESULT
+if [[ -n "${LEVISTICA_LEGACY_BOOKMARK_FIXTURE:-}" ]]; then
+    python3 "$ROOT_DIR/script/legacy-bookmark-fixture.py" verify "$LEVISTICA_LEGACY_BOOKMARK_FIXTURE"
+fi
 if [[ "$MODE" == --deadline-ui ]]; then
     wait "$DEADLINE_PID"
     DEADLINE_PID=""
