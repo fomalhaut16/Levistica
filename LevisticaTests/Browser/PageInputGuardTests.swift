@@ -598,6 +598,24 @@ struct PagePendingInputTests {
         #expect(js.exception == nil)
     }
 
+    @Test func syntheticLifecycleEventsCannotClearPendingDrafts() throws {
+        let js = try context()
+        js.evaluateScript("field.form={};edit('draft');fire('submit',field.form,{isTrusted:false});fire('pagehide',null,{isTrusted:false});")
+        #expect(js.evaluateScript("lastPending()")?.toBool() == true)
+        js.evaluateScript("field.value='';fire('reset',field.form,{isTrusted:false});fire('pageshow',null,{isTrusted:false});")
+        #expect(js.evaluateScript("lastPending()")?.toBool() == true)
+        #expect(js.exception == nil)
+    }
+
+    @Test func contentEditableFormattingIsAnEditEvenWhenTextDoesNotChange() throws {
+        let js = try context()
+        js.evaluateScript("const editor=new Element();editor.isContentEditable=true;editor.innerHTML='draft';fire('beforeinput',editor);editor.innerHTML='<b>draft</b>';fire('input',editor);")
+        #expect(js.evaluateScript("lastPending()")?.toBool() == true)
+        js.evaluateScript("editor.innerHTML='draft';fire('input',editor);")
+        #expect(js.evaluateScript("lastPending()")?.toBool() == false)
+        #expect(js.exception == nil)
+    }
+
     @Test func frameLimitFailsConservativelyWithoutDroppingProtection() {
         var state = PageInputActivityState()
         for index in 0..<128 { state.receive(frame: "frame-\(index)", revision: 0, pending: false) }

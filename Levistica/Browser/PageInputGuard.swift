@@ -32,13 +32,16 @@ final class PageInputGuard: NSObject, WKScriptMessageHandler {
             if (!(target instanceof Element)) return null;
             if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return target;
             if (target instanceof HTMLInputElement && !['button','submit','reset','image','hidden'].includes(target.type)) return target;
-            return target.isContentEditable ? target.closest('[contenteditable]') : null;
+            if (!target.isContentEditable) return null;
+            let editable = target;
+            while (editable.parentElement?.isContentEditable) editable = editable.parentElement;
+            return editable;
         };
         const value = target => {
             if (target instanceof HTMLInputElement && ['checkbox','radio'].includes(target.type)) return target.checked;
             if (target instanceof HTMLInputElement && target.type === 'file') return target.files.length > 0;
             if (target instanceof HTMLSelectElement) return JSON.stringify([...target.options].map(option => option.selected));
-            return target.isContentEditable ? target.textContent : target.value;
+            return target.isContentEditable ? target.innerHTML : target.value;
         };
         const remember = target => {
             if (!originals.has(target)) originals.set(target, value(target));
@@ -70,6 +73,7 @@ final class PageInputGuard: NSObject, WKScriptMessageHandler {
         document.addEventListener('input', input, true);
         document.addEventListener('change', input, true);
         document.addEventListener('submit', event => {
+            if (!event.isTrusted) return;
             // A successful native form submission is an explicit send action.
             // A prevented SPA submission may still contain an unsaved draft.
             queueMicrotask(() => {
@@ -81,10 +85,12 @@ final class PageInputGuard: NSObject, WKScriptMessageHandler {
             });
         }, true);
         document.addEventListener('reset', event => queueMicrotask(() => {
-            if (!event.defaultPrevented) notify();
+            if (event.isTrusted && !event.defaultPrevented) notify();
         }), true);
-        addEventListener('pageshow', notify);
-        addEventListener('pagehide', () => window.webkit.messageHandlers.levisticaInputActivity.postMessage({frame, revision, pending: false}));
+        addEventListener('pageshow', event => { if (event.isTrusted) notify(); });
+        addEventListener('pagehide', event => {
+            if (event.isTrusted) window.webkit.messageHandlers.levisticaInputActivity.postMessage({frame, revision, pending: false});
+        });
     })();
     """
 
