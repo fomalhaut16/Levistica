@@ -22,10 +22,10 @@ class NetworkPolicyFixtureTests(unittest.TestCase):
         self.worker.join(timeout=2)
         self.server.server_close()
 
-    def request(self, path, headers=None):
+    def request(self, path, headers=None, method='GET', body=None):
         client = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=3)
         try:
-            client.request('GET', path, headers=headers or {})
+            client.request(method, path, body=body, headers=headers or {})
             response = client.getresponse()
             return response.status, dict(response.getheaders()), response.read()
         finally:
@@ -66,3 +66,41 @@ class NetworkPolicyFixtureTests(unittest.TestCase):
                 self.assertIn(f'width="{width}"'.encode(), body)
                 self.assertNotIn(b'127.0.0.1',body)
                 self.assertNotIn(b'unrelated.invalid',body)
+
+    def test_csp_form_source_declares_policy_and_allows_only_its_synthetic_script(self):
+        for policy, allowed in [('self', "'self'"), ('none', "'none'"), ('cross', f'http://localhost:{self.server.server_port}')]:
+            status, headers, body = self.request(f'/csp-form-source?token={"a"*32}&policy={policy}&cross=1')
+            self.assertEqual(status, 200)
+            self.assertEqual(headers['Content-Security-Policy'],
+                             "default-src 'none'; script-src 'nonce-levistica-synthetic'; form-action " + allowed)
+            self.assertIn(b'<script nonce="levistica-synthetic">', body)
+            self.assertIn(b'securitypolicyviolation', body)
+            self.assertIn(f'action="http://localhost:{self.server.server_port}/csp-form-arrival?token={"a"*32}"'.encode(), body)
+            self.assertNotIn('Set-Cookie', headers)
+
+    def test_csp_form_count_is_per_server_and_token_and_counts_only_arrival_requests(self):
+        first, other = 'a'*32, 'b'*32
+        for token in (first, other):
+            status, headers, body = self.request('/csp-form-count?token='+token)
+            self.assertEqual(json.loads(body), {'requests':0})
+        self.request('/csp-form-source?token='+first+'&policy=self&cross=0')
+        self.assertEqual(json.loads(self.request('/csp-form-count?token='+first)[2]), {'requests':0})
+        status, headers, body = self.request('/csp-form-arrival?token='+first)
+        self.assertEqual(status,200)
+        self.assertIn(b'status:"arrived"',body)
+        self.assertEqual(json.loads(self.request('/csp-form-count?token='+first)[2]), {'requests':1})
+        self.assertEqual(json.loads(self.request('/csp-form-count?token='+other)[2]), {'requests':0})
+
+    def test_csp_form_routes_reject_malformed_token_policy_and_destination(self):
+        for path in ['/csp-form-count', '/csp-form-arrival?token=personal-text',
+                     '/csp-form-source?token='+('a'*32)+'&policy=unsafe&cross=0',
+                     '/csp-form-source?token='+('a'*32)+'&policy=self&cross=external']:
+            self.assertEqual(self.request(path)[0],400)
+
+    def test_csp_form_post_counts_only_the_fixed_synthetic_body(self):
+        token = 'c'*32
+        path = '/csp-form-arrival?token='+token
+        self.assertEqual(self.request(path, method='POST', body='token='+token)[0],200)
+        self.assertEqual(json.loads(self.request('/csp-form-count?token='+token)[2]), {'requests':1})
+        self.assertEqual(self.request(path, method='POST', body='unexpected')[0],400)
+        self.assertEqual(json.loads(self.request('/csp-form-count?token='+token)[2]), {'requests':1})

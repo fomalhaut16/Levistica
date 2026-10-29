@@ -692,6 +692,47 @@ extension WebKitIntegrationTests {
             return dictionary
         }
 
+        @Test(arguments: ["self", "none", "cross"], [false, true])
+        func cspFormActionAllowsOnlyTheDeclaredDestination(policy: String, crossOrigin: Bool) async throws {
+            for method in ["get", "post"] {
+                let (runtime, base) = try await page()
+                defer { runtime.stop() }
+                let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+                var source = try #require(URLComponents(url: base, resolvingAgainstBaseURL: false))
+                source.path = "/csp-form-source"
+                source.queryItems = [URLQueryItem(name: "token", value: token), URLQueryItem(name: "policy", value: policy),
+                                     URLQueryItem(name: "cross", value: crossOrigin ? "1" : "0"), URLQueryItem(name: "method", value: method)]
+                let sourceURL = try #require(source.url)
+                let script = """
+                return await new Promise((resolve,reject)=>{
+                    const frame=document.createElement('iframe'), token=\(String(reflecting: token));
+                    const origin=location.origin, crossOrigin='http://localhost:'+location.port;
+                    const cleanup=()=>{clearTimeout(timer);removeEventListener('message',receive);frame.remove();};
+                    const receive=event=>{
+                        if(event.source!==frame.contentWindow || ![origin,crossOrigin].includes(event.origin)
+                            || event.data?.token!==token || !['arrived','blocked'].includes(event.data.status))return;
+                        const result=event.data;cleanup();resolve(result);
+                    };
+                    const timer=setTimeout(()=>{cleanup();reject(new Error('CSP form fixture timeout'));},6000);
+                    addEventListener('message',receive);
+                    frame.src=\(String(reflecting: sourceURL.absoluteString));document.body.append(frame);
+                });
+                """
+                let result = try await evaluate(script, in: runtime)
+                let allowed = policy == "self" && crossOrigin == false || policy == "cross" && crossOrigin
+                #expect(result["status"] as? String == (allowed ? "arrived" : "blocked"))
+                if allowed == false {
+                    #expect(result["directive"] as? String == "form-action")
+                    #expect(result["disposition"] as? String == "enforce")
+                }
+                let counts = try await evaluate("""
+                    const response=await fetch('/csp-form-count?token=\(token)',{cache:'no-store',signal:AbortSignal.timeout(5000)});
+                    if(!response.ok)throw new Error('fixture count failed');return await response.json();
+                    """, in: runtime)
+                #expect(counts["requests"] as? Int == (allowed ? 1 : 0))
+            }
+        }
+
         @Test(arguments: [true, false])
         func corsExposesSafelistedHeadersOnlyWhenTheOriginIsAllowed(allowed: Bool) async throws {
             let (runtime, base) = try await page()

@@ -5,6 +5,8 @@ import io
 import wave
 import http.server
 import json
+import re
+from urllib.parse import parse_qs, urlsplit
 import pathlib
 import ssl
 import socket
@@ -139,7 +141,68 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
+    def csp_form_response(self):
+        route = urlsplit(self.path)
+        if route.path not in ('/csp-form-source', '/csp-form-arrival', '/csp-form-count'):
+            return False
+        params = parse_qs(route.query)
+        token = params.get('token', [''])[0]
+        if not re.fullmatch(r'[a-f0-9]{32}', token):
+            self.send_error(400)
+            return True
+        if self.command == 'POST':
+            expected = ('token=' + token).encode()
+            if (route.path != '/csp-form-arrival' or self.headers.get('Content-Length') != str(len(expected))
+                    or self.rfile.read(len(expected)) != expected):
+                self.close_connection = True
+                self.send_error(400)
+                return True
+        origin = f'http://127.0.0.1:{self.server.server_port}'
+        policy_header = None
+        content_type = 'text/html; charset=utf-8'
+        if route.path == '/csp-form-count':
+            with self.server.csp_form_lock:
+                count = self.server.csp_form_counts.get(token, 0)
+            body = json.dumps({'requests': count}).encode()
+            content_type = 'application/json'
+        elif route.path == '/csp-form-arrival':
+            with self.server.csp_form_lock:
+                self.server.csp_form_counts[token] = self.server.csp_form_counts.get(token, 0) + 1
+            body = ('<!doctype html><title>Form arrived</title><script>'
+                    'parent.postMessage({token:' + json.dumps(token) + ',status:"arrived"},'
+                    + json.dumps(origin) + ');</script>').encode()
+        else:
+            policy = params.get('policy', [''])[0]
+            cross = params.get('cross', [''])[0]
+            method = params.get('method', ['get'])[0]
+            if policy not in ('self', 'none', 'cross') or cross not in ('0', '1') or method not in ('get', 'post'):
+                self.send_error(400)
+                return True
+            target_origin = f'http://localhost:{self.server.server_port}' if cross == '1' else origin
+            allowed = f'http://localhost:{self.server.server_port}' if policy == 'cross' else "'" + policy + "'"
+            policy_header = "default-src 'none'; script-src 'nonce-levistica-synthetic'; form-action " + allowed
+            body = ('<!doctype html><title>CSP form source</title>'
+                    '<form id="probe" method="' + method + '" action="' + target_origin + '/csp-form-arrival?token=' + token + '">'
+                    '<input type="hidden" name="token" value="' + token + '"></form>'
+                    '<script nonce="levistica-synthetic">'
+                    'document.addEventListener("securitypolicyviolation",event=>{'
+                    'if(event.effectiveDirective==="form-action")parent.postMessage({token:'
+                    + json.dumps(token) + ',status:"blocked",directive:event.effectiveDirective,'
+                    'disposition:event.disposition},' + json.dumps(origin) + ');});'
+                    'document.getElementById("probe").submit();</script>').encode()
+        self.send_response(200)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        if policy_header:
+            self.send_header('Content-Security-Policy', policy_header)
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def do_GET(self):
+        if self.csp_form_response():
+            return
         if self.path.split('?', 1)[0] == '/network-policy-image':
             origin = f'http://127.0.0.1:{self.server.server_port}'
             referer = self.headers.get('Referer', '')
@@ -510,6 +573,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if self.csp_form_response():
+            return
         if self.path == '/ime-result':
             if self.headers.get('Origin') != f'http://127.0.0.1:{self.server.server_port}':
                 self.send_error(403)
@@ -633,6 +698,8 @@ class FixtureHTTPServer(http.server.ThreadingHTTPServer):
         super().__init__(*args, **kwargs)
         self.address_route_event = threading.Event()
         self.ime_result = None
+        self.csp_form_lock = threading.Lock()
+        self.csp_form_counts = {}
 
 
 def main():
