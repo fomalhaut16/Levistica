@@ -233,7 +233,10 @@ class Trial:
                     or (self.launcher is None and not self.apps())):
                 self.active = self.launcher = self.launch_app = None
                 return
-            if self.identity(value['pid'], app, exclusive=False) != value:
+            # Once SIGTERM has been sent, an exiting child's ps/environment
+            # fields may disappear before waitpid reports completion. Poll the
+            # original Popen child; never re-adopt a PID or send another signal.
+            if self.launcher is None and self.identity(value['pid'], app, exclusive=False) != value:
                 raise ValueError('Shutdown identity changed')
             time.sleep(.1)
         raise TimeoutError('Shutdown did not finish; no force kill attempted')

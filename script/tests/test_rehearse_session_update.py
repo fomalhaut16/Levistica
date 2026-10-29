@@ -207,6 +207,17 @@ class SessionUpdateTests(unittest.TestCase):
         self.assertEqual(self.trial.result['remainingAppCount'],0)
         self.assertIsNone(self.trial.active)
 
+    def test_shutdown_polls_original_child_when_exit_metadata_disappears(self):
+        executable, child, value=self.launch_fixture()
+        self.trial.launcher=child;self.trial.launch_app=self.baseline
+        self.trial.active=(self.baseline,value)
+        child.poll.side_effect=[None,None,None,0]
+        with patch.object(self.trial,'identity',side_effect=[value,ValueError('exiting metadata')]) as identity, patch.object(s.os,'kill') as kill, patch.object(s.time,'sleep'):
+            self.trial.stop()
+        identity.assert_called_once_with(3,self.baseline,exclusive=False)
+        kill.assert_called_once_with(3,s.signal.SIGTERM)
+        self.assertIsNone(self.trial.active)
+
     def test_changed_requested_child_or_bundle_is_never_adopted(self):
         executable, child, value=self.launch_fixture()
         with patch.object(self.trial,'apps',side_effect=[[],[(3,str(executable))]]), patch.object(self.trial,'owned'), patch.object(self.trial,'inspect',side_effect=[{}, {'changed':True}]), patch.object(self.trial,'arm_startup'), patch.object(self.trial,'identity',return_value=value), patch.object(s.subprocess,'Popen',return_value=child), self.assertRaises(ValueError):
