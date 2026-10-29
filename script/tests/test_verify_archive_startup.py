@@ -38,6 +38,10 @@ class ArchiveStartupTests(unittest.TestCase):
         self.process = {'pid': 123456, 'path': str(self.executable), 'started': 'fixture start',
                         'uid': os.getuid(), 'ephemeral': True}
         self.commands = []
+        self.launch = patch.object(s.subprocess, 'Popen').start()
+        self.launch.return_value.pid = 123456
+        self.launch.return_value.poll.return_value = None
+        self.launch.return_value.wait.return_value = 0
 
     def run_command(self, command):
         self.commands.append(command)
@@ -70,7 +74,7 @@ class ArchiveStartupTests(unittest.TestCase):
         with patch.object(s, 'run', side_effect=command), patch.object(s, 'identity') as identify, patch.object(s.os, 'kill') as kill:
             result = s.verify(self.archive)
         self.assertFalse(result['success'])
-        self.assertFalse(any(arguments[0] == '/usr/bin/open' for arguments in self.commands))
+        self.launch.assert_not_called()
         identify.assert_not_called()
         kill.assert_not_called()
 
@@ -81,12 +85,14 @@ class ArchiveStartupTests(unittest.TestCase):
         self.assertFalse(result['guiVerified'])
         self.assertFalse(result['profileMigrationTested'])
         stop.assert_called_once_with(self.process, self.executable)
-        self.assertIn(['/usr/bin/open','-n','--env','LEVISTICA_EPHEMERAL=1',str(self.app)],self.commands)
+        self.assertEqual(self.launch.call_args.args[0], [str(self.executable)])
+        self.assertEqual(self.launch.call_args.kwargs['env']['LEVISTICA_EPHEMERAL'], '1')
+        self.assertEqual(result['requestedPID'], 123456)
 
     def test_existing_normal_app_blocks_open_and_is_never_signalled(self):
         with patch.object(s,'run',side_effect=self.run_command), patch.object(s,'candidates',return_value=[(7,'/normal/Levistica.app/Contents/MacOS/Levistica')]), patch.object(s,'stop_owned') as stop:
             self.assertFalse(s.verify(self.archive)['success'])
-        self.assertFalse(any(command[0]=='/usr/bin/open' for command in self.commands))
+        self.launch.assert_not_called()
         stop.assert_not_called()
 
     def test_wrong_path_or_missing_isolation_after_open_is_never_signalled(self):
@@ -156,7 +162,7 @@ class ArchiveStartupTests(unittest.TestCase):
         self.assertTrue(result['success'])
         self.assertEqual(result['artifactKind'], 'package')
         self.assertFalse(result['guiVerified'])
-        self.assertIn(['/usr/bin/open', '-n', '--env', 'LEVISTICA_EPHEMERAL=1', str(app)], self.commands)
+        self.assertEqual(self.launch.call_args.args[0], [str(exe)])
         stop.assert_called_once_with(process, exe)
 
     def test_changed_zip_blocks_package_launch(self):
@@ -222,7 +228,7 @@ class ArchiveStartupTests(unittest.TestCase):
                 result = s.verify(self.archive)
                 self.assertFalse(result['success'])
                 self.assertEqual(result['screenStateBeforeLaunch'], state)
-                self.assertFalse(any(command[0] == '/usr/bin/open' for command in self.commands))
+                self.launch.assert_not_called()
                 listing.assert_not_called()
                 stop.assert_not_called()
 
@@ -251,5 +257,35 @@ class ArchiveStartupTests(unittest.TestCase):
         self.assertTrue(result['success'])
         self.assertEqual(result['artifactKind'], 'installed')
         self.assertFalse(result['guiVerified'])
-        self.assertIn(['/usr/bin/open', '-n', '--env', 'LEVISTICA_EPHEMERAL=1', str(installed)], self.commands)
+        self.assertEqual(self.launch.call_args.args[0], [str(exe)])
         stop.assert_called_once_with(process, exe)
+
+    def test_conflicting_variant_flags_are_removed_without_logging_environment(self):
+        with patch.dict(os.environ, {'LEVISTICA_EPHEMERAL':'0','LEVISTICA_MEASUREMENT':'1','LEVISTICA_SESSION_TEST_ID':'not-a-session','PRIVATE_SENTINEL':'never-log'}), \
+             patch.object(s,'run',side_effect=self.run_command), \
+             patch.object(s,'candidates',side_effect=[[],[(123456,str(self.executable))],[(123456,str(self.executable))]]), \
+             patch.object(s,'identity',return_value=self.process),patch.object(s,'stop_owned'),patch.object(s.time,'sleep'):
+            result=s.verify(self.archive)
+        self.assertTrue(result['success'])
+        env=self.launch.call_args.kwargs['env']
+        self.assertEqual({k:v for k,v in env.items() if k.startswith('LEVISTICA_')},{'LEVISTICA_EPHEMERAL':'1'})
+        self.assertNotIn('never-log',json.dumps(self.evidence()))
+        self.assertEqual(self.launch.call_args.kwargs['stdout'],subprocess.DEVNULL)
+        self.assertEqual(self.launch.call_args.kwargs['stderr'],subprocess.DEVNULL)
+
+    def test_foreign_process_is_not_adopted_and_only_the_owned_child_is_cleaned_up(self):
+        with patch.object(s,'run',side_effect=self.run_command), \
+             patch.object(s,'candidates',side_effect=[[],[(999,'/other/Levistica.app/Contents/MacOS/Levistica'),(123456,str(self.executable))]]), \
+             patch.object(s,'identity',return_value=self.process),patch.object(s,'stop_owned') as stop:
+            result=s.verify(self.archive)
+        self.assertFalse(result['success'])
+        stop.assert_called_once_with(self.process,self.executable)
+
+    def test_child_exiting_before_verification_fails_without_signalling_a_foreign_app(self):
+        self.launch.return_value.poll.return_value=2
+        with patch.object(s,'run',side_effect=self.run_command),patch.object(s,'candidates',return_value=[]), \
+             patch.object(s,'identity') as identify,patch.object(s,'stop_owned') as stop:
+            result=s.verify(self.archive)
+        self.assertFalse(result['success'])
+        identify.assert_not_called()
+        stop.assert_not_called()
