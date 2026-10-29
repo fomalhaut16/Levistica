@@ -666,3 +666,119 @@ struct PagePendingInputTests {
         #expect(state.needsDepartureConfirmation == false)
     }
 }
+
+
+extension WebKitIntegrationTests {
+    @MainActor
+    struct NetworkResponsePolicyTests {
+        private func page() async throws -> (PageRuntime, URL) {
+            let raw = try #require(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+            let base = try #require(URL(string: raw))
+            try #require(base.scheme == "http" && base.host == "127.0.0.1" && base.port != nil)
+            let runtime = PageRuntime(dataStore: .nonPersistent())
+            runtime.load(base.appendingPathComponent("network-policy"))
+            let deadline = ContinuousClock.now + .seconds(10)
+            while runtime.webView.title != "Network policy fixture" || runtime.webView.isLoading,
+                  ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try #require(runtime.webView.title == "Network policy fixture")
+            return (runtime, base)
+        }
+
+        private func evaluate(_ script: String, in runtime: PageRuntime) async throws -> [String: Any] {
+            let value = try await runtime.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
+            guard let dictionary = value as? [String: Any] else { throw URLError(.cannotParseResponse) }
+            return dictionary
+        }
+
+        @Test(arguments: [true, false])
+        func corsExposesSafelistedHeadersOnlyWhenTheOriginIsAllowed(allowed: Bool) async throws {
+            let (runtime, base) = try await page()
+            defer { runtime.stop() }
+            var cross = try #require(URLComponents(url: base, resolvingAgainstBaseURL: false))
+            cross.host = "localhost"
+            cross.path = allowed ? "/network-policy-cors-allowed" : "/network-policy-cors-denied"
+            let target = try #require(cross.url)
+            let script = """
+            try {
+                const response = await fetch(\(String(reflecting: target.absoluteString)), {cache:'no-store', signal:AbortSignal.timeout(5000)});
+                return {readable:true, type:response.type, length:response.headers.get('content-length'),
+                    contentType:response.headers.get('content-type'), unexposed:response.headers.get('x-levistica-fixture-unexposed'), body:await response.text()};
+            } catch (error) { return {readable:false, errorName:error.name}; }
+            """
+            let result = try await evaluate(script, in: runtime)
+            #expect(result["readable"] as? Bool == allowed)
+            if allowed {
+                #expect(result["type"] as? String == "cors")
+                #expect(result["body"] as? String == "synthetic cross-origin response")
+                #expect(result["length"] as? String == String("synthetic cross-origin response".utf8.count))
+                #expect(result["contentType"] as? String == "text/plain")
+                #expect(result["unexposed"] is NSNull)
+            } else {
+                #expect(result["errorName"] as? String == "TypeError")
+            }
+        }
+
+        @Test(arguments: [false, true], [false, true])
+        func imageReferrerPolicyWorksBeforeAndAfterAssigningItsURL(crossOrigin: Bool, sourceFirst: Bool) async throws {
+            let (runtime, base) = try await page()
+            defer { runtime.stop() }
+            for policy in ["no-referrer", "origin", "same-origin"] {
+                var target = try #require(URLComponents(url: base, resolvingAgainstBaseURL: false))
+                if crossOrigin { target.host = "localhost" }
+                target.path = "/network-policy-image"
+                target.queryItems = [URLQueryItem(name: "case", value: policy)]
+                let url = try #require(target.url)
+                let script = """
+                return await new Promise((resolve, reject) => {
+                    const image = new Image();
+                    const timer = setTimeout(() => reject(new Error('fixture image timeout')), 5000);
+                    image.onload = () => { clearTimeout(timer); resolve({width:image.naturalWidth}); };
+                    image.onerror = () => { clearTimeout(timer); reject(new Error('fixture image failed')); };
+                    const url = \(String(reflecting: url.absoluteString)), policy = \(String(reflecting: policy));
+                    if (\(sourceFirst ? "true" : "false")) { image.src = url; image.referrerPolicy = policy; }
+                    else { image.referrerPolicy = policy; image.src = url; }
+                });
+                """
+                let result = try await evaluate(script, in: runtime)
+                let expected = policy == "no-referrer" || (policy == "same-origin" && crossOrigin) ? 1 : policy == "origin" ? 2 : 3
+                let width = try #require(result["width"] as? Int)
+                let version = Bundle(for: WKWebView.self).object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+                let affectedOrder = sourceFirst && (crossOrigin ? policy != "origin" : policy != "same-origin")
+                let reproducedVersions = ["21624.4.5.11.5", "21624.5.1.11.3"]
+                if reproducedVersions.contains(version) && affectedOrder {
+                    // Reproduced in this OS's Safari and normal document scripts,
+                    // not just native evaluation. Keep the expected policy check
+                    // visible; other values or an engine fix must not be hidden.
+                    let defaultWidth = crossOrigin ? 2 : 3
+                    #expect(width == expected || width == defaultWidth)
+                    withKnownIssue("System WebKit \(version) can send the default referrer when src precedes referrerPolicy") {
+                        #expect(width == expected)
+                    }
+                } else {
+                    #expect(width == expected, "WebKit \(version)")
+                }
+            }
+        }
+
+        @Test(arguments: ["no-referrer", "origin", "same-origin"], [false, true])
+        func fetchReferrerPolicyIsAppliedToSameAndCrossOriginRequests(policy: String, crossOrigin: Bool) async throws {
+            let (runtime, base) = try await page()
+            defer { runtime.stop() }
+            var target = try #require(URLComponents(url: base, resolvingAgainstBaseURL: false))
+            if crossOrigin { target.host = "localhost" }
+            target.path = "/network-policy-referrer"
+            let url = try #require(target.url)
+            let script = """
+            const response = await fetch(\(String(reflecting: url.absoluteString)),
+                {referrerPolicy:\(String(reflecting: policy)), cache:'no-store', signal:AbortSignal.timeout(5000)});
+            return await response.json();
+            """
+            let result = try await evaluate(script, in: runtime)
+            let expected = policy == "no-referrer" || (policy == "same-origin" && crossOrigin) ? "" :
+                policy == "origin" ? base.absoluteString + "/" : base.appendingPathComponent("network-policy").absoluteString
+            #expect(result["referer"] as? String == expected)
+        }
+    }
+}
