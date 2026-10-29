@@ -344,6 +344,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 <button onclick="history.pushState({},'', '/spa?token=synthetic');document.title='Excluded route';statusLine.textContent='Excluded route'">Sensitive route</button>
                 <button onclick="document.title='SPA renamed';statusLine.textContent='Renamed route'">Rename route</button>
                 <p id="statusLine">Start route</p>''',
+            "/search-flow": '<title>Search flow fixture</title><h1>Search fixture</h1><form role="search" action="/search-results"><input aria-label="Search query" name="q"><button>Search fixture query</button></form>',
+            "/search-results": '<title>Search results fixture</title><h1>Search fixture results</h1><a href="/two">Result page</a>',
             "/departure": '''<title>Departure fixture</title><h1>Departure fixture</h1>
                 <input aria-label="Departure draft"><a href="/two">Leave draft</a>
                 <a href="#section">Same document</a><p id="section">Same document section</p>
@@ -472,8 +474,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         }
         pages["/fullscreen-dark"] = pages["/fullscreen"].replace(
             "<style>", "<style>html, body { background: #181818; color: white; }", 1)
-        body = ("<!doctype html><meta charset=utf-8>" + pages.get(self.path, "Not found")).encode()
-        self.send_response(200 if self.path in pages else 404)
+        route = self.path.split("?", 1)[0]
+        body = ("<!doctype html><meta charset=utf-8>" + pages.get(route, "Not found")).encode()
+        self.send_response(200 if route in pages else 404)
         if self.path == "/pdf-cookie": self.send_header("Set-Cookie", "levistica_pdf=synthetic; HttpOnly; SameSite=Lax; Path=/")
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

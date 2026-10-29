@@ -2556,6 +2556,42 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testSearchHistoryDoesNotAskToDiscardSubmittedQueries() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        defer { app.terminate() }
+        app.activate()
+        submit(base + "/search-flow", in: app)
+        for query in ["first query", "second query"] {
+            let field = app.webViews.searchFields["Search query"]
+            XCTAssertTrue(field.waitForExistence(timeout: 10))
+            field.click()
+            waitForInputIndicator(in: app)
+            field.typeKey("a", modifierFlags: .command)
+            field.typeText(query)
+            waitForInputIndicator(in: app)
+            app.webViews.buttons["Search fixture query"].click()
+            XCTAssertTrue(app.webViews.staticTexts["Search fixture results"].waitForExistence(timeout: 10))
+            app.webViews.links["Result page"].click()
+            XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+            app.buttons["backButton"].click()
+            XCTAssertTrue(app.webViews.staticTexts["Search fixture results"].waitForExistence(timeout: 10))
+            app.buttons["backButton"].click()
+            XCTAssertTrue(field.waitForExistence(timeout: 10))
+            XCTAssertFalse(app.sheets.buttons["ページに戻る"].exists)
+            app.buttons["forwardButton"].click()
+            XCTAssertTrue(app.webViews.staticTexts["Search fixture results"].waitForExistence(timeout: 10))
+            XCTAssertFalse(app.sheets.buttons["ページに戻る"].exists)
+            app.buttons["backButton"].click()
+            XCTAssertTrue(field.waitForExistence(timeout: 10))
+        }
+    }
+
+    @MainActor
     func testDepartureConfirmationPreservesInputOnCancelAndAllowsExplicitReload() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180

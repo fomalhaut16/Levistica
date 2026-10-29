@@ -67,3 +67,10 @@ class AddressRouteFixtureTests(unittest.TestCase):
         self.assertIn(b"fetch('/address-route-wait'", body)
         self.assertIn(b"history.pushState({},'', '/address-route/changed')", body)
         self.assertNotIn(b'setTimeout', body)
+
+    def test_search_history_fixture_accepts_get_query_parameters(self):
+        status, body = self.request('GET', '/search-results?q=first+query')
+        self.assertEqual(status, 200)
+        self.assertIn(b'Search fixture results', body)
+        self.assertIn(b'Result page', body)
+        self.assertNotIn(b'Not found', body)
