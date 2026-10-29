@@ -140,6 +140,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        if self.path.split('?', 1)[0] == '/network-policy-image':
+            origin = f'http://127.0.0.1:{self.server.server_port}'
+            referer = self.headers.get('Referer', '')
+            width = 1 if referer == '' else 2 if referer == origin+'/' else 3 if referer == origin+'/network-policy' else 4
+            body = f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="1"><rect width="{width}" height="1"/></svg>'.encode()
+            self.send_response(200)
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Type', 'image/svg+xml')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.path in ['/network-policy-cors-allowed', '/network-policy-cors-denied', '/network-policy-referrer']:
+            body = (json.dumps({'referer': self.headers.get('Referer', '')}).encode()
+                    if self.path == '/network-policy-referrer' else b'synthetic cross-origin response')
+            self.send_response(200)
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Type', 'application/json' if self.path == '/network-policy-referrer' else 'text/plain')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('X-Levistica-Fixture-Unexposed', 'synthetic-only')
+            if self.path != '/network-policy-cors-denied':
+                self.send_header('Access-Control-Allow-Origin', f'http://127.0.0.1:{self.server.server_port}')
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == '/ime-result':
             value = self.server.ime_result
             body = json.dumps({'status': 'waiting'} if value is None else {'status': 'recorded', 'result': value}).encode()
@@ -344,6 +369,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 <button onclick="history.pushState({},'', '/spa?token=synthetic');document.title='Excluded route';statusLine.textContent='Excluded route'">Sensitive route</button>
                 <button onclick="document.title='SPA renamed';statusLine.textContent='Renamed route'">Rename route</button>
                 <p id="statusLine">Start route</p>''',
+            "/network-policy": '<title>Network policy fixture</title><h1>Network policy fixture</h1>',
             "/search-flow": '<title>Search flow fixture</title><h1>Search fixture</h1><form role="search" action="/search-results"><input aria-label="Search query" name="q"><button>Search fixture query</button></form>',
             "/search-results": '<title>Search results fixture</title><h1>Search fixture results</h1><a href="/two">Result page</a>',
             "/departure": '''<title>Departure fixture</title><h1>Departure fixture</h1>
