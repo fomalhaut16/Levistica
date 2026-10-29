@@ -104,3 +104,33 @@ class NetworkPolicyFixtureTests(unittest.TestCase):
         self.assertEqual(json.loads(self.request('/csp-form-count?token='+token)[2]), {'requests':1})
         self.assertEqual(self.request(path, method='POST', body='unexpected')[0],400)
         self.assertEqual(json.loads(self.request('/csp-form-count?token='+token)[2]), {'requests':1})
+
+    def test_csp_worker_bootstrap_is_nonce_allowed_under_a_restrictive_default(self):
+        for kind in ('dedicated','shared'):
+            for policy in ('self','none'):
+                status,headers,body=self.request(f'/csp-worker-source?token={"d"*32}&kind={kind}&policy={policy}')
+                self.assertEqual(status,200)
+                self.assertEqual(headers['Content-Security-Policy'],
+                    "default-src 'none'; script-src 'nonce-levistica-worker'; worker-src '"+policy+"'")
+                self.assertIn(b'<script nonce="levistica-worker">',body)
+                self.assertIn(b'securitypolicyviolation',body)
+                self.assertIn(b'status:"unsupported"',body)
+                self.assertNotIn('Set-Cookie',headers)
+
+    def test_csp_worker_script_requests_are_counted_per_kind_and_token(self):
+        for kind in ('dedicated','shared'):
+            path=f'/csp-worker-count?token={"e"*32}&kind={kind}'
+            self.assertEqual(json.loads(self.request(path)[2]),{'requests':0})
+            status,headers,body=self.request(f'/csp-worker-script?token={"e"*32}&kind={kind}')
+            self.assertEqual(status,200)
+            self.assertEqual(headers['Content-Type'],'application/javascript')
+            self.assertEqual(headers['Content-Length'],str(len(body)))
+            self.assertIn(b'postMessage("ready")',body)
+            self.assertEqual(json.loads(self.request(path)[2]),{'requests':1})
+        self.assertEqual(json.loads(self.request('/csp-worker-count?token='+('f'*32)+'&kind=shared')[2]),{'requests':0})
+
+    def test_csp_worker_routes_reject_invalid_token_kind_and_policy(self):
+        for path in ['/csp-worker-source', '/csp-worker-script?token=untrusted&kind=dedicated',
+                     '/csp-worker-count?token='+('a'*32)+'&kind=unknown',
+                     '/csp-worker-source?token='+('a'*32)+'&kind=shared&policy=unsafe']:
+            self.assertEqual(self.request(path)[0],400)

@@ -200,7 +200,65 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
         return True
 
+    def csp_worker_response(self):
+        route = urlsplit(self.path)
+        if route.path not in ('/csp-worker-source', '/csp-worker-script', '/csp-worker-count'):
+            return False
+        params = parse_qs(route.query)
+        token = params.get('token', [''])[0]
+        kind = params.get('kind', [''])[0]
+        if not re.fullmatch(r'[a-f0-9]{32}', token) or kind not in ('dedicated', 'shared'):
+            self.send_error(400)
+            return True
+        origin = f'http://127.0.0.1:{self.server.server_port}'
+        policy_header = None
+        content_type = 'text/html; charset=utf-8'
+        key = (token, kind)
+        if route.path == '/csp-worker-count':
+            with self.server.csp_worker_lock:
+                count = self.server.csp_worker_counts.get(key, 0)
+            body = json.dumps({'requests':count}).encode()
+            content_type = 'application/json'
+        elif route.path == '/csp-worker-script':
+            with self.server.csp_worker_lock:
+                self.server.csp_worker_counts[key] = self.server.csp_worker_counts.get(key, 0) + 1
+            body = (b'postMessage("ready");close();' if kind == 'dedicated' else
+                    b'onconnect=event=>{const port=event.ports[0];port.postMessage("ready");port.close();};')
+            content_type = 'application/javascript'
+        else:
+            policy = params.get('policy', [''])[0]
+            if policy not in ('self', 'none'):
+                self.send_error(400)
+                return True
+            policy_header = "default-src 'none'; script-src 'nonce-levistica-worker'; worker-src '" + policy + "'"
+            script_url = '/csp-worker-script?token=' + token + '&kind=' + kind
+            script = ('const token=' + json.dumps(token) + ',kind=' + json.dumps(kind) + ';'
+                      'const report=value=>parent.postMessage({token,...value},' + json.dumps(origin) + ');'
+                      'document.addEventListener("securitypolicyviolation",event=>{'
+                      'if(event.effectiveDirective==="worker-src")report({status:"blocked",directive:event.effectiveDirective,disposition:event.disposition});});'
+                      'try{const Constructor=kind==="shared"?globalThis.SharedWorker:globalThis.Worker;'
+                      'if(typeof Constructor!=="function")report({status:"unsupported"});else{'
+                      'const worker=new Constructor(' + json.dumps(script_url) + ');'
+                      'const endpoint=kind==="shared"?worker.port:worker;'
+                      'endpoint.onmessage=event=>{if(event.data==="ready")report({status:"running"});'
+                      'if(kind==="shared")endpoint.close();else worker.terminate();};'
+                      'worker.onerror=()=>report({status:"worker-error"});'
+                      'if(kind==="shared")endpoint.start();}}'
+                      'catch(error){if(error.name!=="SecurityError")report({status:"constructor-error"});}')
+            body = ('<!doctype html><title>CSP worker source</title><script nonce="levistica-worker">' + script + '</script>').encode()
+        self.send_response(200)
+        self.send_header('Content-Type',content_type)
+        self.send_header('Content-Length',str(len(body)))
+        self.send_header('Cache-Control','no-store')
+        if policy_header:
+            self.send_header('Content-Security-Policy',policy_header)
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def do_GET(self):
+        if self.csp_worker_response():
+            return
         if self.csp_form_response():
             return
         if self.path.split('?', 1)[0] == '/network-policy-image':
@@ -700,6 +758,8 @@ class FixtureHTTPServer(http.server.ThreadingHTTPServer):
         self.ime_result = None
         self.csp_form_lock = threading.Lock()
         self.csp_form_counts = {}
+        self.csp_worker_lock = threading.Lock()
+        self.csp_worker_counts = {}
 
 
 def main():

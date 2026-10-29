@@ -692,6 +692,42 @@ extension WebKitIntegrationTests {
             return dictionary
         }
 
+        @Test(arguments: ["dedicated", "shared"], ["self", "none"])
+        func cspWorkerSourceAllowsOnlyDeclaredScriptLoads(kind: String, policy: String) async throws {
+            let (runtime, base) = try await page()
+            defer { runtime.stop() }
+            let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+            var source = try #require(URLComponents(url: base, resolvingAgainstBaseURL: false))
+            source.path = "/csp-worker-source"
+            source.queryItems = [URLQueryItem(name: "token", value: token), URLQueryItem(name: "kind", value: kind),
+                                 URLQueryItem(name: "policy", value: policy)]
+            let url = try #require(source.url)
+            let result = try await evaluate("""
+                return await new Promise((resolve,reject)=>{
+                    const frame=document.createElement('iframe'),token=\(String(reflecting: token));
+                    const origin=location.origin;
+                    const cleanup=()=>{clearTimeout(timer);removeEventListener('message',receive);frame.remove();};
+                    const receive=event=>{
+                        if(event.source!==frame.contentWindow || event.origin!==origin || event.data?.token!==token)return;
+                        const result=event.data;cleanup();resolve(result);
+                    };
+                    const timer=setTimeout(()=>{cleanup();reject(new Error('CSP worker fixture timeout'));},6000);
+                    addEventListener('message',receive);frame.src=\(String(reflecting: url.absoluteString));document.body.append(frame);
+                });
+                """, in: runtime)
+            let allowed = policy == "self"
+            #expect(result["status"] as? String == (allowed ? "running" : "blocked"))
+            if allowed == false {
+                #expect(result["directive"] as? String == "worker-src")
+                #expect(result["disposition"] as? String == "enforce")
+            }
+            let counts = try await evaluate("""
+                const response=await fetch('/csp-worker-count?token=\(token)&kind=\(kind)',{cache:'no-store',signal:AbortSignal.timeout(5000)});
+                if(!response.ok)throw new Error('fixture count failed');return await response.json();
+                """, in: runtime)
+            #expect(counts["requests"] as? Int == (allowed ? 1 : 0))
+        }
+
         @Test(arguments: ["self", "none", "cross"], [false, true])
         func cspFormActionAllowsOnlyTheDeclaredDestination(policy: String, crossOrigin: Bool) async throws {
             for method in ["get", "post"] {
