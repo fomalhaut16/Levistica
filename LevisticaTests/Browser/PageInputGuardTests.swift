@@ -416,7 +416,7 @@ extension WebKitIntegrationTests {
             // This models the native guard boundary; it is not a trusted-input test.
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 runtime.webView.evaluateJavaScript(
-                    "window.webkit.messageHandlers.levisticaInputActivity.postMessage(true); true",
+                    "window.webkit.messageHandlers.levisticaInputActivity.postMessage({frame: 'synthetic-frame', revision: 1, pending: true}); true",
                     in: nil, in: .world(name: "LevisticaInputActivity")) { result in
                         continuation.resume(with: result.map { _ in () })
                     }
@@ -515,5 +515,126 @@ extension WebKitIntegrationTests {
             #expect(result["chrome"] as? Bool == false)
             #expect(runtime.webView.configuration.applicationNameForUserAgent == WebKitBrowserIdentity.applicationName)
         }
+    }
+}
+
+
+@MainActor
+struct PagePendingInputTests {
+    private func context() throws -> JSContext {
+        let js = try #require(JSContext())
+        js.evaluateScript("""
+        const handlers = {}, messages = [], tasks = [];
+        const window = {webkit:{messageHandlers:{levisticaInputActivity:{postMessage(value){messages.push(value);}}}}};
+        const document = {addEventListener(type, fn){(handlers[type] ||= []).push(fn);}};
+        function addEventListener(type, fn){document.addEventListener(type, fn);}
+        function queueMicrotask(fn){tasks.push(fn);}
+        class Element {
+            constructor(){this.value='';this.type='text';this.role='';this.search=false;this.isConnected=true;this.form=null;this.isContentEditable=false;}
+            getAttribute(name){return name==='role'?this.role:null;}
+            closest(selector){return selector==='[contenteditable]'?(this.isContentEditable?this:null):(this.search?this:null);}
+        }
+        class HTMLInputElement extends Element {}
+        class HTMLTextAreaElement extends Element {}
+        class HTMLSelectElement extends Element {}
+        function fire(type, target, options={}) {
+            const event = Object.assign({isTrusted:true,target,defaultPrevented:false,composedPath(){return [target];}},options);
+            for(const fn of handlers[type] || []) fn(event);
+            while(tasks.length)tasks.shift()();
+        }
+        const field = new HTMLInputElement();
+        const lastPending = () => messages.at(-1).pending;
+        function edit(value){fire('beforeinput',field);field.value=value;fire('input',field);}
+        """)
+        js.evaluateScript(PageInputGuard.source)
+        try #require(js.exception == nil)
+        return js
+    }
+
+    @Test func restoringTheOriginalValueStopsDepartureWarningsButKeepsActivity() throws {
+        let js = try context()
+        #expect(js.evaluateScript("edit('draft');lastPending()")?.toBool() == true)
+        #expect(js.evaluateScript("edit('');lastPending()")?.toBool() == false)
+        #expect(js.evaluateScript("messages.at(-1).revision")?.toInt32() == 2)
+        #expect(js.exception == nil)
+    }
+
+    @Test(arguments: ["field.type='search'", "field.role='searchbox'", "field.search=true"])
+    func semanticSearchControlsDoNotBecomeUnsentDrafts(setup: String) throws {
+        let js = try context()
+        js.evaluateScript(setup)
+        #expect(js.evaluateScript("edit('query');lastPending()")?.toBool() == false)
+        #expect(js.evaluateScript("messages.at(-1).revision")?.toInt32() == 1)
+        #expect(js.exception == nil)
+    }
+
+    @Test func submittedFormsRemainCleanWhenRestoredFromHistory() throws {
+        let js = try context()
+        js.evaluateScript("field.form={};edit('query');fire('submit',field.form);fire('pageshow',null);")
+        #expect(js.evaluateScript("lastPending()")?.toBool() == false)
+        #expect(js.exception == nil)
+    }
+
+    @Test func preventedSubmissionAndUnrelatedFormsPreserveDraftProtection() throws {
+        let js = try context()
+        js.evaluateScript("field.form={};edit('draft');fire('submit',field.form,{defaultPrevented:true});")
+        #expect(js.evaluateScript("lastPending()")?.toBool() == true)
+        js.evaluateScript("fire('submit',{});")
+        #expect(js.evaluateScript("lastPending()")?.toBool() == true)
+        #expect(js.exception == nil)
+    }
+
+    @Test func resetAndDisconnectedControlsDoNotRetainPhantomDrafts() throws {
+        let js = try context()
+        #expect(js.evaluateScript("edit('draft');field.value='';fire('reset',{});lastPending()")?.toBool() == false)
+        #expect(js.evaluateScript("edit('draft');field.isConnected=false;fire('pageshow',null);lastPending()")?.toBool() == false)
+        #expect(js.exception == nil)
+    }
+
+    @Test func programmaticEventsCannotClaimTrustedEditing() throws {
+        let js = try context()
+        js.evaluateScript("field.value='programmatic';fire('input',field,{isTrusted:false});")
+        #expect(js.evaluateScript("messages.length")?.toInt32() == 0)
+        #expect(js.exception == nil)
+    }
+
+    @Test func frameLimitFailsConservativelyWithoutDroppingProtection() {
+        var state = PageInputActivityState()
+        for index in 0..<128 { state.receive(frame: "frame-\(index)", revision: 0, pending: false) }
+        state.receive(frame: "overflow", revision: 1, pending: true)
+        #expect(state.hasEditedInput)
+        #expect(state.needsDepartureConfirmation)
+        state.approveDeparture()
+        #expect(state.needsDepartureConfirmation == false)
+        state.receive(frame: "overflow", revision: 2, pending: true)
+        #expect(state.needsDepartureConfirmation)
+    }
+
+    @Test func oneApprovalCoversRepeatedNavigationCallbacksUntilNewInput() {
+        var state = PageInputActivityState()
+        state.receive(frame: "main", revision: 1, pending: true)
+        #expect(state.needsDepartureConfirmation)
+        state.approveDeparture()
+        state.receive(frame: "main", revision: 1, pending: true)
+        #expect(state.needsDepartureConfirmation == false)
+        #expect(state.hasEditedInput)
+        state.receive(frame: "main", revision: 2, pending: true)
+        #expect(state.needsDepartureConfirmation)
+        state.approveDeparture()
+        state.cancelDepartureApproval()
+        #expect(state.needsDepartureConfirmation)
+    }
+
+    @Test func clearingOneFrameDoesNotClearAnotherFramesDraft() {
+        var state = PageInputActivityState()
+        state.receive(frame: "main", revision: 1, pending: true)
+        state.receive(frame: "child", revision: 1, pending: true)
+        state.receive(frame: "main", revision: 1, pending: false)
+        #expect(state.needsDepartureConfirmation)
+        state.receive(frame: "child", revision: 1, pending: false)
+        #expect(state.needsDepartureConfirmation == false)
+        #expect(state.hasEditedInput)
+        state.receive(frame: "child", revision: 0, pending: true)
+        #expect(state.needsDepartureConfirmation == false)
     }
 }

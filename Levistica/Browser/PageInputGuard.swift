@@ -4,7 +4,11 @@ import WebKit
 
 @MainActor @Observable
 final class PageInputGuard: NSObject, WKScriptMessageHandler {
-    private(set) var hasEditedInput = false
+    private var activity = PageInputActivityState()
+    var hasEditedInput: Bool { activity.hasEditedInput }
+    var needsDepartureConfirmation: Bool { activity.needsDepartureConfirmation }
+    func approveDeparture() { activity.approveDeparture() }
+    func cancelDepartureApproval() { activity.cancelDepartureApproval() }
     @ObservationIgnored private weak var webView: WKWebView?
     @ObservationIgnored private let contentController: WKUserContentController
     @MainActor private final class InputRelay: NSObject, WKScriptMessageHandler {
@@ -17,23 +21,70 @@ final class PageInputGuard: NSObject, WKScriptMessageHandler {
 
     private static let world = WKContentWorld.world(name: "LevisticaInputActivity")
     private static let handlerName = "levisticaInputActivity"
-    private static let source = """
+    static let source = """
     (() => {
-        let edited = false;
-        const notify = () => window.webkit.messageHandlers.levisticaInputActivity.postMessage(true);
-        const input = event => {
-            if (edited || !event.isTrusted) return;
+        const frame = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+        let revision = 0;
+        const originals = new WeakMap();
+        const changed = new Set();
+        const control = event => {
             const target = event.composedPath()[0];
-            if (!(target instanceof Element)) return;
-            const textControl = target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
-            const inputControl = target instanceof HTMLInputElement && !['button','submit','reset','image','hidden'].includes(target.type);
-            if (!textControl && !inputControl && !target.isContentEditable) return;
-            edited = true;
+            if (!(target instanceof Element)) return null;
+            if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return target;
+            if (target instanceof HTMLInputElement && !['button','submit','reset','image','hidden'].includes(target.type)) return target;
+            return target.isContentEditable ? target.closest('[contenteditable]') : null;
+        };
+        const value = target => {
+            if (target instanceof HTMLInputElement && ['checkbox','radio'].includes(target.type)) return target.checked;
+            if (target instanceof HTMLInputElement && target.type === 'file') return target.files.length > 0;
+            if (target instanceof HTMLSelectElement) return JSON.stringify([...target.options].map(option => option.selected));
+            return target.isContentEditable ? target.textContent : target.value;
+        };
+        const remember = target => {
+            if (!originals.has(target)) originals.set(target, value(target));
+        };
+        const search = target => target.type === 'search' || target.getAttribute('role') === 'searchbox'
+            || target.closest('search, [role="search"]') !== null;
+        const notify = () => {
+            for (const target of changed) {
+                if (!target.isConnected || value(target) === originals.get(target)) changed.delete(target);
+            }
+            window.webkit.messageHandlers.levisticaInputActivity.postMessage({frame, revision, pending: changed.size > 0});
+        };
+        for (const type of ['focusin', 'beforeinput']) document.addEventListener(type, event => {
+            if (!event.isTrusted) return;
+            const target = control(event);
+            if (target) remember(target);
+        }, true);
+        const input = event => {
+            if (!event.isTrusted) return;
+            const target = control(event);
+            if (!target) return;
+            // focusin/beforeinput record the pre-edit value. A control edited
+            // without either event remains conservatively pending.
+            revision += 1;
+            if (!search(target) && (!originals.has(target) || value(target) !== originals.get(target))) changed.add(target);
+            else changed.delete(target);
             notify();
         };
         document.addEventListener('input', input, true);
         document.addEventListener('change', input, true);
-        addEventListener('pageshow', () => { if (edited) notify(); });
+        document.addEventListener('submit', event => {
+            // A successful native form submission is an explicit send action.
+            // A prevented SPA submission may still contain an unsaved draft.
+            queueMicrotask(() => {
+                if (event.defaultPrevented) return;
+                for (const target of changed) if (target.form === event.target) {
+                    originals.set(target, value(target)); changed.delete(target);
+                }
+                notify();
+            });
+        }, true);
+        document.addEventListener('reset', event => queueMicrotask(() => {
+            if (!event.defaultPrevented) notify();
+        }), true);
+        addEventListener('pageshow', notify);
+        addEventListener('pagehide', () => window.webkit.messageHandlers.levisticaInputActivity.postMessage({frame, revision, pending: false}));
     })();
     """
 
@@ -59,13 +110,15 @@ final class PageInputGuard: NSObject, WKScriptMessageHandler {
     }
 
     func bind(to webView: WKWebView) { self.webView = webView }
-    func beginDocument() { hasEditedInput = false }
+    func beginDocument() { activity = PageInputActivityState() }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let webView, message.webView === webView, message.world.name == Self.world.name,
-              message.name == Self.handlerName, message.body as? Bool == true,
+              message.name == Self.handlerName,
               ["http", "https"].contains(message.frameInfo.securityOrigin.protocol) else { return }
-        hasEditedInput = true
+        guard let body = message.body as? [String: Any], let frame = body["frame"] as? String,
+              let revision = body["revision"] as? Int, let pending = body["pending"] as? Bool else { return }
+        activity.receive(frame: frame, revision: revision, pending: pending)
     }
 
     static func confirmDiscard(tabCount: Int, quitting: Bool, context: String? = nil) -> Bool {
@@ -93,4 +146,29 @@ final class PageInputGuard: NSObject, WKScriptMessageHandler {
         alert.window.makeFirstResponder(keep)
         return alert.runModal() == .alertSecondButtonReturn
     }
+}
+
+// Input activity protects close/sleep conservatively. Navigation warnings use
+// pending edits; accepting one departure covers delegate re-entry until a new
+// trusted edit, commit, cancellation, or failed navigation.
+struct PageInputActivityState {
+    private(set) var hasEditedInput = false
+    private var frames: [String: (revision: Int, pending: Bool)] = [:]
+    private var approved = false
+    private var overflowPending = false
+    var needsDepartureConfirmation: Bool { !approved && (overflowPending || frames.values.contains { $0.pending }) }
+
+    mutating func receive(frame: String, revision: Int, pending: Bool) {
+        guard !frame.isEmpty, frame.utf8.count <= 64, revision >= 0, !pending || revision > 0 else { return }
+        if let prior = frames[frame], revision < prior.revision { return }
+        if revision > 0 { hasEditedInput = true }
+        if frames[frame] == nil && frames.count >= 128 {
+            if pending { overflowPending = true; approved = false }
+            return
+        }
+        if revision > (frames[frame]?.revision ?? 0) { approved = false }
+        frames[frame] = (revision, pending)
+    }
+    mutating func approveDeparture() { approved = true }
+    mutating func cancelDepartureApproval() { approved = false }
 }

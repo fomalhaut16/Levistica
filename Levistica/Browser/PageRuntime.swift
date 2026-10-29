@@ -194,7 +194,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         // WKNavigationType.other also covers a page's own JavaScript navigation.
         // Confirm browser-owned loads here, before they become indistinguishable
         // from a successful login's location change in the navigation delegate.
-        guard committedRequest != nil, inputGuard.hasEditedInput else {
+        guard committedRequest != nil, inputGuard.needsDepartureConfirmation else {
             beginLoad(request)
             return
         }
@@ -202,6 +202,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         dialogs.confirmDeparture(window: webView.window) { [weak self] allowed in
             guard let self, self.documentGeneration == generation else { return }
             guard allowed else { self.restoreCommittedLocation(); return }
+            self.inputGuard.approveDeparture()
             self.beginLoad(request)
         }
     }
@@ -235,12 +236,14 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         activeNavigation = webView.reload()
     }
     func stop() {
+        inputGuard.cancelDepartureApproval()
         dialogs.cancel()
         webView.stopLoading()
         restoreDisplayedIdentity()
     }
 
-    private func restoreDisplayedIdentity() {
+    private func restoreDisplayedIdentity(resetDepartureApproval: Bool = true) {
+        if resetDepartureApproval { inputGuard.cancelDepartureApproval() }
         // A provisional destination has not replaced the committed document.
         webView.customUserAgent = committedUserAgent
     }
@@ -306,7 +309,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
             decisionHandler(.cancel)
             return
         }
-        if main, inputGuard.hasEditedInput,
+        if main, inputGuard.needsDepartureConfirmation,
            Self.requiresDepartureConfirmation(type: action.navigationType, current: webView.url, destination: action.request.url) {
             let generation = documentGeneration
             dialogs.confirmDeparture(window: webView.window) { [weak self] allowed in
@@ -316,6 +319,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
                     decisionHandler(.cancel)
                     return
                 }
+                self.inputGuard.approveDeparture()
                 self.acceptMainNavigation(action.request, initialBlank: initialBlank)
                 decisionHandler(.allow)
             }
@@ -517,8 +521,9 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         let error = error as NSError
         if let failedURL = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL,
            let requestedURL = lastRequest?.url, failedURL != requestedURL { return }
-        restoreDisplayedIdentity()
-        guard !(error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled) else { return }
+        let cancelled = error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled
+        restoreDisplayedIdentity(resetDepartureApproval: !cancelled)
+        guard !cancelled else { return }
         connectionDocumentAvailable = false
         connectionDocumentURL = nil
         updateSnapshot()
