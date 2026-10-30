@@ -275,6 +275,11 @@ else
         kill -0 "$FIXTURE_PID" 2>/dev/null || { cat "$RUN_DIR/fixture.log" >&2; exit 1; }
         sleep 0.1
     done
+    if [[ ! -f "$RUN_DIR/fixture.json" ]]; then
+        echo 'Fixture did not publish readiness within the startup polling limit; no test was started.' >&2
+        tail -n 12 "$RUN_DIR/fixture.log" >&2
+        exit 1
+    fi
     LEVISTICA_FIXTURE_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["url"])' "$RUN_DIR/fixture.json")"
     export LEVISTICA_FIXTURE_URL
     LEVISTICA_TLS_FIXTURE_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tlsUrl"])' "$RUN_DIR/fixture.json")"

@@ -5,6 +5,7 @@ import socket
 from pathlib import Path
 import threading
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('network_policy_fixture', Path(__file__).parents[1]/'test-fixture.py')
 fixture = importlib.util.module_from_spec(spec)
@@ -192,3 +193,14 @@ class NetworkPolicyFixtureTests(unittest.TestCase):
                      '/csp-websocket-source?token='+('5'*32)+'&directive=script-src&policy=allow',
                      '/csp-websocket-source?token='+('5'*32)+'&directive=connect-src&policy=unsafe']:
             self.assertEqual(self.request(path)[0], 400)
+
+    def test_loopback_binding_never_performs_reverse_dns(self):
+        with patch('socket.getfqdn', side_effect=AssertionError('Unexpected DNS during fixture startup')):
+            server = fixture.FixtureHTTPServer(('127.0.0.1', 0), fixture.Handler)
+            try:
+                self.assertEqual(server.server_name, '127.0.0.1')
+                self.assertGreater(server.server_port, 0)
+            finally:
+                server.server_close()
+        with self.assertRaises(ValueError):
+            fixture.FixtureHTTPServer(('0.0.0.0', 0), fixture.Handler)

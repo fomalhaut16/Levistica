@@ -829,6 +829,14 @@ class DisconnectHandler(socketserver.BaseRequestHandler):
 
 
 class FixtureHTTPServer(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        if self.server_address[0] != '127.0.0.1':
+            raise ValueError('The fixture must bind to IPv4 loopback')
+        # HTTPServer.server_bind performs getfqdn; no DNS is needed for this fixed peer.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = '127.0.0.1'
+        self.server_port = self.server_address[1]
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.address_route_event = threading.Event()
@@ -842,10 +850,14 @@ class FixtureHTTPServer(http.server.ThreadingHTTPServer):
 
 
 def main():
+    print("startup: begin", flush=True)
     server = FixtureHTTPServer(("127.0.0.1", 0), Handler)
+    print("startup: http-bound", flush=True)
     failed = socketserver.ThreadingTCPServer(("127.0.0.1", 0), DisconnectHandler)
     threading.Thread(target=failed.serve_forever, daemon=True).start()
+    print("startup: failure-bound", flush=True)
     tls_server = FixtureHTTPServer(("127.0.0.1", 0), Handler)
+    print("startup: tls-bound", flush=True)
     for fixture_server in (server, tls_server):
         fixture_server.fixture_failure_url = f"http://127.0.0.1:{failed.server_address[1]}"
         fixture_server.fixture_tls_url = f"https://127.0.0.1:{tls_server.server_port}"
@@ -853,11 +865,17 @@ def main():
     context.load_cert_chain(sys.argv[2], sys.argv[3])
     tls_server.socket = context.wrap_socket(tls_server.socket, server_side=True)
     threading.Thread(target=tls_server.serve_forever, daemon=True).start()
-    pathlib.Path(sys.argv[1]).write_text(json.dumps({
+    print("startup: tls-ready", flush=True)
+    ready_file = pathlib.Path(sys.argv[1])
+    pending_file = ready_file.with_name(ready_file.name + ".pending")
+    with pending_file.open("x") as output:
+        output.write(json.dumps({
         "url": f"http://127.0.0.1:{server.server_port}",
         "tlsUrl": f"https://127.0.0.1:{tls_server.server_port}",
         "failureUrl": f"http://127.0.0.1:{failed.server_address[1]}",
-    }))
+        }))
+    pending_file.replace(ready_file)
+    print("startup: published", flush=True)
     server.serve_forever()
 
 
