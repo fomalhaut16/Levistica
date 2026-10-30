@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Loopback-only deterministic pages for browser tests; never logs requests."""
 import base64
+import hashlib
 import io
 import wave
 import http.server
@@ -200,6 +201,80 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
         return True
 
+    def csp_websocket_response(self):
+        route = urlsplit(self.path)
+        if route.path not in ('/csp-websocket-source', '/csp-websocket-connect', '/csp-websocket-count'):
+            return False
+        params = parse_qs(route.query)
+        token = params.get('token', [''])[0]
+        if not re.fullmatch(r'[a-f0-9]{32}', token):
+            self.send_error(400)
+            return True
+        origin = f'http://127.0.0.1:{self.server.server_port}'
+        socket_origin = f'ws://127.0.0.1:{self.server.server_port}'
+        policy_header = None
+        content_type = 'text/html; charset=utf-8'
+        if route.path == '/csp-websocket-count':
+            with self.server.csp_websocket_lock:
+                count = self.server.csp_websocket_counts.get(token, 0)
+            body = json.dumps({'requests':count}).encode()
+            content_type = 'application/json'
+        elif route.path == '/csp-websocket-connect':
+            # One fixed server-to-client message, no client payloads or forwarding.
+            if self.headers.get('Origin') != origin or self.headers.get('Host') != f'127.0.0.1:{self.server.server_port}':
+                self.send_error(403)
+                return True
+            key = self.headers.get('Sec-WebSocket-Key', '')
+            try:
+                valid_key = len(base64.b64decode(key, validate=True)) == 16
+            except (ValueError, TypeError):
+                valid_key = False
+            if (not valid_key or self.headers.get('Upgrade', '').lower() != 'websocket'
+                    or 'upgrade' not in [value.strip().lower() for value in self.headers.get('Connection', '').split(',')]
+                    or self.headers.get('Sec-WebSocket-Version') != '13'):
+                self.send_error(400)
+                return True
+            with self.server.csp_websocket_lock:
+                self.server.csp_websocket_counts[token] = self.server.csp_websocket_counts.get(token, 0) + 1
+            accept = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
+            self.protocol_version = 'HTTP/1.1'
+            self.send_response(101)
+            self.send_header('Upgrade', 'websocket')
+            self.send_header('Connection', 'Upgrade')
+            self.send_header('Sec-WebSocket-Accept', accept)
+            self.end_headers()
+            self.wfile.write(b'\x81\x05ready\x88\x02\x03\xe8')
+            self.wfile.flush()
+            self.close_connection = True
+            return True
+        else:
+            directive = params.get('directive', [''])[0]
+            policy = params.get('policy', [''])[0]
+            if directive not in ('default-src', 'connect-src') or policy not in ('allow', 'none'):
+                self.send_error(400)
+                return True
+            source = socket_origin if policy == 'allow' else "'none'"
+            policy_header = (("default-src " + source) if directive == 'default-src' else
+                             ("default-src 'none'; connect-src " + source)) + "; script-src 'nonce-levistica-websocket'"
+            script = ('const token=' + json.dumps(token) + ';let finished=false;'
+                      'const report=value=>{if(finished)return;finished=true;parent.postMessage({token,...value},' + json.dumps(origin) + ');};'
+                      'document.addEventListener("securitypolicyviolation",event=>{'
+                      'if(event.effectiveDirective==="connect-src")report({status:"blocked",directive:event.effectiveDirective,disposition:event.disposition});});'
+                      'try{const socket=new WebSocket(' + json.dumps(socket_origin + '/csp-websocket-connect?token=' + token) + ');'
+                      'socket.onmessage=event=>{if(event.data==="ready")report({status:"connected"});socket.close();};'
+                      'socket.onerror=()=>{setTimeout(()=>report({status:"transport-error"}),100);};}'
+                      'catch(error){if(error.name!=="SecurityError")report({status:"constructor-error"});}')
+            body = ('<!doctype html><title>CSP WebSocket source</title><script nonce="levistica-websocket">' + script + '</script>').encode()
+        self.send_response(200)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        if policy_header:
+            self.send_header('Content-Security-Policy', policy_header)
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def csp_worker_response(self):
         route = urlsplit(self.path)
         if route.path not in ('/csp-worker-source', '/csp-worker-script', '/csp-worker-count'):
@@ -257,6 +332,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return True
 
     def do_GET(self):
+        if self.csp_websocket_response():
+            return
         if self.csp_worker_response():
             return
         if self.csp_form_response():
@@ -760,6 +837,8 @@ class FixtureHTTPServer(http.server.ThreadingHTTPServer):
         self.csp_form_counts = {}
         self.csp_worker_lock = threading.Lock()
         self.csp_worker_counts = {}
+        self.csp_websocket_lock = threading.Lock()
+        self.csp_websocket_counts = {}
 
 
 def main():
