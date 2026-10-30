@@ -2304,6 +2304,48 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testLegacyBookmarksMigrateAndPersistAcrossRestart() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let path = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_LEGACY_BOOKMARK_FIXTURE"])
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        let manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: String])
+        let sessionID = try XCTUnwrap(manifest["sessionID"])
+        XCTAssertNotNil(UUID(uuidString: sessionID))
+        XCTAssertEqual(manifest["kind"], "generated-legacy-bookmarks-v1")
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = sessionID
+        defer { app.terminate() }
+        app.launch(); app.activate()
+        XCTAssertTrue(app.buttons["showBookmarksButton"].waitForExistence(timeout: 10))
+        app.buttons["showBookmarksButton"].click()
+        XCTAssertTrue(app.staticTexts["2件・上限1000件"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["bookmarkNotice"].exists)
+        XCTAssertTrue(app.staticTexts["Legacy bookmark two"].exists)
+        app.staticTexts["Legacy bookmark one"].firstMatch.click()
+        let title = app.textFields["bookmarkTitleField"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        waitForInputIndicator(in: app)
+        title.click()
+        title.typeKey("a", modifierFlags: .command)
+        title.typeText("Migrated bookmark renamed")
+        app.buttons["saveBookmarkTitleButton"].click()
+        XCTAssertTrue(app.staticTexts["Migrated bookmark renamed"].firstMatch.waitForExistence(timeout: 5))
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch(); app.activate()
+        XCTAssertTrue(app.buttons["showBookmarksButton"].waitForExistence(timeout: 10))
+        app.buttons["showBookmarksButton"].click()
+        XCTAssertTrue(app.staticTexts["2件・上限1000件"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Migrated bookmark renamed"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Legacy bookmark two"].exists)
+        XCTAssertFalse(app.staticTexts["bookmarkNotice"].exists)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+    }
+
+    @MainActor
     func testBookmarkHTMLImportPreviewsCancelsPreservesFoldersAndSurvivesRestart() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180
