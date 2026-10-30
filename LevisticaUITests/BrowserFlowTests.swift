@@ -3653,6 +3653,7 @@ final class BrowserFlowTests: XCTestCase {
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
         let app = XCUIApplication()
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        defer { app.terminate() }
         app.launch()
         app.activate()
         submit(base + "/" + path, in: app)
@@ -3716,10 +3717,12 @@ final class BrowserFlowTests: XCTestCase {
         }, evaluatedWith: nil)
         wait(for: [expandedContent], timeout: 5)
         print("Restored fullscreen fixture frame: \(afterFrame); expanded=\(app.webViews.firstMatch.frame)")
-        // Move off toolbar controls so a delayed tooltip cannot cover the corner marker.
-        app.webViews.firstMatch.hover()
+        // Click actual page content to cancel the toolbar's delayed help tag.
+        // Pointer hover alone can leave a tooltip covering the top-right marker.
+        app.webViews.textFields["Fullscreen draft"].click()
+        waitForInputIndicator(in: app)
+        XCTAssertTrue(app.helpTags.firstMatch.waitForNonExistence(timeout: 5))
         XCTAssertTrue(attachWindowImage(app, name: path + "-after-bookmarks-closed"))
-        app.terminate()
     }
 
     @MainActor
@@ -3739,10 +3742,10 @@ final class BrowserFlowTests: XCTestCase {
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
         let app = XCUIApplication()
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        defer { app.terminate() }
         app.launch()
         app.activate()
         submit(base + "/fullscreen", in: app)
-        defer { app.terminate() }
         if horizontal {
             app.buttons["toggleTabLayoutButton"].click()
             XCTAssertTrue(app.scrollViews["horizontalTabList"].waitForExistence(timeout: 5))
@@ -3798,7 +3801,6 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertEqual(draft.value as? String, "synthetic fullscreen draft")
         XCTAssertTrue(attachWindowImage(app, name: "native-fullscreen-after", knownFrame: window.frame))
         print("Native fullscreen fixture frames: before=\(before); active=\(active); restored=\(window.frame)")
-        app.terminate()
     }
 
     @MainActor
@@ -3918,19 +3920,55 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testFixtureScreenshotCropRequiresWholeFiniteOnscreenBounds() {
+        let screen = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let frame = CGRect(x: 20, y: 30, width: 50, height: 60)
+        XCTAssertEqual(Self.fixtureScreenshotRegion(frame: frame, screen: screen, pixels: CGSize(width: 200, height: 200)),
+                       CGRect(x: 40, y: 60, width: 100, height: 120))
+        XCTAssertEqual(Self.fixtureScreenshotRegion(frame: CGRect(x: 20.25, y: 30.25, width: 50.5, height: 60.5),
+                                                    screen: screen, pixels: CGSize(width: 200, height: 200)),
+                       CGRect(x: 41, y: 61, width: 100, height: 120))
+        for bad in [CGRect.zero, CGRect(x: -1, y: 0, width: 10, height: 10),
+                    CGRect(x: 90, y: 90, width: 11, height: 11),
+                    CGRect(x: CGFloat.nan, y: 0, width: 10, height: 10),
+                    CGRect(x: 0, y: 0, width: CGFloat.infinity, height: 10)] {
+            XCTAssertNil(Self.fixtureScreenshotRegion(frame: bad, screen: screen, pixels: CGSize(width: 200, height: 200)))
+        }
+        XCTAssertNil(Self.fixtureScreenshotRegion(frame: frame, screen: screen, pixels: .zero))
+        XCTAssertNil(Self.fixtureScreenshotRegion(frame: frame, screen: screen, pixels: CGSize(width: 200, height: 250)))
+        XCTAssertNil(Self.fixtureScreenshotRegion(frame: frame, screen: CGRect(x: 100, y: 0, width: 100, height: 100),
+                                                  pixels: CGSize(width: 200, height: 200)))
+    }
+
+    private static func fixtureScreenshotRegion(frame: CGRect, screen: CGRect, pixels: CGSize) -> CGRect? {
+        guard [frame.origin.x, frame.origin.y, frame.width, frame.height, screen.origin.x, screen.origin.y,
+               screen.width, screen.height, pixels.width, pixels.height].allSatisfy(\.isFinite),
+              frame.width > 0, frame.height > 0, screen.width > 0, screen.height > 0,
+              pixels.width > 0, pixels.height > 0, screen.origin == .zero, screen.contains(frame) else { return nil }
+        let scaleX = pixels.width / screen.width
+        let scaleY = pixels.height / screen.height
+        guard abs(scaleX - scaleY) < 0.001 else { return nil }
+        // Round inward so even fractional coordinates retain no pixels outside the target.
+        let x = ceil(frame.minX * scaleX), y = ceil(frame.minY * scaleY)
+        let region = CGRect(x: x, y: y, width: floor(frame.maxX * scaleX) - x, height: floor(frame.maxY * scaleY) - y)
+        guard !region.isEmpty, CGRect(origin: .zero, size: pixels).contains(region) else { return nil }
+        return region
+    }
+
+    @MainActor
     @discardableResult
     private func attachWindowImage(_ app: XCUIApplication, name: String, knownFrame: CGRect? = nil) -> Bool {
-        // macOS application screenshots may include other applications. Crop to this
-        // fixture window before retaining any image in the test result.
-        let image = knownFrame == nil ? app.screenshot().image : XCUIScreen.main.screenshot().image
+        // Always use screen coordinates, then retain only the verified fixture region.
+        // Application screenshots can have a different extent and include other apps.
+        guard app.state == .runningForeground, let screen = NSScreen.main else { return false }
         let frame = knownFrame ?? app.windows.firstMatch.frame
-        guard let screen = NSScreen.main, !frame.isEmpty,
-              let original = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return false }
-        let scaleX = CGFloat(original.width) / screen.frame.width
-        let scaleY = CGFloat(original.height) / screen.frame.height
-        let region = CGRect(x: frame.minX * scaleX, y: frame.minY * scaleY,
-                            width: frame.width * scaleX, height: frame.height * scaleY)
-        guard let cropped = original.cropping(to: region) else { return false }
+        let image = XCUIScreen.main.screenshot().image
+        guard app.state == .runningForeground,
+              let original = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let region = Self.fixtureScreenshotRegion(frame: frame, screen: screen.frame,
+                  pixels: CGSize(width: original.width, height: original.height)),
+              let cropped = original.cropping(to: region),
+              cropped.width == Int(region.width), cropped.height == Int(region.height) else { return false }
         let attachment = XCTAttachment(image: NSImage(cgImage: cropped, size: frame.size))
         attachment.name = name
         attachment.lifetime = .keepAlways
