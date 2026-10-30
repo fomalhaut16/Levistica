@@ -1,9 +1,11 @@
 import http.client
 import importlib.util
 import json
+import socket
 from pathlib import Path
 import threading
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('network_policy_fixture', Path(__file__).parents[1]/'test-fixture.py')
 fixture = importlib.util.module_from_spec(spec)
@@ -134,3 +136,71 @@ class NetworkPolicyFixtureTests(unittest.TestCase):
                      '/csp-worker-count?token='+('a'*32)+'&kind=unknown',
                      '/csp-worker-source?token='+('a'*32)+'&kind=shared&policy=unsafe']:
             self.assertEqual(self.request(path)[0],400)
+
+    def test_csp_websocket_source_is_nonce_bootstrapped_with_fixed_destination(self):
+        origin = f'ws://127.0.0.1:{self.server.server_port}'
+        for directive in ('default-src', 'connect-src'):
+            for policy in ('allow', 'none'):
+                status, headers, body = self.request(f'/csp-websocket-source?token={"1"*32}&directive={directive}&policy={policy}')
+                self.assertEqual(status, 200)
+                source = origin if policy == 'allow' else "'none'"
+                expected = (('default-src ' + source) if directive == 'default-src' else
+                            ("default-src 'none'; connect-src " + source)) + "; script-src 'nonce-levistica-websocket'"
+                self.assertEqual(headers['Content-Security-Policy'], expected)
+                self.assertIn(b'<script nonce="levistica-websocket">', body)
+                self.assertIn((origin+'/csp-websocket-connect?token='+('1'*32)).encode(), body)
+                self.assertIn(b'event.data==="ready"', body)
+                self.assertIn(b'securitypolicyviolation', body)
+                self.assertNotIn('Set-Cookie', headers)
+
+    def test_csp_websocket_upgrade_sends_a_fixed_message_and_counts_only_its_token(self):
+        token = '2'*32
+        origin = f'http://127.0.0.1:{self.server.server_port}'
+        request = (f'GET /csp-websocket-connect?token={token} HTTP/1.1\r\n'
+                   f'Host: 127.0.0.1:{self.server.server_port}\r\nOrigin: {origin}\r\n'
+                   'Upgrade: websocket\r\nConnection: keep-alive, Upgrade\r\n'
+                   'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n')
+        with socket.create_connection(('127.0.0.1', self.server.server_port), timeout=3) as client:
+            client.sendall(request.encode())
+            response = b''
+            while len(response) <= 4096:
+                block = client.recv(4096)
+                if not block: break
+                response += block
+        self.assertLess(len(response), 4096)
+        headers, body = response.split(b'\r\n\r\n', 1)
+        self.assertTrue(headers.startswith(b'HTTP/1.1 101 '))
+        self.assertIn(b'Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=', headers)
+        self.assertEqual(body, b'\x81\x05ready\x88\x02\x03\xe8')
+        self.assertEqual(json.loads(self.request('/csp-websocket-count?token='+token)[2]), {'requests':1})
+        self.assertEqual(json.loads(self.request('/csp-websocket-count?token='+('3'*32))[2]), {'requests':0})
+
+    def test_csp_websocket_rejects_foreign_origin_and_invalid_upgrade_without_counting(self):
+        token = '4'*32
+        origin = f'http://127.0.0.1:{self.server.server_port}'
+        path = '/csp-websocket-connect?token='+token
+        good = {'Origin':origin, 'Upgrade':'websocket', 'Connection':'Upgrade',
+                'Sec-WebSocket-Key':'dGhlIHNhbXBsZSBub25jZQ==', 'Sec-WebSocket-Version':'13'}
+        for field, value in [('Origin','https://example.invalid'), ('Host','example.invalid'), ('Upgrade','http'), ('Connection','close'),
+                             ('Sec-WebSocket-Key','bad'), ('Sec-WebSocket-Key','YQ=='), ('Sec-WebSocket-Version','12')]:
+            status, _, _ = self.request(path, {**good, field:value})
+            self.assertEqual(status, 403 if field in ('Origin', 'Host') else 400)
+        self.assertEqual(json.loads(self.request('/csp-websocket-count?token='+token)[2]), {'requests':0})
+
+    def test_csp_websocket_routes_reject_untrusted_token_policy_and_directive(self):
+        for path in ['/csp-websocket-source', '/csp-websocket-connect?token=invalid',
+                     '/csp-websocket-count?token=invalid',
+                     '/csp-websocket-source?token='+('5'*32)+'&directive=script-src&policy=allow',
+                     '/csp-websocket-source?token='+('5'*32)+'&directive=connect-src&policy=unsafe']:
+            self.assertEqual(self.request(path)[0], 400)
+
+    def test_loopback_binding_never_performs_reverse_dns(self):
+        with patch('socket.getfqdn', side_effect=AssertionError('Unexpected DNS during fixture startup')):
+            server = fixture.FixtureHTTPServer(('127.0.0.1', 0), fixture.Handler)
+            try:
+                self.assertEqual(server.server_name, '127.0.0.1')
+                self.assertGreater(server.server_port, 0)
+            finally:
+                server.server_close()
+        with self.assertRaises(ValueError):
+            fixture.FixtureHTTPServer(('0.0.0.0', 0), fixture.Handler)

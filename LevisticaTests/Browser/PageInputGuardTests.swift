@@ -692,6 +692,43 @@ extension WebKitIntegrationTests {
             return dictionary
         }
 
+        @Test(arguments: ["default-src", "connect-src"], ["allow", "none"])
+        func cspWebSocketAllowsOnlyDeclaredConnections(directive: String, policy: String) async throws {
+            let (runtime, base) = try await page()
+            defer { runtime.stop() }
+            let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+            var source = try #require(URLComponents(url: base, resolvingAgainstBaseURL: false))
+            source.path = "/csp-websocket-source"
+            source.queryItems = [URLQueryItem(name: "token", value: token),
+                URLQueryItem(name: "directive", value: directive), URLQueryItem(name: "policy", value: policy)]
+            let url = try #require(source.url)
+            let result = try await evaluate("""
+                return await new Promise((resolve,reject)=>{
+                    const frame=document.createElement('iframe'),token=\(String(reflecting: token));
+                    const origin=location.origin;
+                    const cleanup=()=>{clearTimeout(timer);removeEventListener('message',receive);frame.remove();};
+                    const receive=event=>{
+                        if(event.source!==frame.contentWindow || event.origin!==origin || event.data?.token!==token)return;
+                        const result=event.data;cleanup();resolve(result);
+                    };
+                    const timer=setTimeout(()=>{cleanup();reject(new Error('CSP WebSocket fixture timeout'));},6000);
+                    addEventListener('message',receive);frame.src=\(String(reflecting: url.absoluteString));document.body.append(frame);
+                });
+                """, in: runtime)
+            let allowed = policy == "allow"
+            #expect(result["status"] as? String == (allowed ? "connected" : "blocked"))
+            if allowed == false {
+                #expect(result["directive"] as? String == "connect-src")
+                #expect(result["disposition"] as? String == "enforce")
+            }
+            let counts = try await evaluate("""
+                const response=await fetch('/csp-websocket-count?token=\(token)',{cache:'no-store',signal:AbortSignal.timeout(5000)});
+                if(!response.ok)throw new Error('fixture count failed');return await response.json();
+                """, in: runtime)
+            #expect(counts["requests"] as? Int == (allowed ? 1 : 0))
+            print("CSP WebSocket: directive=\(directive) policy=\(policy) status=\(result["status"] as? String ?? "missing") requests=\(counts["requests"] as? Int ?? -1)")
+        }
+
         @Test(arguments: ["dedicated", "shared"], ["self", "none"])
         func cspWorkerSourceAllowsOnlyDeclaredScriptLoads(kind: String, policy: String) async throws {
             let (runtime, base) = try await page()
