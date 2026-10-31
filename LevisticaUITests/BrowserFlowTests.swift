@@ -192,6 +192,42 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue((app.textFields["addressField"].value as? String)?.contains("aqz-KE-bpKQ") == true)
         let window = app.windows["browser"]
         XCTAssertTrue(window.exists)
+        if workload.mixedPublicPages == true {
+            // Fix the comparison's page area, rather than assuming the current
+            // browser chrome consumes the same height as an older revision.
+            let before = try captureMeasurementViewport(app, expectedPID: workload.pid,
+                pageID: "public-video", prefix: "mixed-sizing-before", captureImage: false,
+                validate: { try check() })
+            XCTAssertEqual(before.devicePixelRatio, 2)
+            let delta = CGVector(dx: 779 - before.cssWidth, dy: 683 - before.cssHeight)
+            XCTAssertLessThanOrEqual(abs(delta.dx), 16)
+            XCTAssertLessThanOrEqual(abs(delta.dy), 16)
+            if delta.dx != 0 || delta.dy != 0 {
+                try check()
+                let frame = window.frame
+                let screen = try XCTUnwrap(NSScreen.main)
+                let target = CGRect(origin: frame.origin,
+                    size: CGSize(width: frame.width + delta.dx, height: frame.height + delta.dy))
+                XCTAssertTrue([frame.minX, frame.minY, target.width, target.height].allSatisfy(\.isFinite))
+                // XCTest uses top-left screen coordinates; reject other displays.
+                XCTAssertEqual(screen.frame.origin, .zero)
+                XCTAssertTrue(CGRect(origin: .zero, size: screen.frame.size).contains(target))
+                let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
+                    .withOffset(CGVector(dx: -2, dy: -2))
+                corner.press(forDuration: 0.2, thenDragTo: corner.withOffset(delta))
+                let resized = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    abs(window.frame.width - target.width) <= 1
+                        && abs(window.frame.height - target.height) <= 1
+                }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [resized], timeout: 5), .completed)
+            }
+            let normalized = try captureMeasurementViewport(app, expectedPID: workload.pid,
+                pageID: "public-video", prefix: "mixed-sizing-fixed", captureImage: false,
+                validate: { try check() })
+            XCTAssertEqual(normalized.cssWidth, 779)
+            XCTAssertEqual(normalized.cssHeight, 683)
+            XCTAssertEqual(normalized.devicePixelRatio, 2)
+        }
         let tabRows = window.outlines.firstMatch.outlineRows
         if workload.mixedPublicPages == true {
             evidence["mixedPublicPages"] = true
