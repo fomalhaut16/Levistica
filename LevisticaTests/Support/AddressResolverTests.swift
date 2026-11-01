@@ -33,6 +33,10 @@ struct AddressResolverTests {
         (" http://example.com/path ", "http://example.com/path"),
         ("localhost:8080", "https://localhost:8080"),
         ("example.com:8443/a", "https://example.com:8443/a"),
+        ("example.com:8443?x=1&y=two", "https://example.com:8443?x=1&y=two"),
+        ("example.com:8443#section", "https://example.com:8443#section"),
+        ("localhost:8080?q=C++", "https://localhost:8080?q=C++"),
+        ("localhost:8080#section", "https://localhost:8080#section"),
         ("https://example.com/a?q=日本語", "https://example.com/a?q=%E6%97%A5%E6%9C%AC%E8%AA%9E")
     ])
     func addresses(input: String, expected: String) throws {
@@ -61,7 +65,7 @@ struct AddressResolverTests {
         #expect(throws: AddressError.empty) { try AddressResolver.resolve("  ") }
     }
 
-    @Test(arguments: ["http://127.0.0.1:1/", "https://example.com:25/"])
+    @Test(arguments: ["http://127.0.0.1:1/", "https://example.com:25/", "example.com:25?x=1", "localhost:25#section"])
     func explainsRestrictedPorts(input: String) {
         #expect(throws: AddressError.restrictedPort) { try AddressResolver.resolve(input) }
     }
