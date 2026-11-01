@@ -203,6 +203,8 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     }
 
     static func safeFilename(_ suggestion: String) -> String {
+        let byteLimit = 180
+        let fallback = "download"
         // Join_Control is needed by emoji and some scripts. Direction controls
         // and all other characters stripped by the existing policy stay stripped.
         var excluded = CharacterSet.controlCharacters
@@ -210,12 +212,28 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         let name = (suggestion as NSString).lastPathComponent
             .components(separatedBy: excluded).joined()
             .replacingOccurrences(of: ":", with: "_")
-        var bounded = String(name.prefix(180)).trimmingCharacters(in: .whitespacesAndNewlines)
-        while bounded.utf8.count > 180 { bounded.removeLast() }
-        let withoutJoiners = bounded.replacingOccurrences(of: "\u{200C}", with: "")
-            .replacingOccurrences(of: "\u{200D}", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return withoutJoiners.isEmpty || withoutJoiners == "." || withoutJoiners == ".." ? "download" : bounded
+        func clipped(_ value: String, bytes: Int) -> String {
+            var result = String(value.prefix(bytes))
+            while result.utf8.count > bytes { result.removeLast() }
+            return result.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        func needsFallback(_ value: String) -> Bool {
+            let significant = value.replacingOccurrences(of: "\u{200C}", with: "")
+                .replacingOccurrences(of: "\u{200D}", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return significant.isEmpty || [".", "..", "/"].contains(significant)
+        }
+        var bounded = clipped(name, bytes: byteLimit)
+        let pathExtension = (name as NSString).pathExtension
+        let suffix = "." + pathExtension
+        // Preserve ordinary final extensions when the whole name needs clipping.
+        // The suffix must leave room for a usable fallback stem as well.
+        if name.utf8.count > byteLimit, !pathExtension.isEmpty, suffix.utf8.count <= byteLimit - fallback.utf8.count {
+            let stem = clipped((name as NSString).deletingPathExtension, bytes: byteLimit - suffix.utf8.count)
+            bounded = (needsFallback(stem) ? fallback : stem) + suffix
+        }
+        return needsFallback(bounded) ? fallback : bounded
     }
 
     func cancel(_ item: DownloadItem) {
