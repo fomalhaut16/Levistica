@@ -823,7 +823,27 @@ final class BrowserFlowTests: XCTestCase {
         let available = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             button.isEnabled || (report.value as? String)?.hasPrefix("viewport:error:") == true
         }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [available], timeout: 15), .completed)
+        let availability = XCTWaiter.wait(for: [available], timeout: 15)
+        if availability != .completed {
+            try validate()
+            let value = report.exists ? report.value as? String : nil
+            let knownStates = ["viewport:loading", "viewport:requested", "viewport:pending",
+                               "viewport:not-requested", "viewport:unavailable"]
+            let reportState: String
+            if let value, knownStates.contains(value) { reportState = value }
+            else if value?.hasPrefix("viewport:error:") == true { reportState = "viewport:error" }
+            else if value?.hasPrefix("{") == true { reportState = "snapshot-json" }
+            else { reportState = value == nil ? "missing" : "unrecognized" }
+            let state = ["expectedPageID": expectedPageID, "reportState": reportState,
+                         "buttonEnabled": String(button.isEnabled), "reportExists": String(report.exists),
+                         "waitResult": String(availability.rawValue)]
+            let data = try JSONSerialization.data(withJSONObject: state, options: .sortedKeys)
+            let diagnostic = XCTAttachment(string: String(decoding: data, as: UTF8.self))
+            diagnostic.name = prefix + "-not-ready"
+            diagnostic.lifetime = .keepAlways
+            add(diagnostic)
+        }
+        XCTAssertEqual(availability, .completed)
         try validate()
         guard button.isEnabled else {
             let value = (report.value as? String) ?? "viewport:disabled"
