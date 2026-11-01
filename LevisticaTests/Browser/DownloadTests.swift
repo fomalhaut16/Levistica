@@ -86,4 +86,31 @@ struct DownloadTests {
         #expect(DownloadManager.safeFilename("..") == "download")
         #expect(DownloadManager.safeFilename("bad\nname.txt") == "badname.txt")
     }
+
+    @MainActor
+    @Test(arguments: ["家族👨\u{200D}👩\u{200D}👧\u{200D}👦.png", "研究👩🏽\u{200D}🔬.pdf", "می\u{200C}روم.txt"])
+    func suggestedNamesPreserveTextJoiners(_ suggestion: String) {
+        #expect(DownloadManager.safeFilename(suggestion) == suggestion)
+    }
+
+    @MainActor
+    @Test(arguments: ["\u{061C}", "\u{200E}", "\u{200F}", "\u{202A}", "\u{202B}", "\u{202C}",
+                      "\u{202D}", "\u{202E}", "\u{2066}", "\u{2067}", "\u{2068}", "\u{2069}"])
+    func suggestedNamesStillRemoveDirectionControls(_ control: String) {
+        #expect(DownloadManager.safeFilename("invoice" + control + "fdp.exe") == "invoicefdp.exe")
+    }
+
+    @MainActor
+    @Test(arguments: ["\u{200C}", "\u{200D}", "\u{200C} \u{200D}", "\u{200D}.\u{200C}", "\u{200C}..\u{200D}"])
+    func joinersCannotMakeAnEmptyOrDotOnlySuggestedName(_ suggestion: String) {
+        #expect(DownloadManager.safeFilename(suggestion) == "download")
+    }
+
+    @MainActor @Test func joiningCharactersDoNotBypassControlRemovalOrByteLimit() {
+        #expect(DownloadManager.safeFilename("写真👨\u{200D}👩\u{202E}\n.png") == "写真👨\u{200D}👩.png")
+        let result = DownloadManager.safeFilename(String(repeating: "👩🏽\u{200D}🔬", count: 100))
+        #expect(result.utf8.count <= 180)
+        #expect(result.isEmpty == false)
+        #expect(result.allSatisfy { $0 == "👩🏽\u{200D}🔬" })
+    }
 }

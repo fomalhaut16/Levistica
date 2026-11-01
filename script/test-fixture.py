@@ -7,7 +7,7 @@ import wave
 import http.server
 import json
 import re
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 import pathlib
 import ssl
 import socket
@@ -414,12 +414,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
-        if self.path in ["/download", "/download-slow", "/download-failure"]:
+        if self.path in ["/download", "/download-slow", "/download-failure", "/download-joined-name"]:
             chunks = 2048 if self.path == "/download-slow" else 1
             chunk = b"levistica synthetic download\n" if chunks == 1 else b"x" * 4096
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Disposition", 'attachment; filename="fixture-download.txt"')
+            disposition = ('attachment; filename="fixture-download.txt"' if self.path != "/download-joined-name"
+                           else "attachment; filename*=UTF-8''" + quote("family-👨\u200d👩\u200d👧\u200d👦.txt", safe=""))
+            self.send_header("Content-Disposition", disposition)
             self.send_header("Content-Length", str(len(chunk) * chunks if self.path != "/download-failure" else 1000000))
             self.end_headers()
             try:
@@ -594,6 +596,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/dialog-frame": '''<title>Dialog frame</title><button onclick="document.getElementById('frame-result').textContent='Frame: '+confirm('Synthetic frame confirmation')">Frame confirm</button><p id="frame-result"></p>''',
             "/files": '''<title>Files fixture</title><h1>Files fixture</h1>
                 <a href="/download">Download fixture</a>
+                <a href="/download-joined-name">Joined filename download</a>
                 <a href="/download-slow">Slow download</a>
                 <a href="/download-failure">Failed download</a>
                 <input type="file" aria-label="Attachment" id="attachment" onchange="document.getElementById('selected').textContent=this.files[0]?.name || 'No selection'">

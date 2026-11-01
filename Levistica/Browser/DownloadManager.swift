@@ -203,12 +203,19 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     }
 
     static func safeFilename(_ suggestion: String) -> String {
+        // Join_Control is needed by emoji and some scripts. Direction controls
+        // and all other characters stripped by the existing policy stay stripped.
+        var excluded = CharacterSet.controlCharacters
+        excluded.remove(charactersIn: "\u{200C}\u{200D}")
         let name = (suggestion as NSString).lastPathComponent
-            .components(separatedBy: .controlCharacters).joined()
+            .components(separatedBy: excluded).joined()
             .replacingOccurrences(of: ":", with: "_")
         var bounded = String(name.prefix(180)).trimmingCharacters(in: .whitespacesAndNewlines)
         while bounded.utf8.count > 180 { bounded.removeLast() }
-        return bounded.isEmpty || bounded == "." || bounded == ".." ? "download" : bounded
+        let withoutJoiners = bounded.replacingOccurrences(of: "\u{200C}", with: "")
+            .replacingOccurrences(of: "\u{200D}", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return withoutJoiners.isEmpty || withoutJoiners == "." || withoutJoiners == ".." ? "download" : bounded
     }
 
     func cancel(_ item: DownloadItem) {
