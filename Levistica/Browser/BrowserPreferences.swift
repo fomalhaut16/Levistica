@@ -11,11 +11,13 @@ final class BrowserPreferences {
     private struct Saved: Codable {
         let version: Int
         let newTabURL: String?
+        let homeURL: String?
         let searchEngine: SearchEngine?
         let tabLayout: TabLayout?
     }
     private let fileURL: URL?
     private(set) var newTabURL: URL?
+    private(set) var homeURL: URL?
     private(set) var searchEngine: SearchEngine = .duckDuckGo
     private(set) var tabLayout: TabLayout = .vertical
     private(set) var canSave = true
@@ -39,6 +41,11 @@ final class BrowserPreferences {
                 let url = try Self.pageURL(value)
                 guard url?.absoluteString == value else { throw CocoaError(.fileReadCorruptFile) }
                 newTabURL = url
+            }
+            if let value = saved.homeURL {
+                let url = try Self.pageURL(value)
+                guard let url, url.absoluteString == value else { throw CocoaError(.fileReadCorruptFile) }
+                homeURL = url
             }
             searchEngine = saved.searchEngine ?? .duckDuckGo
             tabLayout = saved.tabLayout ?? .vertical
@@ -74,25 +81,38 @@ final class BrowserPreferences {
             notice = "HTTPまたはHTTPSのURLを入力してください。空欄にすると空白ページになります。"
             return false
         }
-        return save(page: page, engine: searchEngine, layout: tabLayout,
+        return save(page: page, home: homeURL, engine: searchEngine, layout: tabLayout,
                     message: "設定を保存しました。次に追加するタブから適用します。")
+    }
+
+    @discardableResult
+    func saveHomePage(_ input: String) -> Bool {
+        guard canSave else { return false }
+        let home: URL?
+        do { home = try Self.pageURL(input) }
+        catch {
+            notice = "ホームページにはHTTPまたはHTTPSのURLを入力してください。空欄で未設定にできます。"
+            return false
+        }
+        return save(page: newTabURL, home: home, engine: searchEngine, layout: tabLayout,
+                    message: "ホームページを保存しました。")
     }
 
     @discardableResult
     func saveSearchEngine(_ engine: SearchEngine) -> Bool {
         guard canSave else { return false }
-        return save(page: newTabURL, engine: engine, layout: tabLayout,
+        return save(page: newTabURL, home: homeURL, engine: engine, layout: tabLayout,
                     message: "検索先を保存しました。次にURL欄で検索するときから適用します。")
     }
 
     @discardableResult
     func saveTabLayout(_ layout: TabLayout) -> Bool {
         guard canSave else { return false }
-        return save(page: newTabURL, engine: searchEngine, layout: layout,
+        return save(page: newTabURL, home: homeURL, engine: searchEngine, layout: layout,
                     message: "タブの配置を保存しました。")
     }
 
-    private func save(page: URL?, engine: SearchEngine, layout: TabLayout, message: String) -> Bool {
+    private func save(page: URL?, home: URL?, engine: SearchEngine, layout: TabLayout, message: String) -> Bool {
         do {
             if let fileURL {
                 let manager = FileManager.default
@@ -102,7 +122,8 @@ final class BrowserPreferences {
                    attributes[.type] as? FileAttributeType != .typeRegular { throw CocoaError(.fileWriteUnknown) }
                 let temporary = fileURL.deletingLastPathComponent().appendingPathComponent(".browser-preferences-" + UUID().uuidString)
                 defer { try? manager.removeItem(at: temporary) }
-                let data = try JSONEncoder().encode(Saved(version: 1, newTabURL: page?.absoluteString, searchEngine: engine, tabLayout: layout))
+                let data = try JSONEncoder().encode(Saved(version: 1, newTabURL: page?.absoluteString,
+                                                        homeURL: home?.absoluteString, searchEngine: engine, tabLayout: layout))
                 guard manager.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
                     throw CocoaError(.fileWriteUnknown)
                 }
@@ -111,6 +132,7 @@ final class BrowserPreferences {
                 } else { try manager.moveItem(at: temporary, to: fileURL) }
             }
             newTabURL = page
+            homeURL = home
             searchEngine = engine
             tabLayout = layout
             notice = message

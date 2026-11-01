@@ -103,6 +103,9 @@ private struct BrowserCommands: Commands {
         }
         CommandMenu("ページ") {
             if let session {
+                Button("ホームページを開く") { session.openHomePage() }
+                    .keyboardShortcut("h", modifiers: [.command, .shift])
+                    .disabled(session.preferences.homeURL == nil)
                 Button("ページ内を検索") { session.showFind() }.keyboardShortcut("f")
                     .disabled(session.page == nil)
                 Button("拡大") { session.page?.changeZoom(by: 1.1) }.keyboardShortcut("+")

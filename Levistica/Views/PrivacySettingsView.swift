@@ -18,6 +18,7 @@ struct PrivacySettingsView: View {
 private struct GeneralPreferencesView: View {
     let preferences: BrowserPreferences
     @State private var draft = ""
+    @State private var homeDraft = ""
 
     var body: some View {
         ScrollView {
@@ -61,14 +62,37 @@ private struct GeneralPreferencesView: View {
                 .disabled(!preferences.canSave)
                 Text("配置を切り替えても、タブの並びと表示中のページを保ちます。横タブでは一覧ボタンからタブを検索できます。")
                     .font(.callout).foregroundStyle(.secondary)
-                if let notice = preferences.notice { Text(notice).accessibilityIdentifier("newTabPageNotice") }
+                Divider()
+                Text("ホームページ").font(.title2)
+                TextField("URL（空欄で未設定）", text: $homeDraft)
+                    .textFieldStyle(.roundedBorder).accessibilityIdentifier("homePageField")
+                    .disabled(!preferences.canSave)
+                HStack {
+                    Button("Google") { homeDraft = "https://www.google.com/" }.accessibilityIdentifier("useGoogleHomeButton")
+                    Button("未設定") { homeDraft = "" }.accessibilityIdentifier("clearHomePageButton")
+                    Spacer()
+                    Button("保存") {
+                        if preferences.saveHomePage(homeDraft) { homeDraft = preferences.homeURL?.absoluteString ?? "" }
+                    }.accessibilityIdentifier("saveHomePageButton")
+                }.disabled(!preferences.canSave)
+                Text("「ページ」メニューの「ホームページを開く」またはCmd-Shift-Hで開きます。新規タブのページや前回のタブ復元とは別の設定です。")
+                    .font(.callout).foregroundStyle(.secondary)
                 if !preferences.isPersistent { Text("この起動だけの設定です。終了すると消えます。").font(.caption) }
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { draft = preferences.newTabURL?.absoluteString ?? "" }
+        .safeAreaInset(edge: .bottom) {
+            if let notice = preferences.notice {
+                Text(notice).font(.caption).accessibilityIdentifier("newTabPageNotice")
+                    .padding(12).frame(maxWidth: .infinity, alignment: .leading).background(.bar)
+            }
+        }
+        .onAppear {
+            draft = preferences.newTabURL?.absoluteString ?? ""
+            homeDraft = preferences.homeURL?.absoluteString ?? ""
+        }
     }
 }
 
