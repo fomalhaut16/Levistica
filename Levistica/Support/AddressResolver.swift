@@ -45,7 +45,7 @@ enum AddressResolver {
         }
 
         // A host:port is an address, not an application scheme.
-        let hasHostPort = text.range(of: #"^(localhost|[^\s/:]+\.[^\s/:]+):[0-9]+(?:/|$)"#,
+        let hasHostPort = text.range(of: #"^(localhost|[^\s/:]+\.[^\s/:]+):[0-9]+(?:[/?#]|$)"#,
                                     options: .regularExpression) != nil
         let hasScheme = text.range(of: #"^[A-Za-z][A-Za-z0-9+.-]*:"#,
                                   options: .regularExpression) != nil
