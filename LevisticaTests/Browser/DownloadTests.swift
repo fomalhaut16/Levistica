@@ -84,6 +84,8 @@ struct DownloadTests {
     @Test func suggestedNamesCannotSelectAnotherDirectory() {
         #expect(DownloadManager.safeFilename("../../outside.txt") == "outside.txt")
         #expect(DownloadManager.safeFilename("..") == "download")
+        #expect(DownloadManager.safeFilename("/") == "download")
+        #expect(DownloadManager.safeFilename("////") == "download")
         #expect(DownloadManager.safeFilename("bad\nname.txt") == "badname.txt")
     }
 
@@ -112,5 +114,34 @@ struct DownloadTests {
         #expect(result.utf8.count <= 180)
         #expect(result.isEmpty == false)
         #expect(result.allSatisfy { $0 == "👩🏽\u{200D}🔬" })
+    }
+
+    @MainActor
+    @Test(arguments: [(String(repeating: "a", count: 200) + ".pdf", ".pdf"),
+                      (String(repeating: "論", count: 70) + ".pdf", ".pdf"),
+                      (String(repeating: "👩🏽\u{200D}🔬", count: 20) + ".png", ".png"),
+                      (String(repeating: "a", count: 200) + ".pdf.exe", ".exe")])
+    func longSuggestedNamesKeepTheirFinalExtension(_ suggestion: String, _ suffix: String) {
+        let result = DownloadManager.safeFilename(suggestion)
+        #expect(result.hasSuffix(suffix))
+        #expect(result.utf8.count <= 180)
+    }
+
+    @MainActor @Test func oversizedGraphemeStemKeepsItsShortExtensionWithAFallbackName() {
+        let name = "a" + String(repeating: "\u{0301}", count: 180) + ".pdf"
+        #expect(DownloadManager.safeFilename(name) == "download.pdf")
+    }
+
+    @MainActor @Test func excessiveExtensionLengthDoesNotBypassTheFilenameLimit() {
+        let name = String(repeating: "a", count: 200) + "." + String(repeating: "x", count: 200)
+        #expect(DownloadManager.safeFilename(name).utf8.count <= 180)
+    }
+
+    @MainActor @Test func suffixAtTheByteBoundaryLeavesRoomForTheFallbackStem() {
+        let suffix = "." + String(repeating: "x", count: 171)
+        let name = "a" + String(repeating: "\u{0301}", count: 180) + suffix
+        let result = DownloadManager.safeFilename(name)
+        #expect(result == "download" + suffix)
+        #expect(result.utf8.count == 180)
     }
 }
