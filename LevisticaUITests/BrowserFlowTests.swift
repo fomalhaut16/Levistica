@@ -1610,6 +1610,50 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testUnsetHomeShortcutWorksBeforeOpeningAnyMenu() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 40
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        defer { if app.state != .notRunning { app.terminate() } }
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].waitForExistence(timeout: 10))
+        // Opening the Page menu first could hide a command registration issue.
+        app.typeKey("h", modifierFlags: [.command, .shift])
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        XCTAssertTrue(settings.textFields["newTabPageField"].waitForExistence(timeout: 10))
+        XCTAssertEqual(settings.textFields["homePageField"].value as? String, "")
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(settings.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].exists)
+    }
+
+    @MainActor
+    func testUnsetHomeShortcutWorksWithAWebFieldFocused() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 40
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        defer { if app.state != .notRunning { app.terminate() } }
+        submit(base + "/tab-state", in: app)
+        let draft = app.webViews.textFields["Draft"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        draft.click()
+        waitForInputIndicator(in: app)
+        app.typeKey("h", modifierFlags: [.command, .shift])
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        XCTAssertTrue(settings.textFields["homePageField"].waitForExistence(timeout: 10))
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(settings.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.webViews.staticTexts["Document loads: 1"].exists)
+        XCTAssertTrue(draft.exists)
+    }
+
+    @MainActor
     func testUnsetHomeShortcutOpensGeneralSettingsWithoutLoadingAPage() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180
