@@ -5,7 +5,8 @@ import Testing
 struct AddressResolverTests {
     @Test(arguments: SearchEngine.allCases)
     func chosenSearchEnginePreservesUnicodeAndQuerySymbols(_ engine: SearchEngine) throws {
-        for query in ["大学 資料", "C++", "a&b#c%20"] {
+        for query in ["大学 資料", "C++", "a&b#c%20",
+                      "👨\u{200D}👩\u{200D}👧\u{200D}👦", "می\u{200C}روم"] {
             let url = try AddressResolver.resolve(query, searchEngine: engine)
             let parts = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
             #expect(parts.scheme == "https")
@@ -37,6 +38,7 @@ struct AddressResolverTests {
         ("example.com:8443#section", "https://example.com:8443#section"),
         ("localhost:8080?q=C++", "https://localhost:8080?q=C++"),
         ("localhost:8080#section", "https://localhost:8080#section"),
+        ("https://example.com/?q=%E2%80%8D", "https://example.com/?q=%E2%80%8D"),
         ("https://example.com/a?q=日本語", "https://example.com/a?q=%E6%97%A5%E6%9C%AC%E8%AA%9E")
     ])
     func addresses(input: String, expected: String) throws {
@@ -56,7 +58,9 @@ struct AddressResolverTests {
         #expect(throws: AddressError.unsupportedScheme) { try AddressResolver.resolve(input) }
     }
 
-    @Test(arguments: ["http://", "https://user:password@example.com", "/etc/passwd", "~/Downloads/a.pdf", "https://example.com\n/", "https://exa mple.com", "https://example.com:99999"])
+    @Test(arguments: ["http://", "https://user:password@example.com", "/etc/passwd", "~/Downloads/a.pdf", "https://example.com\n/", "https://exa mple.com", "https://example.com:99999", "word\u{202E}txt", "hello\u{200B}world",
+                      "hello\u{2060}world", "https://exam\u{200C}ple.com", "exam\u{200D}ple.com",
+                      "https://example.com/?q=a\u{200D}b"])
     func rejectsMalformedAddresses(input: String) {
         #expect(throws: AddressError.invalid) { try AddressResolver.resolve(input) }
     }

@@ -39,7 +39,10 @@ enum AddressResolver {
     static func resolve(_ input: String, searchEngine: SearchEngine = .duckDuckGo) throws -> URL {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw AddressError.empty }
-        guard !text.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+        // Join controls preserve natural search text; addresses retain the stricter policy below.
+        var searchControls = CharacterSet.controlCharacters
+        searchControls.remove(charactersIn: "\u{200C}\u{200D}")
+        guard !text.unicodeScalars.contains(where: searchControls.contains),
               !text.hasPrefix("/"), !text.hasPrefix("~"), !text.contains("\\") else {
             throw AddressError.invalid
         }
@@ -65,7 +68,8 @@ enum AddressResolver {
     }
 
     private static func webURL(_ text: String) throws -> URL {
-        guard let parts = URLComponents(string: text),
+        guard !text.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+              let parts = URLComponents(string: text),
               let host = parts.host, !host.isEmpty,
               !host.contains(where: \.isWhitespace),
               parts.user == nil, parts.password == nil,
