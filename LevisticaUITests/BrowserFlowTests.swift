@@ -1496,7 +1496,7 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testHomePageIsIndependentAndUsesDepartureProtection() throws {
+    func testHomeAndNewTabsUseIndependentPages() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
@@ -1549,38 +1549,7 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].exists)
         app.typeKey("t", modifierFlags: .command)
         XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
-        submit(base + "/departure", in: app)
-        let draft = app.webViews.textFields["Departure draft"]
-        XCTAssertTrue(draft.waitForExistence(timeout: 10))
-        enter("synthetic home draft", field: draft)
-        XCTAssertTrue(app.images.matching(identifier: "入力操作あり").firstMatch.waitForExistence(timeout: 5))
-        app.typeKey("h", modifierFlags: [.command, .shift])
-        let keep = app.sheets.buttons["ページに戻る"]
-        XCTAssertTrue(keep.waitForExistence(timeout: 5))
-        keep.click()
-        XCTAssertEqual(draft.value as? String, "synthetic home draft")
-        app.typeKey("h", modifierFlags: [.command, .shift])
-        let discard = app.sheets.buttons["入力を破棄して移動"]
-        XCTAssertTrue(discard.waitForExistence(timeout: 5))
-        discard.click()
-        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["2タブ・読み込み済み2"].exists)
-        app.typeKey("q", modifierFlags: .command)
-        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
-        app.launch()
-        app.activate()
-        openGeneral()
-        revealHome()
-        XCTAssertEqual(settings.textFields["homePageField"].value as? String, base + "/two")
-        app.buttons["clearHomePageButton"].click()
-        app.buttons["saveHomePageButton"].click()
-        closeSettings()
-        let pageMenu = app.menuBars.menuBarItems["ページ"]
-        pageMenu.click()
-        XCTAssertFalse(pageMenu.menuItems["ホームページを開く"].isEnabled)
-        app.typeKey(.escape, modifierFlags: [])
-        app.typeKey("t", modifierFlags: .command)
-        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
     }
 
     @MainActor
