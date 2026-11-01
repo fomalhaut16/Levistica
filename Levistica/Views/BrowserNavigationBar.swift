@@ -31,6 +31,7 @@ struct BrowserNavigationBar: View {
                 .textFieldStyle(.roundedBorder).focused($addressFocused)
                 .frame(minWidth: 180).layoutPriority(1)
                 .accessibilityIdentifier("addressField")
+                .accessibilityLabel("URLまたは検索語を入力")
                 .onSubmit {
                     if session.navigate(tab.addressDraft) { addressFocused = false }
                 }

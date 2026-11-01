@@ -1345,6 +1345,51 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testNavigationAccessibilityNamesSurviveBothTabLayouts() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 60
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        defer { if app.state != .notRunning { app.terminate() } }
+        let address = app.textFields["addressField"]
+        XCTAssertTrue(address.waitForExistence(timeout: 10))
+        XCTAssertEqual(address.label, "URLまたは検索語を入力")
+        XCTAssertFalse(app.buttons["backButton"].isEnabled)
+        XCTAssertFalse(app.buttons["forwardButton"].isEnabled)
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        for horizontal in [false, true] {
+            if horizontal {
+                app.buttons["toggleTabLayoutButton"].click()
+                XCTAssertTrue(app.scrollViews["horizontalTabList"].waitForExistence(timeout: 5))
+            }
+            for (identifier, label) in [
+                ("backButton", "戻る"), ("forwardButton", "進む"),
+                ("reloadButton", "再読み込み"), ("showHistoryButton", "閲覧履歴"),
+                ("showBookmarksButton", "ブックマーク"), ("newTabButton", "新しいタブ"),
+                ("toggleTabLayoutButton", horizontal ? "縦タブに切り替え" : "横タブに切り替え")
+            ] {
+                let button = app.buttons[identifier]
+                XCTAssertTrue(button.exists)
+                XCTAssertEqual(button.label, label)
+            }
+            XCTAssertEqual(address.label, "URLまたは検索語を入力")
+            XCTAssertEqual(address.value as? String, base + "/one")
+            if horizontal {
+                XCTAssertEqual(app.buttons["showTabListButton"].label, "タブ一覧")
+                app.buttons["showTabListButton"].click()
+            }
+            let search = app.textFields["tabSearchField"]
+            XCTAssertTrue(search.waitForExistence(timeout: 5))
+            XCTAssertEqual(search.label, "タブを検索")
+            if horizontal { app.typeKey(.escape, modifierFlags: []) }
+        }
+    }
+
+    @MainActor
     func testCompactNavigationFitsBothTabLayoutsAndKeepsKeyboardAddressEditing() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180

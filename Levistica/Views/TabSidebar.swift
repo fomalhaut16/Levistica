@@ -28,6 +28,7 @@ struct TabSidebar: View {
             TextField("タブを検索", text: $filter)
                 .textFieldStyle(.roundedBorder).padding(.horizontal, 10)
                 .accessibilityIdentifier("tabSearchField")
+                .accessibilityLabel("タブを検索")
                 .focused($searchFocused)
                 .onSubmit {
                     if let tab = visibleTabs.first {
