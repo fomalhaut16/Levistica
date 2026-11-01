@@ -68,6 +68,7 @@ private extension FocusedValues {
 
 private struct BrowserCommands: Commands {
     @FocusedValue(\.browserSession) private var session
+    @Environment(\.openSettings) private var openSettings
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             OpenBrowserWindowButton()
@@ -103,9 +104,15 @@ private struct BrowserCommands: Commands {
         }
         CommandMenu("ページ") {
             if let session {
-                Button("ホームページを開く") { session.openHomePage() }
+                Button(session.preferences.homeURL == nil ? "ホームページを設定…" : "ホームページを開く") {
+                    if session.preferences.homeURL == nil {
+                        session.settingsSection = .general
+                        openSettings()
+                    } else {
+                        session.openHomePage()
+                    }
+                }
                     .keyboardShortcut("h", modifiers: [.command, .shift])
-                    .disabled(session.preferences.homeURL == nil)
                 Button("ページ内を検索") { session.showFind() }.keyboardShortcut("f")
                     .disabled(session.page == nil)
                 Button("拡大") { session.page?.changeZoom(by: 1.1) }.keyboardShortcut("+")

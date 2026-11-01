@@ -1496,6 +1496,30 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testUnsetHomeShortcutOpensGeneralSettingsWithoutLoadingAPage() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        defer { if app.state != .notRunning { app.terminate() } }
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].waitForExistence(timeout: 10))
+        app.menuBars.menuBarItems["ページ"].click()
+        let setup = app.menuBars.menuItems["ホームページを設定…"]
+        XCTAssertTrue(setup.exists)
+        XCTAssertTrue(setup.isEnabled)
+        app.typeKey(.escape, modifierFlags: [])
+        app.typeKey("h", modifierFlags: [.command, .shift])
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        XCTAssertTrue(settings.textFields["newTabPageField"].waitForExistence(timeout: 10))
+        XCTAssertEqual(settings.textFields["homePageField"].value as? String, "")
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(settings.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].exists)
+    }
+
+    @MainActor
     func testHomeAndNewTabsUseIndependentPages() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180
