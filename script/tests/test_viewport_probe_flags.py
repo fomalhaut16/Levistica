@@ -8,7 +8,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class ViewportProbeFlags(unittest.TestCase):
     def test_video_fixture_modifier_is_rejected_before_any_app_action_in_other_modes(self):
-        for args in [('--unit', '--video'), ('--public-video-ui', '--video'),
+        for args in [('--unit', '--pdf-loading'), ('--public-video-ui', '--pdf-loading'),
+                     ('--public-viewport-ui', '--pdf-loading', '--pdf'),
+                     ('--unit', '--video'), ('--public-video-ui', '--video'),
                      ('--unit', '--pdf'), ('--public-pdf-ui', '--pdf'),
                      ('--public-viewport-ui', '--video', '--pdf'),
                      ('--unit', '--x-login'), ('--public-video-ui', '--discord-login'),

@@ -709,18 +709,29 @@ final class BrowserFlowTests: XCTestCase {
 
 
     @MainActor
-    func testPublicViewportReadiness() throws {
+    func testPublicViewportReadiness() async throws {
+        try await verifyPublicViewportReadiness(observePDFLoading: false)
+    }
+
+    @MainActor
+    func testPublicPDFLoadingObservation() async throws {
+        try await verifyPublicViewportReadiness(observePDFLoading: true)
+    }
+
+    @MainActor
+    private func verifyPublicViewportReadiness(observePDFLoading: Bool) async throws {
         guard let path = ProcessInfo.processInfo.environment["LEVISTICA_DEADLINE_WORKLOAD"],
               !path.isEmpty, !path.hasPrefix("$(") else {
             throw XCTSkip("Run script/test.sh --public-viewport-ui for the opt-in geometry trial.")
         }
         continueAfterFailure = false
-        executionTimeAllowance = 45
+        executionTimeAllowance = observePDFLoading ? 90 : 45
         struct Workload: Decodable {
             let pid: Int32
             let executable: String
             let startedEpoch: Double
             let viewportPageID: String?
+            let pdfLoadingProbe: Bool?
         }
         let file = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let directory = file.deletingLastPathComponent()
@@ -733,6 +744,8 @@ final class BrowserFlowTests: XCTestCase {
         let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: file))
         let expectedPageID = workload.viewportPageID ?? "public-html"
         XCTAssertTrue(["public-html", "public-video", "public-pdf", "public-chat-login"].contains(expectedPageID))
+        XCTAssertEqual(workload.pdfLoadingProbe ?? false, observePDFLoading)
+        if observePDFLoading { XCTAssertEqual(expectedPageID, "public-pdf") }
         XCTAssertEqual(workload.executable, expected.path)
         let running = try XCTUnwrap(NSRunningApplication(processIdentifier: workload.pid))
         let began = ProcessInfo.processInfo.systemUptime
@@ -745,7 +758,7 @@ final class BrowserFlowTests: XCTestCase {
                 && abs(started.timeIntervalSince1970 - workload.startedEpoch) < 1
         }
         func check() throws {
-            _ = try XCTUnwrap(identityMatches() && ProcessInfo.processInfo.systemUptime - began < 50 ? true : nil,
+            _ = try XCTUnwrap(identityMatches() && ProcessInfo.processInfo.systemUptime - began < (observePDFLoading ? 85 : 50) ? true : nil,
                               "Owned Measurement changed or trial expired")
         }
         try check()
@@ -753,6 +766,58 @@ final class BrowserFlowTests: XCTestCase {
         defer { if identityMatches() && app.state != .notRunning { app.terminate() } }
         XCTAssertTrue(running.activate(options: []))
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        if observePDFLoading {
+            let window = app.windows["browser"]
+            let button = window.buttons["captureMeasurementViewportButton"]
+            let report = window.staticTexts["measurementViewportReport"]
+            let progress = window.progressIndicators["pageLoadProgress"]
+            XCTAssertTrue(button.waitForExistence(timeout: 10))
+            var observations: [[String: Any]] = []
+            var ready = false
+            defer {
+                let record: [String: Any] = ["diagnosticOnly": true, "readyForRAM": false,
+                    "pageID": "public-pdf", "preparationButtonEnabledAtEnd": ready,
+                    "pdfReadinessVerifiedByObservation": false,
+                    "observations": observations, "inputValuesRead": false, "memorySamplesTaken": 0]
+                if let data = try? JSONSerialization.data(withJSONObject: record, options: .sortedKeys) {
+                    let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+                    attachment.name = "public-pdf-loading-observation"
+                    attachment.lifetime = .keepAlways
+                    add(attachment)
+                }
+            }
+            for index in 0..<10 {
+                try check()
+                XCTAssertEqual(app.state, .runningForeground)
+                let value = report.exists ? report.value as? String : nil
+                let knownStates = ["viewport:loading", "viewport:requested", "viewport:pending",
+                                   "viewport:not-requested", "viewport:unavailable"]
+                let state = value.flatMap { knownStates.contains($0) ? $0 : nil }
+                    ?? (value?.hasPrefix("viewport:error:") == true ? "viewport:error" : "other")
+                ready = button.isEnabled
+                var item: [String: Any] = ["elapsedSeconds": ProcessInfo.processInfo.systemUptime - began,
+                    "reportState": state, "buttonEnabled": ready, "progressExists": progress.exists]
+                if progress.exists {
+                    let raw = progress.value
+                    if let number = raw as? NSNumber, number.doubleValue.isFinite,
+                       (0...100).contains(number.doubleValue) {
+                        item["nativeProgressNumber"] = number.doubleValue
+                    } else if let text = raw as? String, text.count <= 16,
+                              text.range(of: #"\A[0-9]{1,3}(?:[.,][0-9]{1,3})?%\z"#, options: .regularExpression) != nil,
+                              let percent = Double(text.dropLast().replacingOccurrences(of: ",", with: ".")),
+                              (0...100).contains(percent) {
+                        item["nativeProgressPercent"] = percent
+                    }
+                }
+                observations.append(item)
+                try check()
+                if ready { break }
+                if index < 9 { try await Task.sleep(for: .seconds(5)) }
+            }
+            XCTAssertFalse(observations.isEmpty)
+            // Collecting loading observations is not proof that the PDF is ready.
+            if !ready { return }
+        }
         let isLogin = expectedPageID == "public-chat-login"
         if isLogin {
             try check()
