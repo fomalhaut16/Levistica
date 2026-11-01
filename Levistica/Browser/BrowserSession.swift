@@ -853,6 +853,12 @@ final class BrowserSession {
         persistSession()
     }
 
+    @discardableResult
+    func openHomePage() -> Bool {
+        guard let url = preferences.homeURL else { return false }
+        return navigate(url.absoluteString)
+    }
+
     func navigate(_ input: String) -> Bool {
         do {
             let url = try AddressResolver.resolve(input, searchEngine: preferences.searchEngine)

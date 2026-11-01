@@ -323,6 +323,114 @@ struct BrowserSessionTests {
         #expect(identifiers.contains(id) == false)
     }
 
+    @Test func homeAndNewTabPreferencesPersistIndependently() throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let session = BrowserSession(dataStore: .nonPersistent(), preferencesFileURL: file)
+        let original = session.activeTab
+        original.addressDraft = "unfinished synthetic address"
+        original.hasEditedAddress = true
+        #expect(session.preferences.saveHomePage("example.org/home"))
+        #expect(session.preferences.saveNewTabPage("https://example.org/new"))
+        #expect(session.preferences.saveSearchEngine(.google))
+        #expect(session.preferences.saveTabLayout(.horizontal))
+        let restored = BrowserPreferences(fileURL: file)
+        #expect(restored.homeURL?.absoluteString == "https://example.org/home")
+        #expect(restored.newTabURL?.absoluteString == "https://example.org/new")
+        #expect(restored.searchEngine == .google && restored.tabLayout == .horizontal)
+        #expect(session.loadedPageCount == 0 && session.tabs.count == 1)
+        #expect(session.activeTab === original && original.hasEditedAddress)
+        #expect(original.addressDraft == "unfinished synthetic address")
+        #expect(restored.saveHomePage(""))
+        let cleared = BrowserPreferences(fileURL: file)
+        #expect(cleared.homeURL == nil && cleared.newTabURL == restored.newTabURL)
+        #expect(cleared.searchEngine == .google && cleared.tabLayout == .horizontal)
+        #expect((try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+    }
+
+    @Test func legacyPreferencesHaveNoHomeAndOpeningUnsetHomeDoesNothing() throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let original = Data(#"{"version":1,"newTabURL":"https://example.org/new"}"#.utf8)
+        try original.write(to: file)
+        let session = BrowserSession(dataStore: .nonPersistent(), preferencesFileURL: file)
+        let selected = session.selectedID
+        #expect(session.preferences.canSave && session.preferences.homeURL == nil)
+        #expect(session.openHomePage() == false)
+        #expect(session.selectedID == selected && session.loadedPageCount == 0 && session.tabs.count == 1)
+        #expect(try Data(contentsOf: file) == original)
+    }
+
+    @Test(arguments: ["file:///private/synthetic", "javascript:alert(1)", "https://u:p@example.org/",
+                      "https://example.org/?access_token=synthetic", "http://127.0.0.1:1/", "https://bad host/"])
+    func unsafeHomeInputKeepsStoredChoices(input: String) throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let preferences = BrowserPreferences(fileURL: file)
+        try #require(preferences.saveHomePage("https://example.org/home"))
+        try #require(preferences.saveNewTabPage("https://example.org/new"))
+        let original = try Data(contentsOf: file)
+        #expect(preferences.saveHomePage(input) == false)
+        #expect(preferences.homeURL?.absoluteString == "https://example.org/home")
+        #expect(preferences.newTabURL?.absoluteString == "https://example.org/new")
+        #expect(try Data(contentsOf: file) == original)
+    }
+
+    @Test func failedHomeSaveKeepsPreviousSettingsAndOriginalFile() throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let preferences = BrowserPreferences(fileURL: file)
+        try #require(preferences.saveHomePage("https://example.org/home"))
+        try #require(preferences.saveNewTabPage("https://example.org/new"))
+        let retained = file.appendingPathExtension("retained")
+        try FileManager.default.moveItem(at: file, to: retained)
+        let original = try Data(contentsOf: retained)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        #expect(preferences.saveHomePage("https://example.org/changed") == false)
+        #expect(preferences.homeURL?.absoluteString == "https://example.org/home")
+        #expect(preferences.newTabURL?.absoluteString == "https://example.org/new")
+        #expect(try Data(contentsOf: retained) == original)
+    }
+
+    @Test func openingHomeReusesTheCurrentTabAndPreservesOtherTabs() async throws {
+        let base = try #require(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let session = BrowserSession(dataStore: .nonPersistent())
+        try #require(session.preferences.saveHomePage(base + "/two"))
+        try #require(session.preferences.saveNewTabPage(base + "/one"))
+        let initial = session.activeTab
+        let tab = try #require(session.newTab())
+        let runtime = try #require(tab.page)
+        defer { runtime.stop() }
+        var deadline = ContinuousClock.now + .seconds(10)
+        while (runtime.webView.title != "Fixture one" || runtime.webView.isLoading), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(runtime.webView.title == "Fixture one")
+        #expect(session.openHomePage())
+        deadline = ContinuousClock.now + .seconds(10)
+        while (runtime.webView.title != "Fixture two" || runtime.webView.isLoading), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(runtime.webView.title == "Fixture two")
+        #expect(session.activeTab === tab && tab.page === runtime)
+        #expect(session.tabs.count == 2 && session.loadedPageCount == 1 && initial.page == nil)
+        #expect(session.preferences.newTabURL?.absoluteString == base + "/one")
+        #expect(runtime.webView.backForwardList.backList.last?.url.absoluteString == base + "/one")
+    }
+
+    @Test(arguments: [#""file:///private/synthetic""#, #""https://u:p@example.org/""#, #""""#, "17", "[]"])
+    func invalidStoredHomeCannotOverwriteOriginalSettings(value: String) throws {
+        let file = try preferencesFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let original = Data((#"{"version":1,"newTabURL":null,"homeURL":\#(value)}"#).utf8)
+        try original.write(to: file)
+        let preferences = BrowserPreferences(fileURL: file)
+        #expect(preferences.canSave == false)
+        #expect(preferences.saveHomePage("https://example.org/") == false)
+        #expect(preferences.saveSearchEngine(.google) == false)
+        #expect(try Data(contentsOf: file) == original)
+    }
+
     private func preferencesFile() throws -> URL {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

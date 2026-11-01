@@ -1496,6 +1496,63 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testHomeAndNewTabsUseIndependentPages() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].waitForExistence(timeout: 10))
+        defer { if app.state != .notRunning { app.terminate() } }
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        func openGeneral() {
+            app.typeKey(",", modifierFlags: .command)
+            XCTAssertTrue(app.buttons["一般"].waitForExistence(timeout: 10))
+            app.buttons["一般"].click()
+            XCTAssertTrue(app.textFields["newTabPageField"].waitForExistence(timeout: 5))
+        }
+        func enter(_ value: String, field: XCUIElement) {
+            field.click()
+            waitForInputIndicator(in: app)
+            field.typeKey("a", modifierFlags: .command)
+            field.typeText(value)
+            waitForInputIndicator(in: app)
+        }
+        func revealHome() {
+            let field = settings.textFields["homePageField"]
+            XCTAssertTrue(field.exists)
+            for _ in 0..<4 {
+                if field.isHittable && settings.buttons["saveHomePageButton"].isHittable { break }
+                settings.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200)
+            }
+            XCTAssertTrue(field.isHittable)
+        }
+        func closeSettings() {
+            app.typeKey("w", modifierFlags: .command)
+            XCTAssertTrue(settings.waitForNonExistence(timeout: 5))
+        }
+        openGeneral()
+        enter(base + "/one", field: settings.textFields["newTabPageField"])
+        app.buttons["saveNewTabPageButton"].click()
+        revealHome()
+        enter(base + "/two", field: settings.textFields["homePageField"])
+        app.buttons["saveHomePageButton"].click()
+        XCTAssertTrue(settings.staticTexts["ホームページを保存しました。"].waitForExistence(timeout: 5))
+        XCTAssertTrue(attachWindowImage(app, name: "home-page-settings", knownFrame: settings.frame))
+        closeSettings()
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].exists)
+        app.typeKey("h", modifierFlags: [.command, .shift])
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture two"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み1"].exists)
+        app.typeKey("t", modifierFlags: .command)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["2タブ・読み込み済み2"].exists)
+    }
+
+    @MainActor
     func testNewTabPageSettingAppliesToPlusAndCommandTAndSurvivesRestart() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180

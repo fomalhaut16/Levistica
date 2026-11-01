@@ -30,7 +30,7 @@ CONFIGURATION=Release ./script/build_and_run.sh --install-package-local PACKAGE_
 
 ## 操作
 
-アドレス欄へURLや検索語を入力し、Returnを押してください。検索先は設定の「一般」でDuckDuckGo／Googleから選べます。 URL欄の左にある接続情報から、表示中のページの接続先と暗号化の状態を確認できます。
+アドレス欄へURLや検索語を入力し、Returnを押してください。検索先は設定の「一般」でDuckDuckGo／Googleから選べます。URL欄の左にある接続情報から、表示中のページの接続先と暗号化の状態を確認できます。
 
 | 操作 | ショートカット |
 |---|---|
@@ -38,6 +38,7 @@ CONFIGURATION=Release ./script/build_and_run.sh --install-package-local PACKAGE_
 | 新しいタブ／閉じる | Cmd-T／Cmd-W |
 | 閉じたタブを開き直す | Cmd-Shift-T |
 | 戻る／進む | Cmd-[／Cmd-] |
+| ホームページを開く | Cmd-Shift-H |
 | ページ内検索 | Cmd-F |
 | タブを検索 | Cmd-Shift-A |
 | ブックマークへ追加 | Cmd-D |
@@ -46,7 +47,7 @@ CONFIGURATION=Release ./script/build_and_run.sh --install-package-local PACKAGE_
 | 設定 | Cmd-, |
 | 終了 | Cmd-Q |
 
-タブの縦・横配置は、URL欄横の切り替えボタンか設定の「一般」で選べます。タブ一覧で検索・並べ替えできます。タブの検索欄でReturnを押すと、最初の検索結果へ移ります。新しいタブで開くページは、設定の「一般」で指定してください。「ページ」メニューではタブの保持と手動休眠を選べます。休眠したページは読み込み直すため、入力内容や再生位置は戻りません。
+タブの縦・横配置は、URL欄横の切り替えボタンか設定の「一般」で選べます。タブ一覧で検索・並べ替えできます。タブの検索欄でReturnを押すと、最初の検索結果へ移ります。新規タブのページとホームページは、設定の「一般」で別々に指定できます。「ページ」メニューではタブの保持と手動休眠を選べます。休眠したページは読み込み直すため、入力内容や再生位置は戻りません。
 
 終了後もタブ一覧は保存されます。フォームへの入力内容は復元しません。履歴やCookieなどの削除は設定から行えます。
 
