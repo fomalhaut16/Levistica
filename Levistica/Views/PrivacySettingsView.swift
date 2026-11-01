@@ -26,13 +26,17 @@ private struct GeneralPreferencesView: View {
                 Text("新しいタブで開くページ").font(.title2)
                 TextField("URL（空欄で空白ページ）", text: $draft)
                     .textFieldStyle(.roundedBorder).accessibilityIdentifier("newTabPageField")
+                    .accessibilityLabel("新しいタブで開くURL")
                     .disabled(!preferences.canSave)
                 HStack {
                     Button("Google") { draft = "https://www.google.com/" }.accessibilityIdentifier("useGoogleNewTabButton")
+                        .accessibilityLabel("新しいタブのURLにGoogleを入力")
                     Button("空白ページ") { draft = "" }.accessibilityIdentifier("useBlankNewTabButton")
+                        .accessibilityLabel("新しいタブのURLを空にする")
                     Spacer()
                     Button("保存") { if preferences.saveNewTabPage(draft) { draft = preferences.newTabURL?.absoluteString ?? "" } }
                         .accessibilityIdentifier("saveNewTabPageButton")
+                        .accessibilityLabel("新しいタブのページを保存")
                 }.disabled(!preferences.canSave)
                 Text("＋やCmd-Tでタブを追加するときに開きます。空欄ではページを読み込みません。前回のタブの復元には影響しません。")
                     .font(.callout).foregroundStyle(.secondary)
@@ -66,14 +70,18 @@ private struct GeneralPreferencesView: View {
                 Text("ホームページ").font(.title2)
                 TextField("URL（空欄で未設定）", text: $homeDraft)
                     .textFieldStyle(.roundedBorder).accessibilityIdentifier("homePageField")
+                    .accessibilityLabel("ホームページのURL")
                     .disabled(!preferences.canSave)
                 HStack {
                     Button("Google") { homeDraft = "https://www.google.com/" }.accessibilityIdentifier("useGoogleHomeButton")
+                        .accessibilityLabel("ホームページのURLにGoogleを入力")
                     Button("未設定") { homeDraft = "" }.accessibilityIdentifier("clearHomePageButton")
+                        .accessibilityLabel("ホームページのURLを空にする")
                     Spacer()
                     Button("保存") {
                         if preferences.saveHomePage(homeDraft) { homeDraft = preferences.homeURL?.absoluteString ?? "" }
                     }.accessibilityIdentifier("saveHomePageButton")
+                        .accessibilityLabel("ホームページを保存")
                 }.disabled(!preferences.canSave)
                 Text("「ページ」メニューの「ホームページを開く」またはCmd-Shift-Hで開きます。新規タブのページや前回のタブ復元とは別の設定です。")
                     .font(.callout).foregroundStyle(.secondary)

@@ -1496,6 +1496,35 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testGeneralSettingsNamesDistinguishHomeFromNewTabDrafts() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        app.activate()
+        defer { if app.state != .notRunning { app.terminate() } }
+        XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].waitForExistence(timeout: 10))
+        app.typeKey(",", modifierFlags: .command)
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        XCTAssertTrue(settings.textFields["newTabPageField"].waitForExistence(timeout: 10))
+        let controls: [(XCUIElement, String)] = [
+            (settings.textFields["newTabPageField"], "新しいタブで開くURL"),
+            (settings.buttons["useGoogleNewTabButton"], "新しいタブのURLにGoogleを入力"),
+            (settings.buttons["useBlankNewTabButton"], "新しいタブのURLを空にする"),
+            (settings.buttons["saveNewTabPageButton"], "新しいタブのページを保存"),
+            (settings.textFields["homePageField"], "ホームページのURL"),
+            (settings.buttons["useGoogleHomeButton"], "ホームページのURLにGoogleを入力"),
+            (settings.buttons["clearHomePageButton"], "ホームページのURLを空にする"),
+            (settings.buttons["saveHomePageButton"], "ホームページを保存")
+        ]
+        for (control, label) in controls {
+            XCTAssertTrue(control.exists)
+            XCTAssertEqual(control.label, label)
+        }
+    }
+
+    @MainActor
     func testUnsetHomeShortcutOpensGeneralSettingsWithoutLoadingAPage() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180
