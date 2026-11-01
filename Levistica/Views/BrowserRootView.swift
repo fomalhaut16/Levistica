@@ -158,6 +158,7 @@ struct BrowserRootView: View {
                     .overlay(alignment: .top) {
                         if page.isLoading {
                             ProgressView(value: page.progress).progressViewStyle(.linear)
+                                .accessibilityIdentifier("pageLoadProgress")
                         }
                     }
             } else if tab.isSleeping {

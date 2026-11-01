@@ -5,6 +5,7 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 MODE="${1:---unit}"
 case "$MODE" in --unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui) ;; *) echo "usage: $0 [--unit|--ui|--all|--profile-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui]" >&2; exit 2;; esac
 VIEWPORT_PAGE=public-html
+PDF_LOADING_PROBE=0
 MIXED_PUBLIC=0
 AUDIBLE_PUBLIC=0
 FOREGROUND_PUBLIC=0
@@ -30,9 +31,12 @@ if [[ $# -gt 1 ]]; then
         VIEWPORT_PAGE=public-video
     elif [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --pdf ]]; then
         VIEWPORT_PAGE=public-pdf
+    elif [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --pdf-loading ]]; then
+        VIEWPORT_PAGE=public-pdf
+        PDF_LOADING_PROBE=1
     elif [[ $# == 2 && "$MODE" == --public-viewport-ui && "$2" == --discord-login ]]; then
         VIEWPORT_PAGE=public-chat-login
-    else echo '--video, --pdf and --discord-login require --public-viewport-ui; --mixed requires --public-video-ui' >&2; exit 2; fi
+    else echo '--video, --pdf, --pdf-loading and --discord-login require --public-viewport-ui; --mixed requires --public-video-ui' >&2; exit 2; fi
 fi
 # Diagnostic selection is fixed; never run normal launch-based tests against Profile.
 if [[ ( "$MODE" == --profile-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ) && -n "${TEST_ONLY:-}" ]]; then
@@ -107,7 +111,7 @@ if [[ "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --pub
     DEADLINE_ALLOWANCE=60
     if [[ "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ]]; then
         # Fixed public workloads only; keep normal profiles and arbitrary URLs out of these trials.
-        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" "$MIXED_PUBLIC" "$AUDIBLE_PUBLIC" "$FOREGROUND_PUBLIC" "$STEADY_PUBLIC" "$HANDOFF_PUBLIC" "$MEMORY_PUBLIC" <<'PYPDF'
+        python3 - "$ROOT_DIR" "$RUN_DIR/deadline-workload.json" "$MODE" "$VIEWPORT_PAGE" "$MIXED_PUBLIC" "$AUDIBLE_PUBLIC" "$FOREGROUND_PUBLIC" "$STEADY_PUBLIC" "$HANDOFF_PUBLIC" "$MEMORY_PUBLIC" "$PDF_LOADING_PROBE" <<'PYPDF'
 import importlib.util
 import json
 import pathlib
@@ -129,6 +133,7 @@ urls = {'--public-pdf-ui': 'https://arxiv.org/pdf/1706.03762v7',
         '--public-viewport-ui': viewport_urls[sys.argv[4]]}
 if sys.argv[3] == '--public-viewport-ui':
     record['viewportPageID'] = sys.argv[4]
+    record['pdfLoadingProbe'] = sys.argv[11] == '1'
     workload.write_text(json.dumps(record) + '\n')
 targets = [urls[sys.argv[3]]]
 if sys.argv[3] == '--public-video-ui' and sys.argv[5] == '1':
@@ -160,6 +165,11 @@ PYPDF
             DEADLINE_SECONDS=60
             DEADLINE_TEST=testPublicViewportReadiness
             DEADLINE_ALLOWANCE=45
+            if [[ "$PDF_LOADING_PROBE" == 1 ]]; then
+                DEADLINE_SECONDS=120
+                DEADLINE_TEST=testPublicPDFLoadingObservation
+                DEADLINE_ALLOWANCE=90
+            fi
         fi
     fi
     python3 "$ROOT_DIR/script/isolated-app-deadline.py" monitor "$RUN_DIR/deadline-workload.json" \
@@ -374,7 +384,11 @@ if result.get('status') != 'identity_changed_no_signal':
 PYPDFEND
     fi
     DEADLINE_PID=""
-    echo 'Public workload UI conditions verified; no memory comparison.'
+    if [[ "$PDF_LOADING_PROBE" == 1 ]]; then
+        echo 'PDF loading diagnosis completed; readiness is reported separately; no RAM collected.'
+    else
+        echo 'Public workload UI conditions verified; no memory comparison.'
+    fi
 elif [[ "$MODE" == --profile-ui ]]; then
     if [[ -n "$COLLECTOR_PID" ]]; then
         wait "$COLLECTOR_PID"
