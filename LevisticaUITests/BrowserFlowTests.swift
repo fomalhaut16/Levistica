@@ -1,7 +1,103 @@
 import XCTest
 import AppKit
+import CryptoKit
 
 final class BrowserFlowTests: XCTestCase {
+    @MainActor
+    func testProfileBlankWindowLaunchMetric() throws {
+        guard let path = ProcessInfo.processInfo.environment["LEVISTICA_PROFILE_LAUNCH_WORKLOAD"],
+              !path.isEmpty, !path.hasPrefix("$(") else {
+            throw XCTSkip("Run script/test.sh --profile-launch-ui for the opt-in launch probe.")
+        }
+        continueAfterFailure = false
+        executionTimeAllowance = 70
+        struct Workload: Decodable {
+            let kind: String
+            let appPath: String
+            let executable: String
+            let source: String
+            let sourceState: String
+            let executableSHA256: String
+            let maximumLaunches: Int
+        }
+        let manifest = URL(fileURLWithPath: path)
+        XCTAssertEqual(manifest, manifest.resolvingSymlinksInPath())
+        XCTAssertEqual(manifest.lastPathComponent, "profile-launch-workload.json")
+        let directory = manifest.deletingLastPathComponent()
+        XCTAssertTrue(directory.lastPathComponent.hasPrefix("tests."))
+        XCTAssertEqual(directory.deletingLastPathComponent().lastPathComponent, "artifacts")
+        let checkout = directory.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        XCTAssertEqual(directory.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent, ".local")
+        let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: manifest))
+        let bundle = checkout.appendingPathComponent(".local/ProfileDerivedData/Build/Products/Release/Levistica.app")
+        let executable = bundle.appendingPathComponent("Contents/MacOS/Levistica")
+        XCTAssertEqual(workload.kind, "ProfileBlankLaunchProbeV1")
+        XCTAssertEqual(workload.appPath, bundle.path)
+        XCTAssertEqual(workload.executable, executable.path)
+        XCTAssertEqual(workload.maximumLaunches, 2)
+        let info = try XCTUnwrap(PropertyListSerialization.propertyList(
+            from: Data(contentsOf: bundle.appendingPathComponent("Contents/Info.plist")), format: nil) as? [String: Any])
+        XCTAssertEqual(info["CFBundleIdentifier"] as? String, "dev.fomalhaut16.Levistica.profile")
+        XCTAssertEqual(info["LevisticaSourceRevision"] as? String, workload.source)
+        XCTAssertEqual(info["LevisticaSourceState"] as? String, workload.sourceState)
+        func digest() throws -> String {
+            SHA256.hash(data: try Data(contentsOf: executable)).map { String(format: "%02x", $0) }.joined()
+        }
+        XCTAssertEqual(try digest(), workload.executableSHA256)
+        let identifiers = ["dev.fomalhaut16.Levistica", "dev.fomalhaut16.Levistica.debug",
+                           "dev.fomalhaut16.Levistica.profile", "dev.fomalhaut16.Levistica.measurement"]
+        func candidates() -> [NSRunningApplication] {
+            NSWorkspace.shared.runningApplications.filter {
+                identifiers.contains($0.bundleIdentifier ?? "")
+                    || $0.executableURL?.path.hasSuffix("/Levistica.app/Contents/MacOS/Levistica") == true
+            }
+        }
+        XCTAssertTrue(candidates().isEmpty)
+        let app = XCUIApplication(url: bundle)
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        let options = XCTMeasureOptions()
+        // XCTest invokes the block once for warmup, then once for the reported metric.
+        options.iterationCount = 1
+        var observations: [[String: Any]] = []
+        measure(metrics: [XCTApplicationLaunchMetric(waitUntilResponsive: true)], options: options) {
+            XCTAssertLessThan(observations.count, workload.maximumLaunches)
+            XCTAssertTrue(candidates().isEmpty)
+            let began = Date().timeIntervalSince1970
+            let clock = ProcessInfo.processInfo.systemUptime
+            app.launch()
+            let running = candidates()
+            XCTAssertEqual(running.count, 1)
+            guard let owner = running.first else { return XCTFail("No launched Profile process") }
+            @MainActor func matches() -> Bool {
+                !owner.isTerminated && owner.bundleIdentifier == "dev.fomalhaut16.Levistica.profile"
+                    && owner.executableURL?.path == executable.path
+                    && (owner.launchDate?.timeIntervalSince1970 ?? 0) >= began - 1
+                    && candidates().count == 1 && candidates().first?.processIdentifier == owner.processIdentifier
+            }
+            XCTAssertTrue(matches())
+            defer { if matches() { app.terminate() } }
+            XCTAssertEqual(app.state, .runningForeground)
+            XCTAssertTrue(app.textFields["addressField"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.textFields["addressField"].isEnabled)
+            XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].exists)
+            observations.append(["launchIndex": observations.count + 1,
+                                 "pid": owner.processIdentifier,
+                                 "launchCallAndUIQuerySeconds": ProcessInfo.processInfo.systemUptime - clock,
+                                 "blankWindowControlsVerified": true])
+        }
+        XCTAssertEqual(observations.count, 2)
+        XCTAssertTrue(candidates().isEmpty)
+        XCTAssertEqual(try digest(), workload.executableSHA256)
+        let evidence: [String: Any] = ["observations": observations, "warmupLaunches": 1,
+                                      "measuredLaunches": 1, "normalDataUsed": false,
+                                      "ramSamples": 0, "productAccepted": false]
+        let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: evidence, options: .sortedKeys),
+                                       uniformTypeIdentifier: "public.json")
+        attachment.name = "profile-blank-launch-observations"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     private static func playerAction(_ names: String, key: String) -> String {
         "^(?:\(names))(?:[ 　]*[（(]\(key)[）)])?(?:[ 　]+(?:キーボード[ 　]+ショートカット|[Kk]eyboard[ 　]+[Ss]hortcut)[ 　]+\(key))?$"
     }
