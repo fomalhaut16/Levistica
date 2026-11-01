@@ -3462,6 +3462,33 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testJoinedDownloadNameSurvivesTheSavePanelAndFileCreation() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let (app, folder) = try fileTestApplication()
+        defer { app.terminate(); try? FileManager.default.removeItem(at: folder) }
+        app.launch()
+        app.activate()
+        submit(base + "/files", in: app)
+        let link = app.webViews.links["Joined filename download"]
+        XCTAssertTrue(link.waitForExistence(timeout: 10))
+        link.click()
+        let save = app.windows.buttons["保存"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
+        let name = "family-👨\u{200D}👩\u{200D}👧\u{200D}👦.txt"
+        XCTAssertTrue(app.staticTexts[name].exists)
+        save.click()
+        XCTAssertTrue(app.staticTexts["保存しました"].waitForExistence(timeout: 15))
+        let downloaded = folder.appendingPathComponent(name)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [name])
+        XCTAssertEqual(try String(contentsOf: downloaded, encoding: .utf8), "levistica synthetic download\n")
+        XCTAssertNotNil(try downloaded.resourceValues(forKeys: [.quarantinePropertiesKey]).quarantineProperties)
+        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/files")
+        XCTAssertTrue(attachWindowImage(app, name: "joined-download-name", knownFrame: app.windows["browser"].frame))
+    }
+
+    @MainActor
     func testDownloadAndSelectOnlyTheSyntheticUpload() throws {
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
         let id = UUID()
