@@ -18,7 +18,8 @@ struct DownloadShelf: View {
                         ForEach(manager.items) { item in
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(item.filename).lineLimit(1)
+                                    Text(item.filename).lineLimit(1).truncationMode(.middle)
+                                        .help(item.filename)
                                     Text(item.status).font(.caption)
                                         .accessibilityIdentifier("downloadStatus-\(item.id)")
                                     if item.active && item.destination != nil {
