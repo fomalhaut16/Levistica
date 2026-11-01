@@ -414,13 +414,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
-        if self.path in ["/download", "/download-slow", "/download-failure", "/download-joined-name"]:
+        if self.path in ["/download", "/download-slow", "/download-failure", "/download-joined-name", "/download-long-name"]:
             chunks = 2048 if self.path == "/download-slow" else 1
             chunk = b"levistica synthetic download\n" if chunks == 1 else b"x" * 4096
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
-            disposition = ('attachment; filename="fixture-download.txt"' if self.path != "/download-joined-name"
-                           else "attachment; filename*=UTF-8''" + quote("family-👨\u200d👩\u200d👧\u200d👦.txt", safe=""))
+            if self.path == "/download-joined-name":
+                disposition = "attachment; filename*=UTF-8''" + quote("family-👨\u200d👩\u200d👧\u200d👦.txt", safe="")
+            elif self.path == "/download-long-name":
+                disposition = 'attachment; filename="' + 'a' * 200 + '.pdf.exe"'
+            else:
+                disposition = 'attachment; filename="fixture-download.txt"'
             self.send_header("Content-Disposition", disposition)
             self.send_header("Content-Length", str(len(chunk) * chunks if self.path != "/download-failure" else 1000000))
             self.end_headers()
@@ -597,6 +601,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/files": '''<title>Files fixture</title><h1>Files fixture</h1>
                 <a href="/download">Download fixture</a>
                 <a href="/download-joined-name">Joined filename download</a>
+                <a href="/download-long-name">Long filename download</a>
                 <a href="/download-slow">Slow download</a>
                 <a href="/download-failure">Failed download</a>
                 <input type="file" aria-label="Attachment" id="attachment" onchange="document.getElementById('selected').textContent=this.files[0]?.name || 'No selection'">
