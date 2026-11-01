@@ -776,7 +776,8 @@ final class BrowserFlowTests: XCTestCase {
             var ready = false
             defer {
                 let record: [String: Any] = ["diagnosticOnly": true, "readyForRAM": false,
-                    "pageID": "public-pdf", "pdfReadyAtEnd": ready,
+                    "pageID": "public-pdf", "preparationButtonEnabledAtEnd": ready,
+                    "pdfReadinessVerifiedByObservation": false,
                     "observations": observations, "inputValuesRead": false, "memorySamplesTaken": 0]
                 if let data = try? JSONSerialization.data(withJSONObject: record, options: .sortedKeys) {
                     let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
