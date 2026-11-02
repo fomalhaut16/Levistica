@@ -2931,6 +2931,23 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testJoinedPDFNameAppearsInTheTab() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 60
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        defer { app.terminate() }
+        app.activate()
+        submit(base + "/joined-title.pdf", in: app)
+        XCTAssertTrue(app.staticTexts["webPDFNotice"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["👩‍💻-資料.pdf"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/joined-title.pdf")
+        XCTAssertTrue(attachWindowImage(app, name: "joined-pdf-tab-name"))
+    }
+
+    @MainActor
     func testWebPDFDisplaysAndFindsText() throws {
         continueAfterFailure = false
         executionTimeAllowance = 120
