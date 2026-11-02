@@ -161,6 +161,8 @@ final class BrowserFlowTests: XCTestCase {
                 XCTAssertTrue(browser.frame.width.isFinite && browser.frame.width > 0)
                 XCTAssertTrue(browser.frame.height.isFinite && browser.frame.height > 0)
                 waitForInputIndicator(in: app)
+                XCTAssertTrue(matches())
+                XCTAssertEqual(app.state, .runningForeground)
                 browser.typeKey("q", modifierFlags: .command)
                 XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
                 XCTAssertTrue(candidates().isEmpty)
