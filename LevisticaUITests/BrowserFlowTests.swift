@@ -3,16 +3,28 @@ import AppKit
 import CryptoKit
 
 final class BrowserFlowTests: XCTestCase {
+    private enum LaunchVariant: String {
+        case profile = "Profile", measurement = "Measurement"
+        var bundleIdentifier: String { "dev.fomalhaut16.Levistica." + rawValue.lowercased() }
+    }
+
     @MainActor
-    func testProfileBlankWindowLaunchMetric() throws {
-        guard let path = ProcessInfo.processInfo.environment["LEVISTICA_PROFILE_LAUNCH_WORKLOAD"],
+    func testProfileBlankWindowLaunchMetric() throws { try measureBlankWindowLaunch(.profile) }
+
+    @MainActor
+    func testMeasurementBlankWindowLaunchMetric() throws { try measureBlankWindowLaunch(.measurement) }
+
+    @MainActor
+    private func measureBlankWindowLaunch(_ variant: LaunchVariant) throws {
+        guard let path = ProcessInfo.processInfo.environment["LEVISTICA_LAUNCH_WORKLOAD"],
               !path.isEmpty, !path.hasPrefix("$(") else {
-            throw XCTSkip("Run script/test.sh --profile-launch-ui for the opt-in launch probe.")
+            throw XCTSkip("Run the matching --profile-launch-ui or --measurement-launch-ui entry for the opt-in launch probe.")
         }
         continueAfterFailure = false
         executionTimeAllowance = 70
         struct Workload: Decodable {
             let kind: String
+            let variant: String
             let appPath: String
             let executable: String
             let source: String
@@ -22,22 +34,23 @@ final class BrowserFlowTests: XCTestCase {
         }
         let manifest = URL(fileURLWithPath: path)
         XCTAssertEqual(manifest, manifest.resolvingSymlinksInPath())
-        XCTAssertEqual(manifest.lastPathComponent, "profile-launch-workload.json")
+        XCTAssertEqual(manifest.lastPathComponent, "release-launch-workload.json")
         let directory = manifest.deletingLastPathComponent()
         XCTAssertTrue(directory.lastPathComponent.hasPrefix("tests."))
         XCTAssertEqual(directory.deletingLastPathComponent().lastPathComponent, "artifacts")
         let checkout = directory.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         XCTAssertEqual(directory.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent, ".local")
         let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: manifest))
-        let bundle = checkout.appendingPathComponent(".local/ProfileDerivedData/Build/Products/Release/Levistica.app")
+        let bundle = checkout.appendingPathComponent(".local/\(variant.rawValue)DerivedData/Build/Products/Release/Levistica.app")
         let executable = bundle.appendingPathComponent("Contents/MacOS/Levistica")
-        XCTAssertEqual(workload.kind, "ProfileBlankLaunchProbeV1")
+        XCTAssertEqual(workload.kind, "IsolatedReleaseBlankLaunchV1")
+        XCTAssertEqual(workload.variant, variant.rawValue)
         XCTAssertEqual(workload.appPath, bundle.path)
         XCTAssertEqual(workload.executable, executable.path)
         XCTAssertEqual(workload.maximumLaunches, 2)
         let info = try XCTUnwrap(PropertyListSerialization.propertyList(
             from: Data(contentsOf: bundle.appendingPathComponent("Contents/Info.plist")), format: nil) as? [String: Any])
-        XCTAssertEqual(info["CFBundleIdentifier"] as? String, "dev.fomalhaut16.Levistica.profile")
+        XCTAssertEqual(info["CFBundleIdentifier"] as? String, variant.bundleIdentifier)
         XCTAssertEqual(info["LevisticaSourceRevision"] as? String, workload.source)
         XCTAssertEqual(info["LevisticaSourceState"] as? String, workload.sourceState)
         func digest() throws -> String {
@@ -67,9 +80,9 @@ final class BrowserFlowTests: XCTestCase {
             app.launch()
             let running = candidates()
             XCTAssertEqual(running.count, 1)
-            guard let owner = running.first else { return XCTFail("No launched Profile process") }
+            guard let owner = running.first else { return XCTFail("No launched isolated Release process") }
             @MainActor func matches() -> Bool {
-                !owner.isTerminated && owner.bundleIdentifier == "dev.fomalhaut16.Levistica.profile"
+                !owner.isTerminated && owner.bundleIdentifier == variant.bundleIdentifier
                     && owner.executableURL?.path == executable.path
                     && (owner.launchDate?.timeIntervalSince1970 ?? 0) >= began - 1
                     && candidates().count == 1 && candidates().first?.processIdentifier == owner.processIdentifier
@@ -88,12 +101,12 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertEqual(observations.count, 2)
         XCTAssertTrue(candidates().isEmpty)
         XCTAssertEqual(try digest(), workload.executableSHA256)
-        let evidence: [String: Any] = ["observations": observations, "warmupLaunches": 1,
+        let evidence: [String: Any] = ["variant": variant.rawValue, "observations": observations, "warmupLaunches": 1,
                                       "measuredLaunches": 1, "normalDataUsed": false,
                                       "ramSamples": 0, "productAccepted": false]
         let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: evidence, options: .sortedKeys),
                                        uniformTypeIdentifier: "public.json")
-        attachment.name = "profile-blank-launch-observations"
+        attachment.name = "isolated-release-blank-launch-observations"
         attachment.lifetime = .keepAlways
         add(attachment)
     }

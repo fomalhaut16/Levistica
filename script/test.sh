@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 MODE="${1:---unit}"
-case "$MODE" in --unit|--ui|--all|--profile-ui|--profile-launch-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui) ;; *) echo "usage: $0 [--unit|--ui|--all|--profile-ui|--profile-launch-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui]" >&2; exit 2;; esac
+case "$MODE" in --unit|--ui|--all|--profile-ui|--profile-launch-ui|--measurement-launch-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui) ;; *) echo "usage: $0 [--unit|--ui|--all|--profile-ui|--profile-launch-ui|--measurement-launch-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui]" >&2; exit 2;; esac
 VIEWPORT_PAGE=public-html
 PDF_LOADING_PROBE=0
 MIXED_PUBLIC=0
@@ -38,11 +38,11 @@ if [[ $# -gt 1 ]]; then
         VIEWPORT_PAGE=public-chat-login
     else echo '--video, --pdf, --pdf-loading and --discord-login require --public-viewport-ui; --mixed requires --public-video-ui' >&2; exit 2; fi
 fi
-# Diagnostic selection is fixed; never run normal launch-based tests against Profile.
-if [[ "$MODE" == --profile-launch-ui && ( "${CONFIGURATION:-Debug}" != Debug || "${LEVISTICA_PROFILE:-0}" != 0 || "${LEVISTICA_MEASUREMENT:-0}" != 0 || -n "${LEVISTICA_SESSION_TEST_ID:-}" || -n "${LEVISTICA_MEASUREMENT_STORE_ID:-}" || "${LEVISTICA_MEASUREMENT_PERSIST_METADATA:-0}" != 0 || -n "${LEVISTICA_MEASUREMENT_CLEANUP_REQUEST+x}" ) ]]; then
-    echo '--profile-launch-ui owns its build and ephemeral storage settings' >&2; exit 2
+# Diagnostic selection is fixed; never run normal launch-based tests against isolated Release variants.
+if [[ ( "$MODE" == --profile-launch-ui || "$MODE" == --measurement-launch-ui ) && ( "${CONFIGURATION:-Debug}" != Debug || "${LEVISTICA_PROFILE:-0}" != 0 || "${LEVISTICA_MEASUREMENT:-0}" != 0 || -n "${LEVISTICA_SESSION_TEST_ID:-}" || -n "${LEVISTICA_MEASUREMENT_STORE_ID:-}" || "${LEVISTICA_MEASUREMENT_PERSIST_METADATA:-0}" != 0 || -n "${LEVISTICA_MEASUREMENT_CLEANUP_REQUEST+x}" ) ]]; then
+    echo "$MODE owns its build and ephemeral storage settings" >&2; exit 2
 fi
-if [[ ( "$MODE" == --profile-ui || "$MODE" == --profile-launch-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ) && -n "${TEST_ONLY:-}" ]]; then
+if [[ ( "$MODE" == --profile-ui || "$MODE" == --profile-launch-ui || "$MODE" == --measurement-launch-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ) && -n "${TEST_ONLY:-}" ]]; then
     echo "$MODE does not accept TEST_ONLY" >&2; exit 2
 fi
 case "${LEVISTICA_MALLOC_STACKS:-0}" in 0|1) ;; *) echo 'LEVISTICA_MALLOC_STACKS must be 0 or 1' >&2; exit 2;; esac
@@ -53,12 +53,12 @@ fi
 IDLE_VARIANT=Profile
 IDLE_TEST=testProfileTwentyTabIdleRevisit
 IDLE_BUILD_ENV=(CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=1 LEVISTICA_MEASUREMENT=0)
-if [[ "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ]]; then
+if [[ "$MODE" == --measurement-launch-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ]]; then
     IDLE_VARIANT=Measurement
     IDLE_TEST=testReleaseTwentyTabIdleRevisit
     IDLE_BUILD_ENV=(CONFIGURATION=Release LEVISTICA_EPHEMERAL=1 LEVISTICA_PROFILE=0 LEVISTICA_MEASUREMENT=1)
 fi
-unset LEVISTICA_LEGACY_BOOKMARK_FIXTURE LEVISTICA_PROFILE_WORKLOAD LEVISTICA_PROFILE_IDLE_WORKLOAD LEVISTICA_DEADLINE_WORKLOAD LEVISTICA_VIEWPORT_PROBE LEVISTICA_PROFILE_LAUNCH_WORKLOAD
+unset LEVISTICA_LEGACY_BOOKMARK_FIXTURE LEVISTICA_PROFILE_WORKLOAD LEVISTICA_PROFILE_IDLE_WORKLOAD LEVISTICA_DEADLINE_WORKLOAD LEVISTICA_VIEWPORT_PROBE LEVISTICA_LAUNCH_WORKLOAD
 if [[ "$MODE" == --public-viewport-ui || "$MODE" == --public-video-ui ]]; then
     IDLE_BUILD_ENV+=(LEVISTICA_VIEWPORT_PROBE=1)
 fi
@@ -84,7 +84,7 @@ cleanup() {
     if [[ -n "$DEADLINE_PID" ]]; then kill "$DEADLINE_PID" 2>/dev/null || true; wait "$DEADLINE_PID" 2>/dev/null || true; fi
     if [[ -n "$MEMORY_PID" ]]; then kill "$MEMORY_PID" 2>/dev/null || true; wait "$MEMORY_PID" 2>/dev/null || true; fi
     if [[ -n "$COLLECTOR_PID" ]]; then kill "$COLLECTOR_PID" 2>/dev/null || true; wait "$COLLECTOR_PID" 2>/dev/null || true; fi
-    if [[ "$MODE" == --profile-ui || "$MODE" == --profile-launch-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ]]; then
+    if [[ "$MODE" == --profile-ui || "$MODE" == --profile-launch-ui || "$MODE" == --measurement-launch-ui || "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --measure-idle-ui || "$MODE" == --deadline-ui || "$MODE" == --public-pdf-ui || "$MODE" == --public-video-ui || "$MODE" == --public-viewport-ui ]]; then
         # Reuse the verified stop/build path even if XCTest never reaches its defer.
         if python3 "$ROOT_DIR/script/check-app-processes.py" --only "$IDLE_VARIANT"; then
             env "${IDLE_BUILD_ENV[@]}" \
@@ -251,17 +251,18 @@ elif [[ "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --mea
     BUILD_ARGS+=("LEVISTICA_PROFILE_IDLE_WORKLOAD=$RUN_DIR/idle-workload.json"
         "-only-testing:LevisticaUITests/BrowserFlowTests/$IDLE_TEST"
         -test-timeouts-enabled YES -maximum-test-execution-time-allowance 300)
-elif [[ "$MODE" == --profile-launch-ui ]]; then
+elif [[ ( "$MODE" == --profile-launch-ui || "$MODE" == --measurement-launch-ui ) ]]; then
     echo "Test artifacts: $RUN_DIR"
-    BUILD_ARGS+=("LEVISTICA_PROFILE_LAUNCH_WORKLOAD=$RUN_DIR/profile-launch-workload.json"
-        -only-testing:LevisticaUITests/BrowserFlowTests/testProfileBlankWindowLaunchMetric
+    LAUNCH_TEST="test${IDLE_VARIANT}BlankWindowLaunchMetric"
+    BUILD_ARGS+=("LEVISTICA_LAUNCH_WORKLOAD=$RUN_DIR/release-launch-workload.json"
+        "-only-testing:LevisticaUITests/BrowserFlowTests/$LAUNCH_TEST"
         -test-timeouts-enabled YES -maximum-test-execution-time-allowance 80)
     if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" build-for-testing >"$RUN_DIR/build-for-testing.log" 2>&1; then
         tail -n 70 "$RUN_DIR/build-for-testing.log" >&2; exit 1
     fi
     TEST_ACTION=test-without-building
     env "${IDLE_BUILD_ENV[@]}" "$ROOT_DIR/script/build_and_run.sh" --build
-    python3 "$ROOT_DIR/script/profile-launch-workload.py" "$RUN_DIR/profile-launch-workload.json"
+    python3 "$ROOT_DIR/script/release-launch-workload.py" prepare --variant "$IDLE_VARIANT" "$RUN_DIR/release-launch-workload.json"
 elif [[ "$MODE" == --profile-ui ]]; then
     if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" build-for-testing >"$RUN_DIR/build-for-testing.log" 2>&1; then
         tail -n 70 "$RUN_DIR/build-for-testing.log" >&2; exit 1
@@ -323,9 +324,9 @@ if [[ -n "${LEVISTICA_FAILURE_FIXTURE_URL:-}" ]]; then BUILD_ARGS+=("LEVISTICA_F
 if [[ -n "${TEST_ONLY:-}" ]]; then BUILD_ARGS+=("-only-testing:$TEST_ONLY"); fi
 BUILD_ARGS+=(-resultBundlePath "$RUN_DIR/Results.xcresult")
 EXPECTED_VARIANT=Debug
-[[ "$MODE" != --profile-ui && "$MODE" != --profile-launch-ui && "$MODE" != --idle-ui && "$MODE" != --release-idle-ui && "$MODE" != --measure-idle-ui && "$MODE" != --deadline-ui && "$MODE" != --public-pdf-ui && "$MODE" != --public-video-ui && "$MODE" != --public-viewport-ui ]] || EXPECTED_VARIANT="$IDLE_VARIANT"
+[[ "$MODE" != --profile-ui && "$MODE" != --profile-launch-ui && "$MODE" != --measurement-launch-ui && "$MODE" != --idle-ui && "$MODE" != --release-idle-ui && "$MODE" != --measure-idle-ui && "$MODE" != --deadline-ui && "$MODE" != --public-pdf-ui && "$MODE" != --public-video-ui && "$MODE" != --public-viewport-ui ]] || EXPECTED_VARIANT="$IDLE_VARIANT"
 python3 "$ROOT_DIR/script/check-app-processes.py" --only "$EXPECTED_VARIANT"
-[[ "$MODE" == --profile-launch-ui ]] || echo "Test artifacts: $RUN_DIR"
+[[ ( "$MODE" == --profile-launch-ui || "$MODE" == --measurement-launch-ui ) ]] || echo "Test artifacts: $RUN_DIR"
 if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" "$TEST_ACTION" >"$RUN_DIR/xcodebuild.log" 2>&1; then
     tail -n 90 "$RUN_DIR/xcodebuild.log" >&2
     # WebKit diagnostics can push the actual assertion out of the log tail.
@@ -403,10 +404,10 @@ PYPDFEND
     else
         echo 'Public workload UI conditions verified; no memory comparison.'
     fi
-elif [[ "$MODE" == --profile-launch-ui ]]; then
+elif [[ ( "$MODE" == --profile-launch-ui || "$MODE" == --measurement-launch-ui ) ]]; then
     /usr/bin/xcrun xcresulttool get test-results metrics --path "$RUN_DIR/Results.xcresult" >"$RUN_DIR/launch-metrics.json"
-    python3 "$ROOT_DIR/script/profile-launch-workload.py" --validate-metrics "$RUN_DIR/launch-metrics.json" >"$RUN_DIR/profile-launch-timing.json"
-    echo 'One Profile launch metric verified; no RAM comparison or product acceptance.'
+    python3 "$ROOT_DIR/script/release-launch-workload.py" validate-metrics --variant "$IDLE_VARIANT" "$RUN_DIR/launch-metrics.json" >"$RUN_DIR/release-launch-timing.json"
+    echo 'One isolated Release launch metric verified; no RAM comparison or product acceptance.'
 elif [[ "$MODE" == --profile-ui ]]; then
     if [[ -n "$COLLECTOR_PID" ]]; then
         wait "$COLLECTOR_PID"

@@ -5,14 +5,15 @@ import plistlib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location('profile_launch_workload', ROOT / 'script/profile-launch-workload.py')
+spec = importlib.util.spec_from_file_location('release_launch_workload', ROOT / 'script/release-launch-workload.py')
 workload = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(workload)
 
 
-class ProfileLaunchWorkloadTests(unittest.TestCase):
-    def metrics(self):
-        return [{'testIdentifier': 'BrowserFlowTests/testProfileBlankWindowLaunchMetric()',
+class ReleaseLaunchWorkloadTests(unittest.TestCase):
+    def metrics(self, variant='Profile'):
+        _, test = workload.variant_facts(variant)
+        return [{'testIdentifier': 'BrowserFlowTests/' + test + '()',
                  'testRuns': [{'metrics': [{'identifier': workload.LAUNCH_METRIC,
                                            'unitOfMeasurement': 's', 'measurements': [0.9]}]}]}]
 
@@ -42,6 +43,21 @@ class ProfileLaunchWorkloadTests(unittest.TestCase):
                       [{'testIdentifier': 'Other/test()', 'testRuns': []}]]:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 workload.validate_metrics(copy.deepcopy(value))
+
+    def test_measurement_uses_same_metric_without_debugger_entitlement(self):
+        entitlements = self.baseline()
+        del entitlements['com.apple.security.get-task-allow']
+        workload.validate_entitlements(entitlements, 'Measurement')
+        result = workload.validate_metrics(self.metrics('Measurement'), 'Measurement')
+        self.assertEqual(result['variant'], 'Measurement')
+        with self.assertRaises(ValueError):
+            workload.validate_entitlements(self.baseline(), 'Measurement')
+        with self.assertRaises(ValueError):
+            workload.validate_metrics(self.metrics(), 'Measurement')
+        with self.assertRaises(ValueError):
+            workload.validate_metrics(self.metrics('Measurement'))
+        with self.assertRaises(ValueError):
+            workload.variant_facts('Release')
 
     def baseline(self):
         value = plistlib.loads((ROOT / 'Levistica/Levistica.entitlements').read_bytes())
