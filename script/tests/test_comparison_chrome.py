@@ -299,6 +299,46 @@ class ComparisonChromeTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     chrome.verified_marker(profile)
 
+    def test_identity_failure_retains_the_exact_observation_and_stage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = pathlib.Path(temporary).resolve()
+            profile = base / 'chrome-trial.synthetic'; profile.mkdir()
+            identity = {'started': 'Tue Nov 3 00:47:15 2026', 'executable': str(chrome.binary)}
+            marker = {'pid': 123, 'profile': str(profile), 'identity': identity}
+            (profile / 'levistica-benchmark.json').write_text(json.dumps(marker))
+            for stage, changed in [('before_profile_check', {'started': 'Tue Nov 3 00:47:14 2026'}),
+                                   ('after_profile_check', {'executable': '/different/executable'})]:
+                observed = {**identity, **changed}
+                observations = [{123: observed}] if stage == 'before_profile_check' else [
+                    {123: identity}, {123: observed}]
+                with self.subTest(stage=stage), patch.object(chrome, 'base', base), \
+                     patch.object(chrome.m, 'identities', side_effect=observations) as read, \
+                     patch.object(chrome.m, 'run', return_value='chrome --private-token=never-log --user-data-dir=' + str(profile)), \
+                     patch.object(chrome.os, 'kill') as signal:
+                    with self.assertRaises(chrome.ChromeIdentityChanged) as caught:
+                        chrome.stop(profile)
+                    error = caught.exception
+                    self.assertEqual(error.details['stage'], stage)
+                    self.assertEqual(error.details['startChanged'], 'started' in changed)
+                    self.assertEqual(error.details['pathChanged'], 'executable' in changed)
+                    self.assertEqual(error.details['observedStart'], observed['started'])
+                    self.assertNotIn('never-log', str(error))
+                    self.assertNotIn(str(profile), str(error))
+                    self.assertNotIn('/different/executable', str(error))
+                    self.assertEqual(read.call_count, len(observations))
+                    signal.assert_not_called()
+
+    def test_identity_failure_details_are_bounded_and_missing_rows_still_fail(self):
+        identity = {'started': 'x' * 1000, 'executable': str(chrome.binary)}
+        observed = {**identity, 'started': 'y' * 1000}
+        with self.assertRaises(chrome.ChromeIdentityChanged) as caught:
+            chrome.require_original_identity(identity, observed, 'before_profile_check')
+        self.assertEqual(len(caught.exception.details['expectedStart']), 40)
+        self.assertEqual(len(caught.exception.details['observedStart']), 40)
+        for row in [None, [], 'invalid']:
+            with self.subTest(row=row), self.assertRaises(ValueError):
+                chrome.require_original_identity(identity, row, 'before_profile_check')
+
     def test_reused_pid_changed_profile_or_start_time_never_receives_a_signal(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = pathlib.Path(temporary).resolve()

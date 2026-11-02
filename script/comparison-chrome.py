@@ -61,6 +61,28 @@ def workload_urls(url, tabs, ready_file=None):
     return [state['urls'][str(i)] for i in range(1, tabs + 1)]
 
 
+class ChromeIdentityChanged(ValueError):
+    """Retain only the failing observation, never argv or profile contents."""
+    def __init__(self, stage, expected, observed):
+        self.details = {
+            'stage': stage,
+            'startChanged': observed.get('started') != expected.get('started'),
+            'pathChanged': observed.get('executable') != expected.get('executable'),
+            'pathIsChrome': observed.get('executable') == str(binary),
+            'expectedStart': str(expected.get('started'))[:40],
+            'observedStart': str(observed.get('started'))[:40],
+        }
+        super().__init__('Chrome process identity changed; refusing to operate: ' +
+                         json.dumps(self.details, separators=(',', ':')))
+
+
+def require_original_identity(expected, observed, stage):
+    if not isinstance(expected, dict) or not isinstance(observed, dict):
+        raise ValueError('Invalid Chrome process identity')
+    if observed != expected or observed.get('executable') != str(binary):
+        raise ChromeIdentityChanged(stage, expected, observed)
+
+
 def verified_marker(profile):
     profile = profile.resolve()
     if profile.parent != base.resolve() or not profile.name.startswith('chrome-trial.'):
@@ -75,12 +97,11 @@ def verified_marker(profile):
     if type(pid) is not int or pid <= 0:
         raise ValueError('Invalid experiment PID')
     identity = m.identities([pid]).get(pid)
-    if identity != marker['identity'] or identity.get('executable') != str(binary):
-        raise ValueError('Chrome process identity changed; refusing to operate')
+    require_original_identity(marker['identity'], identity, 'before_profile_check')
     arguments = m.run(['/bin/ps', '-p', str(pid), '-o', 'args='])
-    if (not m.has_path_argument(arguments, '--user-data-dir=', profile)
-            or m.identities([pid]).get(pid) != identity):
-        raise ValueError('Chrome profile or identity changed; refusing to operate')
+    if not m.has_path_argument(arguments, '--user-data-dir=', profile):
+        raise ValueError('Chrome profile changed; refusing to operate')
+    require_original_identity(identity, m.identities([pid]).get(pid), 'after_profile_check')
     return marker
 
 
