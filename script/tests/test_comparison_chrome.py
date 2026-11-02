@@ -328,6 +328,15 @@ class ComparisonChromeTests(unittest.TestCase):
                     self.assertEqual(read.call_count, len(observations))
                     signal.assert_not_called()
 
+    def test_non_equivalent_clone_cannot_become_an_owned_chrome_identity(self):
+        raw = '/private/var/folders/aa/user/X/com.google.Chrome.code_sign_clone/code_sign_clone.Abc123/Google Chrome.app.bundle/Contents/MacOS/Google Chrome'
+        for expected_path in [str(chrome.binary), raw]:
+            with self.subTest(expected=expected_path), patch.object(chrome.os, 'kill') as signal:
+                with self.assertRaises(chrome.ChromeIdentityChanged):
+                    chrome.require_original_identity({'started': 'same', 'executable': expected_path},
+                        {'started': 'same', 'executable': raw}, 'before_profile_check')
+                signal.assert_not_called()
+
     def test_identity_failure_details_are_bounded_and_missing_rows_still_fail(self):
         identity = {'started': 'x' * 1000, 'executable': str(chrome.binary)}
         observed = {**identity, 'started': 'y' * 1000}

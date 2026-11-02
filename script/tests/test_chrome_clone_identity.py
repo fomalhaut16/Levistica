@@ -27,8 +27,7 @@ class ChromeCloneIdentityTests(unittest.TestCase):
             with patch.object(m, 'CHROME_BINARY', original), patch.object(m, 'CHROME_CLONE_PATH', pattern):
                 self.assertEqual(m.canonical_chrome_hardlink(str(clone)), str(original))
                 clone.unlink(); clone.write_bytes(original.read_bytes())
-                with self.assertRaisesRegex(ValueError, 'not the installed Chrome executable'):
-                    m.canonical_chrome_hardlink(str(clone))
+                self.assertEqual(m.canonical_chrome_hardlink(str(clone)), str(clone))
 
     def test_symlink_missing_file_and_non_file_are_refused(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -38,7 +37,9 @@ class ChromeCloneIdentityTests(unittest.TestCase):
                     with self.subTest(kind=kind):
                         if kind == 'symlink':clone.symlink_to(original)
                         elif kind == 'directory':clone.mkdir()
-                        with self.assertRaises(ValueError):m.canonical_chrome_hardlink(str(clone))
+                        if kind == 'missing':
+                            with self.assertRaises(ValueError):m.canonical_chrome_hardlink(str(clone))
+                        else:self.assertEqual(m.canonical_chrome_hardlink(str(clone)), str(clone))
                         if kind == 'symlink':clone.unlink()
                         elif kind == 'directory':clone.rmdir()
 
