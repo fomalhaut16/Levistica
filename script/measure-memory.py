@@ -390,12 +390,15 @@ def attribution_change(before, after):
 
 
 def wait_for_stable_attribution(read_snapshot, check_conditions, root_pid, seconds, timeout,
-                                evidence, interval=5, clock=None, sleep=None):
+                                evidence, interval=5, clock=None, sleep=None, *,
+                                allow_confirmed_chrome_exits=False):
     """Require a continuous live-attribution window within one fixed deadline.
 
     read_snapshot receives the absolute deadline and must bound its I/O to it.
-    Only successful child/service changes reset the window; failed verification
-    or a changed root aborts. No footprint is taken or retried here.
+    Successful child/service changes reset the window. Chrome may opt in to
+    restart it after a proven child exit, within the same deadline and a bounded
+    event count. Unknown failures and root changes abort. No footprint is taken
+    or retried here; capture-time snapshots must still fail on any child exit.
     """
     if not (0 < seconds <= 120 and seconds <= timeout <= 300 and 0 < interval <= seconds):
         raise ValueError('Invalid attribution readiness bounds')
@@ -403,28 +406,48 @@ def wait_for_stable_attribution(read_snapshot, check_conditions, root_pid, secon
     sleep = time.sleep if sleep is None else sleep
     started = clock()
     deadline = started + timeout
-    evidence.update(status='waiting', checks=0, changes=[], required_seconds=seconds, timeout_seconds=timeout)
+    evidence.update(status='waiting', checks=0, changes=[], confirmed_chrome_exits=[],
+                    required_seconds=seconds, timeout_seconds=timeout)
     baseline = None
     stable_since = started
     root_identity = None
     try:
         while True:
             check_conditions()
-            current = read_snapshot(deadline)
+            try:
+                current = read_snapshot(deadline)
+            except ConfirmedExitedChromeDescendants as error:
+                now = clock()
+                if (not allow_confirmed_chrome_exits or not error.pids
+                        or root_pid in error.pids
+                        or any(type(pid) is not int or pid <= 0 for pid in error.pids)
+                        or now > deadline or len(evidence['confirmed_chrome_exits']) >= 64):
+                    raise
+                evidence['confirmed_chrome_exits'].append(
+                    {'elapsed_seconds': now - started, 'pids': list(error.pids)})
+                baseline = None
+                stable_since = now
+                evidence['stable_seconds'] = 0
+                if now >= deadline:
+                    raise TimeoutError('Attribution readiness did not stabilize before its deadline')
+                sleep(min(interval, deadline - now))
+                continue
             now = clock()
             evidence['checks'] += 1
             evidence['elapsed_seconds'] = now - started
             if now > deadline:
                 raise TimeoutError('Attribution readiness exceeded its deadline')
+            current_root = current['identities'].get(root_pid)
+            if current_root is None:
+                raise ValueError('Attribution readiness has no root identity')
+            if root_identity is not None and current_root != root_identity:
+                raise ValueError('Root identity changed during attribution readiness')
+            if root_identity is None:
+                root_identity = current_root
             if baseline is None:
-                root_identity = current['identities'].get(root_pid)
-                if root_identity is None:
-                    raise ValueError('Attribution readiness has no root identity')
                 baseline = current
                 stable_since = now
             else:
-                if current['identities'].get(root_pid) != root_identity:
-                    raise ValueError('Root identity changed during attribution readiness')
                 stable, change = attribution_change(baseline, current)
                 if not stable:
                     evidence['changes'].append({'elapsed_seconds': now - started, **change})
@@ -758,7 +781,8 @@ def main():
                     lambda deadline: snapshot(pid, app, binary, profile, deadline=deadline),
                     check_conditions, pid,
                     args.stable_attribution_seconds, args.attribution_timeout,
-                    sample['attribution_readiness'], interval=min(5, args.stable_attribution_seconds))
+                    sample['attribution_readiness'], interval=min(5, args.stable_attribution_seconds),
+                    allow_confirmed_chrome_exits=args.browser == 'chrome')
             before = snapshot(pid, app, binary, profile)
             sample['attribution_before'] = before
             if readiness is not None and not attribution_change(readiness, before)[0]:

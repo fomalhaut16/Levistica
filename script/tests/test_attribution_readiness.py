@@ -32,12 +32,13 @@ def state(child=200, root_started='original'):
 
 
 class AttributionReadinessTests(unittest.TestCase):
-    def observe(self, reader, seconds=10, timeout=20, condition=None):
+    def observe(self, reader, seconds=10, timeout=20, condition=None, allow_exits=False):
         self.clock = Clock()
         self.evidence = {}
         self.condition = condition or Mock()
         return measure.wait_for_stable_attribution(reader, self.condition, 100, seconds, timeout,
-            self.evidence, interval=5, clock=self.clock.read, sleep=self.clock.sleep)
+            self.evidence, interval=5, clock=self.clock.read, sleep=self.clock.sleep,
+            allow_confirmed_chrome_exits=allow_exits)
 
     def test_unchanged_attribution_requires_the_whole_window(self):
         reader = Mock(return_value=state())
@@ -101,6 +102,69 @@ class AttributionReadinessTests(unittest.TestCase):
         self.assertEqual(self.evidence['status'], 'failed')
         self.assertGreater(self.evidence['elapsed_seconds'], 5)
 
+    def test_confirmed_exit_before_first_snapshot_requires_a_fresh_full_window(self):
+        reader = Mock(side_effect=[measure.ConfirmedExitedChromeDescendants([201]),
+                                   state(), state(), state()])
+        self.assertEqual(self.observe(reader, allow_exits=True), state())
+        self.assertEqual(self.clock.now, 15)
+        self.assertEqual(self.evidence['stable_seconds'], 10)
+        self.assertEqual(self.evidence['confirmed_chrome_exits'],
+                         [{'elapsed_seconds': 0, 'pids': [201]}])
+        self.assertEqual([c.args[0] for c in reader.call_args_list], [20] * 4)
+
+    def test_confirmed_exit_after_baseline_resets_the_whole_stability_window(self):
+        reader = Mock(side_effect=[state(), measure.ConfirmedExitedChromeDescendants([200]),
+                                   state(201), state(201), state(201)])
+        self.assertEqual(self.observe(reader, allow_exits=True), state(201))
+        self.assertEqual(self.clock.now, 20)
+        self.assertEqual(self.evidence['stable_seconds'], 10)
+        self.assertEqual(self.evidence['confirmed_chrome_exits'][0]['elapsed_seconds'], 5)
+
+    def test_exit_does_not_erase_pinned_root_identity(self):
+        reader = Mock(side_effect=[state(), measure.ConfirmedExitedChromeDescendants([200]),
+                                   state(root_started='replaced')])
+        with self.assertRaisesRegex(ValueError, 'Root identity changed'):
+            self.observe(reader, allow_exits=True)
+        self.assertEqual(self.clock.now, 10)
+        self.assertEqual(self.evidence['status'], 'failed')
+
+    def test_confirmed_exit_recovery_is_opt_in_and_rejects_invalid_pid_sets(self):
+        for allow, pids in [(False, [200]), (True, []), (True, [100]),
+                            (True, [0]), (True, [-1]), (True, [True])]:
+            with self.subTest(allow=allow, pids=pids):
+                reader = Mock(side_effect=measure.ConfirmedExitedChromeDescendants(pids))
+                with self.assertRaises(measure.ConfirmedExitedChromeDescendants):
+                    self.observe(reader, allow_exits=allow)
+                reader.assert_called_once()
+                self.assertEqual(self.evidence['status'], 'failed')
+
+    def test_confirmed_exit_churn_cannot_extend_the_deadline(self):
+        reader = Mock(side_effect=measure.ConfirmedExitedChromeDescendants([200]))
+        with self.assertRaises(TimeoutError):
+            self.observe(reader, allow_exits=True)
+        self.assertEqual(self.clock.now, 20)
+        self.assertEqual(reader.call_count, 5)
+        self.assertEqual(len(self.evidence['confirmed_chrome_exits']), 5)
+        self.assertEqual(self.evidence['status'], 'failed')
+
+    def test_confirmed_exit_event_count_is_bounded_even_with_short_intervals(self):
+        clock = Clock()
+        evidence = {}
+        reader = Mock(side_effect=measure.ConfirmedExitedChromeDescendants([200]))
+        with self.assertRaises(measure.ConfirmedExitedChromeDescendants):
+            measure.wait_for_stable_attribution(reader, Mock(), 100, 10, 20, evidence,
+                interval=0.01, clock=clock.read, sleep=clock.sleep,
+                allow_confirmed_chrome_exits=True)
+        self.assertEqual(len(evidence['confirmed_chrome_exits']), 64)
+        self.assertEqual(reader.call_count, 65)
+        self.assertLess(clock.now, 1)
+
+    def test_unknown_failure_is_not_recovered_even_when_enabled(self):
+        reader = Mock(side_effect=ValueError('Unrecognized service row'))
+        with self.assertRaisesRegex(ValueError, 'Unrecognized service row'):
+            self.observe(reader, allow_exits=True)
+        reader.assert_called_once()
+
     def test_bad_bounds_do_not_access_processes(self):
         for seconds, timeout, interval in [(0, 10, 1), (121, 150, 5), (10, 9, 5), (10, 301, 5), (10, 20, 0)]:
             with self.subTest(seconds=seconds, timeout=timeout, interval=interval):
@@ -141,7 +205,11 @@ class AttributionReadinessTests(unittest.TestCase):
         cases = [('unverifiable', [ValueError('Unverifiable attribution')], 0, False),
                  ('changed-before', [state(), state(), state(201)], 0, False),
                  ('changed-after', [state(), state(), state(), state(201)], 1, False),
-                 ('stable', [state(), state(), state(), state()], 1, True)]
+                 ('stable', [state(), state(), state(), state()], 1, True),
+                 ('exit-before-capture', [state(), state(), measure.ConfirmedExitedChromeDescendants([200])], 0, False),
+                 ('exit-after-capture', [state(), state(), state(), measure.ConfirmedExitedChromeDescendants([200])], 1, False),
+                 ('exit-during-readiness', [measure.ConfirmedExitedChromeDescendants([201]),
+                    state(), state(), state(), state()], 1, True)]
         original_open = pathlib.Path.open
         for label, snapshots, captures, valid in cases:
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
@@ -192,7 +260,8 @@ class AttributionReadinessTests(unittest.TestCase):
                 self.assertEqual(sample['attribution_readiness']['status'], 'failed' if label == 'unverifiable' else 'ready')
                 if valid:
                     self.assertEqual(sample['sum_attributed_physical_footprints_bytes'], 30)
-                    self.assertEqual(sample['capture_started_seconds_after_ready'], 1)
+                    self.assertEqual(sample['capture_started_seconds_after_ready'],
+                                     2 if label == 'exit-during-readiness' else 1)
                     self.assertEqual(result['attribution_readiness_timeout_seconds'], 5)
                 else:
                     self.assertIsNone(sample.get('sum_attributed_physical_footprints_bytes'))
