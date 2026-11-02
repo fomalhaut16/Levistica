@@ -91,7 +91,8 @@ def canonical_chrome_hardlink(path):
     Chromium's CodeSignCloneManager hardlinks its main executable into a
     temporary bundle. A kernel vnode path may then name that link. The name
     pattern alone never authorizes it: device, inode and metadata must match
-    an unchanged installed executable. Unknown paths retain their raw identity.
+    an unchanged installed executable. Unknown or non-equivalent files retain their raw identity, so
+    strict owned-Chrome checks still refuse them.
     """
     if not CHROME_CLONE_PATH.fullmatch(path):
         return path
@@ -108,7 +109,7 @@ def canonical_chrome_hardlink(path):
         raise ValueError('Installed Chrome executable changed during hardlink verification')
     if (not stat.S_ISREG(before.st_mode) or not stat.S_ISREG(clone.st_mode)
             or before.st_nlink < 2 or identity(before) != identity(clone)):
-        raise ValueError('Code-sign clone is not the installed Chrome executable')
+        return path  # Preserve unrelated/older code; owned Chrome checks reject this raw path.
     return str(CHROME_BINARY)
 
 
