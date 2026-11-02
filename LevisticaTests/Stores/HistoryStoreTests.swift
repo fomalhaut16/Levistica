@@ -4,6 +4,68 @@ import Testing
 @testable import Levistica
 
 @MainActor struct HistoryStoreTests {
+    private func version(_ file: URL) throws -> Int32 {
+        var database: OpaquePointer?
+        try #require(sqlite3_open_v2(file.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        var row: OpaquePointer?
+        try #require(sqlite3_prepare_v2(database, "PRAGMA user_version", -1, &row, nil) == SQLITE_OK)
+        defer { sqlite3_finalize(row) }
+        try #require(sqlite3_step(row) == SQLITE_ROW)
+        return sqlite3_column_int(row, 0)
+    }
+
+    @Test(arguments: ["👩‍💻 開発", "می\u{200C}خواهم"])
+    func joinedTitlesSurviveRecordingAndReopen(_ title: String) async throws {
+        let file = try file()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let store = HistoryStore(fileURL: file)
+        let url = try #require(URL(string: "https://example.com/joined"))
+        try await store.record(url: url, title: title)
+        #expect(try version(file) == 3)
+        #expect(try await HistoryStore(fileURL: file).search(title).map(\.title) == [title])
+    }
+
+    @Test func delayedJoinedTitlePromotesOnlyForARecordedVisit() async throws {
+        let file = try file()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let store = HistoryStore(fileURL: file)
+        let url = try #require(URL(string: "https://example.com/kept"))
+        let visited = Date()
+        try await store.record(url: url, title: "Plain", now: visited)
+        try await store.updateTitle(url: url, title: "👩‍💻", visited: visited.addingTimeInterval(-1))
+        #expect(try version(file) == 2)
+        try await store.setPreferences(HistoryPreferences(recordingEnabled: false, retentionDays: 90))
+        try await store.updateTitle(url: url, title: "👩‍💻", visited: visited)
+        try await store.record(url: #require(URL(string: "https://example.com/skipped")), title: "👩‍💻")
+        #expect(try version(file) == 2)
+        #expect(try await store.search().map(\.title) == ["Plain"])
+        try await store.setPreferences(HistoryPreferences())
+        try await store.updateTitle(url: url, title: "👩‍💻", visited: visited)
+        #expect(try version(file) == 3)
+        #expect(try await HistoryStore(fileURL: file).search("👩‍💻").map(\.title) == ["👩‍💻"])
+        try await store.clear()
+        #expect(try version(file) == 3)
+    }
+
+    @Test func failedPruningRollsBackJoinedRecordAndFormatPromotion() async throws {
+        let file = try file()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let store = HistoryStore(fileURL: file)
+        let old = Date().addingTimeInterval(-100 * 86400)
+        try await store.record(url: #require(URL(string: "https://example.com/old")), title: "Keep", now: old)
+        var database: OpaquePointer?
+        try #require(sqlite3_open(file.path, &database) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        try #require(sqlite3_exec(database, "CREATE TRIGGER refuse_prune BEFORE DELETE ON history BEGIN SELECT RAISE(ABORT,'fixture'); END", nil, nil, nil) == SQLITE_OK)
+        await #expect(throws: (any Error).self) {
+            try await store.record(url: #require(URL(string: "https://example.com/new")), title: "👩‍💻")
+        }
+        #expect(try version(file) == 2)
+        try #require(sqlite3_exec(database, "DROP TRIGGER refuse_prune", nil, nil, nil) == SQLITE_OK)
+        #expect(try await store.search(now: old).map(\.title) == ["Keep"])
+    }
+
     private func file() throws -> URL {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

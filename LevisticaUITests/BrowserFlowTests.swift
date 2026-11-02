@@ -2676,6 +2676,42 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testJoinedHistoryTitleSurvivesSearchAndRestart() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 90
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launch()
+        defer { app.terminate() }
+        app.activate()
+        submit(base + "/bookmark-joined-title", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Joined bookmark title fixture"].waitForExistence(timeout: 10))
+        app.buttons["showHistoryButton"].click()
+        let list = app.descendants(matching: .any).matching(identifier: "historyList").firstMatch
+        XCTAssertTrue(list.staticTexts["👩‍💻 開発"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["historyNotice"].exists)
+        XCTAssertTrue(attachWindowImage(app, name: "joined-history-title"))
+        waitForInputIndicator(in: app)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch()
+        app.activate()
+        app.buttons["showHistoryButton"].click()
+        XCTAssertTrue(list.staticTexts["👩‍💻 開発"].firstMatch.waitForExistence(timeout: 10))
+        let search = app.textFields["historySearchField"]
+        search.click()
+        waitForInputIndicator(in: app)
+        search.typeText("/bookmark-joined-title")
+        waitForInputIndicator(in: app)
+        search.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.staticTexts["1件表示"].waitForExistence(timeout: 10))
+        XCTAssertTrue(list.staticTexts["👩‍💻 開発"].firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["historyNotice"].exists)
+    }
+
+    @MainActor
     func testJoinedBookmarkTitleSurvivesSavingAndRestart() throws {
         continueAfterFailure = false
         executionTimeAllowance = 90
