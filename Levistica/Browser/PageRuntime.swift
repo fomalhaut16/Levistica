@@ -403,7 +403,8 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
             pendingPDFTitle = nil
             if response.response.mimeType?.lowercased() == "application/pdf" {
                 let name = response.response.suggestedFilename ?? "PDF資料"
-                pendingPDFTitle = String(decoding: name.utf16.prefix(512), as: UTF16.self).components(separatedBy: .controlCharacters).joined(separator: " ")
+                pendingPDFTitle = String(decoding: name.utf16.prefix(512), as: UTF16.self)
+                    .components(separatedBy: BookmarkStore.disallowedTitleCharacters).joined(separator: " ")
             }
         }
         decisionHandler(download ? .download : .allow)
