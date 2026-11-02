@@ -4,6 +4,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 MODE="${1:---unit}"
 case "$MODE" in --unit|--ui|--all|--profile-ui|--profile-launch-ui|--measurement-launch-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui) ;; *) echo "usage: $0 [--unit|--ui|--all|--profile-ui|--profile-launch-ui|--measurement-launch-ui|--idle-ui|--release-idle-ui|--measure-idle-ui|--deadline-ui|--public-pdf-ui|--public-video-ui|--public-viewport-ui]" >&2; exit 2;; esac
+RESTORE_TABS=0
 VIEWPORT_PAGE=public-html
 PDF_LOADING_PROBE=0
 MIXED_PUBLIC=0
@@ -13,7 +14,9 @@ STEADY_PUBLIC=0
 HANDOFF_PUBLIC=0
 MEMORY_PUBLIC=0
 if [[ $# -gt 1 ]]; then
-    if [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed ]]; then
+    if [[ $# == 2 && "$MODE" == --measurement-launch-ui && ( "$2" == --restore-50 || "$2" == --restore-100 ) ]]; then
+        RESTORE_TABS="${2#--restore-}"
+    elif [[ $# == 2 && "$MODE" == --public-video-ui && "$2" == --mixed ]]; then
         MIXED_PUBLIC=1
     elif [[ $# == 2 && "$MODE" == --public-video-ui && ( "$2" == --mixed-steady || "$2" == --mixed-handoff || "$2" == --mixed-memory ) ]]; then
         MIXED_PUBLIC=1
@@ -254,6 +257,7 @@ elif [[ "$MODE" == --idle-ui || "$MODE" == --release-idle-ui || "$MODE" == --mea
 elif [[ ( "$MODE" == --profile-launch-ui || "$MODE" == --measurement-launch-ui ) ]]; then
     echo "Test artifacts: $RUN_DIR"
     LAUNCH_TEST="test${IDLE_VARIANT}BlankWindowLaunchMetric"
+    [[ "$RESTORE_TABS" == 0 ]] || LAUNCH_TEST=testMeasurementSavedWindowLaunchMetric
     BUILD_ARGS+=("LEVISTICA_LAUNCH_WORKLOAD=$RUN_DIR/release-launch-workload.json"
         "-only-testing:LevisticaUITests/BrowserFlowTests/$LAUNCH_TEST"
         -test-timeouts-enabled YES -maximum-test-execution-time-allowance 80)
@@ -263,6 +267,17 @@ elif [[ ( "$MODE" == --profile-launch-ui || "$MODE" == --measurement-launch-ui )
     TEST_ACTION=test-without-building
     env "${IDLE_BUILD_ENV[@]}" "$ROOT_DIR/script/build_and_run.sh" --build
     python3 "$ROOT_DIR/script/release-launch-workload.py" prepare --variant "$IDLE_VARIANT" "$RUN_DIR/release-launch-workload.json"
+    if [[ "$RESTORE_TABS" != 0 ]]; then
+        python3 "$ROOT_DIR/script/restore-launch-workload.py" serve "$RUN_DIR/restore-fixture-server.json" >"$RUN_DIR/restore-fixture-server.log" 2>&1 &
+        FIXTURE_PID=$!
+        for ((attempt=0; attempt<100; attempt++)); do
+            [[ -f "$RUN_DIR/restore-fixture-server.json" ]] && break
+            kill -0 "$FIXTURE_PID" 2>/dev/null || { echo 'Restore fixture exited before readiness.' >&2; exit 1; }
+            sleep 0.1
+        done
+        [[ -f "$RUN_DIR/restore-fixture-server.json" ]] || { echo 'Restore fixture readiness timed out.' >&2; exit 1; }
+        python3 "$ROOT_DIR/script/restore-launch-workload.py" prepare "$RUN_DIR/release-launch-workload.json" --tabs "$RESTORE_TABS"
+    fi
 elif [[ "$MODE" == --profile-ui ]]; then
     if ! /usr/bin/xcodebuild "${BUILD_ARGS[@]}" build-for-testing >"$RUN_DIR/build-for-testing.log" 2>&1; then
         tail -n 70 "$RUN_DIR/build-for-testing.log" >&2; exit 1
@@ -406,7 +421,12 @@ PYPDFEND
     fi
 elif [[ ( "$MODE" == --profile-launch-ui || "$MODE" == --measurement-launch-ui ) ]]; then
     /usr/bin/xcrun xcresulttool get test-results metrics --path "$RUN_DIR/Results.xcresult" >"$RUN_DIR/launch-metrics.json"
-    python3 "$ROOT_DIR/script/release-launch-workload.py" validate-metrics --variant "$IDLE_VARIANT" "$RUN_DIR/launch-metrics.json" >"$RUN_DIR/release-launch-timing.json"
+    LAUNCH_METRIC_ARGS=()
+    if [[ "$RESTORE_TABS" != 0 ]]; then
+        python3 "$ROOT_DIR/script/restore-launch-workload.py" verify "$RUN_DIR/release-launch-workload.json"
+        LAUNCH_METRIC_ARGS+=(--restore-tabs "$RESTORE_TABS")
+    fi
+    python3 "$ROOT_DIR/script/release-launch-workload.py" validate-metrics --variant "$IDLE_VARIANT" "${LAUNCH_METRIC_ARGS[@]}" "$RUN_DIR/launch-metrics.json" >"$RUN_DIR/release-launch-timing.json"
     echo 'One isolated Release launch metric verified; no RAM comparison or product acceptance.'
 elif [[ "$MODE" == --profile-ui ]]; then
     if [[ -n "$COLLECTOR_PID" ]]; then
