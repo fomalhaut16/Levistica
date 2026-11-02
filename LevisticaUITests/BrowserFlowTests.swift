@@ -15,7 +15,10 @@ final class BrowserFlowTests: XCTestCase {
     func testMeasurementBlankWindowLaunchMetric() throws { try measureBlankWindowLaunch(.measurement) }
 
     @MainActor
-    private func measureBlankWindowLaunch(_ variant: LaunchVariant) throws {
+    func testMeasurementSavedWindowLaunchMetric() throws { try measureBlankWindowLaunch(.measurement, restoring: true) }
+
+    @MainActor
+    private func measureBlankWindowLaunch(_ variant: LaunchVariant, restoring: Bool = false) throws {
         guard let path = ProcessInfo.processInfo.environment["LEVISTICA_LAUNCH_WORKLOAD"],
               !path.isEmpty, !path.hasPrefix("$(") else {
             throw XCTSkip("Run the matching --profile-launch-ui or --measurement-launch-ui entry for the opt-in launch probe.")
@@ -31,6 +34,17 @@ final class BrowserFlowTests: XCTestCase {
             let sourceState: String
             let executableSHA256: String
             let maximumLaunches: Int
+            let restoreTabs: Int?
+            let storeID: String?
+            let expectedSession: ExpectedSession?
+        }
+        struct ExpectedSession: Decodable {
+            struct Tab: Decodable { let id: String; let title: String; let url: String }
+            let count: Int
+            let selectedID: String
+            let selectedIndex: Int
+            let wasRunning: Bool
+            let tabs: [Tab]
         }
         let manifest = URL(fileURLWithPath: path)
         XCTAssertEqual(manifest, manifest.resolvingSymlinksInPath())
@@ -43,7 +57,37 @@ final class BrowserFlowTests: XCTestCase {
         let workload = try JSONDecoder().decode(Workload.self, from: Data(contentsOf: manifest))
         let bundle = checkout.appendingPathComponent(".local/\(variant.rawValue)DerivedData/Build/Products/Release/Levistica.app")
         let executable = bundle.appendingPathComponent("Contents/MacOS/Levistica")
-        XCTAssertEqual(workload.kind, "IsolatedReleaseBlankLaunchV1")
+        XCTAssertEqual(workload.kind, restoring ? "IsolatedReleaseSavedLaunchV1" : "IsolatedReleaseBlankLaunchV1")
+        if restoring {
+            XCTAssertEqual(variant, .measurement)
+            let count = try XCTUnwrap(workload.restoreTabs)
+            XCTAssertTrue([50, 100].contains(count))
+            let expected = try XCTUnwrap(workload.expectedSession)
+            XCTAssertEqual(expected.count, count)
+            XCTAssertEqual(expected.tabs.count, count)
+            XCTAssertEqual(Set(expected.tabs.map(\.id)).count, count)
+            XCTAssertEqual(expected.selectedIndex, count / 2)
+            XCTAssertEqual(expected.selectedID, expected.tabs[count / 2].id)
+            XCTAssertFalse(expected.wasRunning)
+            XCTAssertNotNil(UUID(uuidString: try XCTUnwrap(workload.storeID)))
+            for (index, tab) in expected.tabs.enumerated() {
+                XCTAssertNotNil(UUID(uuidString: tab.id))
+                XCTAssertEqual(tab.title, String(format: "Restore fixture %03d", index + 1))
+                let url = try XCTUnwrap(URLComponents(string: tab.url))
+                XCTAssertEqual(url.scheme, "http")
+                XCTAssertEqual(url.host, "127.0.0.1")
+                XCTAssertNotNil(url.port)
+                XCTAssertNil(url.user)
+                XCTAssertNil(url.password)
+                XCTAssertNil(url.query)
+                XCTAssertNil(url.fragment)
+                XCTAssertEqual(url.path, "/restore-\(index + 1)")
+            }
+        } else {
+            XCTAssertNil(workload.restoreTabs)
+            XCTAssertNil(workload.storeID)
+            XCTAssertNil(workload.expectedSession)
+        }
         XCTAssertEqual(workload.variant, variant.rawValue)
         XCTAssertEqual(workload.appPath, bundle.path)
         XCTAssertEqual(workload.executable, executable.path)
@@ -68,6 +112,10 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(candidates().isEmpty)
         let app = XCUIApplication(url: bundle)
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        if restoring {
+            app.launchEnvironment["LEVISTICA_MEASUREMENT_STORE_ID"] = try XCTUnwrap(workload.storeID)
+            app.launchEnvironment["LEVISTICA_MEASUREMENT_PERSIST_METADATA"] = "1"
+        }
         let options = XCTMeasureOptions()
         // XCTest invokes the block once for warmup, then once for the reported metric.
         options.iterationCount = 1
@@ -92,11 +140,31 @@ final class BrowserFlowTests: XCTestCase {
             XCTAssertEqual(app.state, .runningForeground)
             XCTAssertTrue(app.textFields["addressField"].waitForExistence(timeout: 5))
             XCTAssertTrue(app.textFields["addressField"].isEnabled)
-            XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].exists)
+            if restoring, let expected = workload.expectedSession {
+                let selected = expected.tabs[expected.selectedIndex]
+                XCTAssertTrue(app.staticTexts["\(expected.count)タブ・読み込み済み1"].waitForExistence(timeout: 5))
+                XCTAssertEqual(app.textFields["addressField"].value as? String, selected.url)
+                XCTAssertTrue(app.webViews.staticTexts[selected.title].waitForExistence(timeout: 5))
+                XCTAssertFalse(app.buttons["restoreSessionBackupButton"].exists)
+            } else {
+                XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].exists)
+            }
             observations.append(["launchIndex": observations.count + 1,
                                  "pid": owner.processIdentifier,
                                  "launchCallAndUIQuerySeconds": ProcessInfo.processInfo.systemUptime - clock,
-                                 "blankWindowControlsVerified": true])
+                                 "blankWindowControlsVerified": !restoring,
+                                 "windowControlsVerified": true,
+                                 "restoredTabs": workload.restoreTabs ?? 0])
+            if restoring {
+                let browser = app.windows["browser"]
+                XCTAssertTrue(browser.exists)
+                XCTAssertTrue(browser.frame.width.isFinite && browser.frame.width > 0)
+                XCTAssertTrue(browser.frame.height.isFinite && browser.frame.height > 0)
+                waitForInputIndicator(in: app)
+                browser.typeKey("q", modifierFlags: .command)
+                XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+                XCTAssertTrue(candidates().isEmpty)
+            }
         }
         XCTAssertEqual(observations.count, 2)
         XCTAssertTrue(candidates().isEmpty)
@@ -106,7 +174,7 @@ final class BrowserFlowTests: XCTestCase {
                                       "ramSamples": 0, "productAccepted": false]
         let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: evidence, options: .sortedKeys),
                                        uniformTypeIdentifier: "public.json")
-        attachment.name = "isolated-release-blank-launch-observations"
+        attachment.name = restoring ? "isolated-release-saved-launch-observations" : "isolated-release-blank-launch-observations"
         attachment.lifetime = .keepAlways
         add(attachment)
     }

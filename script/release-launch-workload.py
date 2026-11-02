@@ -35,8 +35,12 @@ def validate_entitlements(entitlements, variant='Profile'):
         raise ValueError('Only the existing entitlement set for the selected Release variant is accepted')
 
 
-def validate_metrics(value, variant='Profile'):
+def validate_metrics(value, variant='Profile', restore_tabs=0):
     _, test = variant_facts(variant)
+    if restore_tabs:
+        if variant != 'Measurement' or type(restore_tabs) is not int or restore_tabs not in (50, 100):
+            raise ValueError('Only 50 or 100 saved tabs in Measurement are supported')
+        test = 'testMeasurementSavedWindowLaunchMetric'
     if (not isinstance(value, list) or len(value) != 1 or not isinstance(value[0], dict)
             or value[0].get('testIdentifier') != 'BrowserFlowTests/' + test + '()'):
         raise ValueError('Exactly the opt-in launch test is required')
@@ -54,7 +58,7 @@ def validate_metrics(value, variant='Profile'):
             or type(samples[0]) not in (int, float) or not math.isfinite(samples[0]) or samples[0] <= 0):
         raise ValueError('Exactly one positive finite measurement is required')
     return {'variant': variant, 'metricIdentifier': LAUNCH_METRIC, 'firstFrameResponsiveSeconds': samples[0],
-            'measuredSamples': 1, 'warmupExcludedByXCTest': True, 'productAccepted': False}
+            'measuredSamples': 1, 'warmupExcludedByXCTest': True, 'productAccepted': False, 'restoredTabs': restore_tabs}
 
 
 def prepare(output, variant='Profile'):
@@ -104,13 +108,16 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['prepare', 'validate-metrics'])
     parser.add_argument('--variant', choices=VARIANTS, required=True)
+    parser.add_argument('--restore-tabs', type=int, choices=[50, 100], default=0)
     parser.add_argument('path', type=Path)
     args = parser.parse_args()
     if args.action == 'prepare':
+        if args.restore_tabs:
+            raise SystemExit('Restore preparation uses restore-launch-workload.py after bundle verification')
         prepare(args.path, args.variant)
     else:
         path = args.path.absolute()
         if (path.name != 'launch-metrics.json' or path.parent.parent != ROOT / '.local/artifacts'
                 or not path.parent.name.startswith('tests.') or path.resolve() != path):
             raise SystemExit('A project-owned launch metrics file is required')
-        print(json.dumps(validate_metrics(json.loads(path.read_text()), args.variant), indent=2))
+        print(json.dumps(validate_metrics(json.loads(path.read_text()), args.variant, args.restore_tabs), indent=2))
