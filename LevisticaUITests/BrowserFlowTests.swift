@@ -2676,6 +2676,39 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testJoinedBookmarkTitleSurvivesSavingAndRestart() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 90
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SESSION_TEST_ID"] = UUID().uuidString
+        app.launch()
+        defer { app.terminate() }
+        app.activate()
+        submit(base + "/bookmark-joined-title", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Joined bookmark title fixture"].waitForExistence(timeout: 10))
+        waitForInputIndicator(in: app)
+        app.typeKey("d", modifierFlags: .command)
+        let title = app.textFields["bookmarkTitleField"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        XCTAssertEqual(title.value as? String, "👩‍💻 開発")
+        XCTAssertTrue(app.staticTexts["1件・上限1000件"].exists)
+        XCTAssertFalse(app.staticTexts["bookmarkNotice"].exists)
+        XCTAssertTrue(attachWindowImage(app, name: "joined-bookmark-title"))
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+        app.launch()
+        app.activate()
+        app.buttons["showBookmarksButton"].click()
+        let row = app.staticTexts["👩‍💻 開発"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.click()
+        XCTAssertEqual(title.value as? String, "👩‍💻 開発")
+        XCTAssertFalse(app.staticTexts["bookmarkNotice"].exists)
+    }
+
+    @MainActor
     func testBookmarksCanBeRenamedSearchedReopenedAndRestored() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180

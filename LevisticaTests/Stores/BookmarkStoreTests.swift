@@ -4,6 +4,72 @@ import Testing
 @testable import Levistica
 
 @MainActor struct BookmarkStoreTests {
+    private func version(_ file: URL) throws -> Int32 {
+        var database: OpaquePointer?
+        try #require(sqlite3_open_v2(file.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        var row: OpaquePointer?
+        try #require(sqlite3_prepare_v2(database, "PRAGMA user_version", -1, &row, nil) == SQLITE_OK)
+        defer { sqlite3_finalize(row) }
+        try #require(sqlite3_step(row) == SQLITE_ROW)
+        return sqlite3_column_int(row, 0)
+    }
+
+    @Test(arguments: ["👩‍💻 開発", "می\u{200C}خواهم"])
+    func joiningNamesPromoteOnlyWhenWrittenAndSurviveReopen(_ title: String) throws {
+        let file = try file()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let store = try BookmarkStore(fileURL: file)
+        let url = try #require(URL(string: "https://example.com/"))
+        let id = try store.add(url: url, title: "Plain")
+        #expect(try version(file) == 2)
+        // A duplicate keeps its existing name and must not promote its format.
+        #expect(try store.add(url: url, title: title) == id)
+        #expect(try version(file) == 2)
+        try store.rename(id, title: title)
+        #expect(try version(file) == 3)
+        #expect(try BookmarkStore(fileURL: file).load().first?.title == title)
+        try store.remove(id)
+        #expect(try version(file) == 3) // Removing data must not silently downgrade it.
+    }
+
+    @Test func joiningFolderNamesPromoteAndSurviveReopen() throws {
+        let file = try file()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let store = try BookmarkStore(fileURL: file)
+        _ = try store.add(url: #require(URL(string: "https://example.com/")), title: "Plain", folders: ["👨‍👩‍👧‍👦", "می\u{200C}خواهم"])
+        #expect(try version(file) == 3)
+        #expect(try BookmarkStore(fileURL: file).load().first?.folders == ["👨‍👩‍👧‍👦", "می\u{200C}خواهم"])
+    }
+
+    @Test func failedImportRollsBackBothJoinedTextAndFormatPromotion() throws {
+        let file = try file()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let store = try BookmarkStore(fileURL: file)
+        _ = try store.add(url: #require(URL(string: "https://example.com/keep")), title: "Keep")
+        let before = try store.load()
+        let joined = ImportedBookmark(url: try #require(URL(string: "https://example.com/new")), title: "👩‍💻", folders: [])
+        let invalid = ImportedBookmark(url: try #require(URL(string: "javascript:alert(1)")), title: "Invalid", folders: [])
+        #expect(throws: BookmarkStore.Failure.self) { try store.importEntries([joined, invalid]) }
+        #expect(try version(file) == 2)
+        #expect(try store.load() == before)
+        #expect(try store.importEntries([joined]) == 1)
+        #expect(try version(file) == 3)
+        #expect(try BookmarkStore(fileURL: file).load().contains(where: { $0.title == "👩‍💻" }))
+    }
+
+    @Test func ordinaryBookmarkActionsKeepNamesAndRejectOtherControls() throws {
+        let library = BookmarkLibrary()
+        library.add(url: try #require(URL(string: "https://example.com/")), title: "👩‍💻 開発")
+        #expect(library.notice == nil && library.items.first?.title == "👩‍💻 開発")
+        library.renameSelected("می\u{200C}خواهم")
+        #expect(library.notice == nil && library.items.first?.title == "می\u{200C}خواهم")
+        for control in ["\n", "\u{0000}", "\u{200B}", "\u{202E}", "\u{2066}"] {
+            #expect(!BookmarkStore.validTitle("before" + control + "after"))
+            #expect(!BookmarkStore.validFolders(["before" + control + "after"]))
+        }
+    }
+
     private func file() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

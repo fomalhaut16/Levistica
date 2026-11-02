@@ -32,7 +32,7 @@ final class BookmarkLibrary {
     func add(url: URL, title: String) {
         mutate { store in
             let bounded = String(decoding: title.utf16.prefix(512), as: UTF16.self)
-                .components(separatedBy: .controlCharacters).joined(separator: " ")
+                .components(separatedBy: BookmarkStore.disallowedTitleCharacters).joined(separator: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             selectedID = try store.add(url: url, title: bounded.isEmpty ? (url.host ?? "ブックマーク") : bounded)
         }
