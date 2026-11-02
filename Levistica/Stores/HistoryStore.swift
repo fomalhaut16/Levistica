@@ -62,13 +62,14 @@ actor HistoryStore {
             try db.bind(storedTitle, row, 2)
             guard sqlite3_bind_double(row, 3, now.timeIntervalSince1970) == SQLITE_OK,
                   sqlite3_step(row) == SQLITE_DONE else { throw HistoryDatabase.Failure.unavailable }
+            try db.markJoinedTitle(storedTitle)
             try db.prune(now: now)
         }
     }
 
     private static func boundedTitle(_ title: String, url: URL) -> String {
         let value = String(decoding: title.utf16.prefix(512), as: UTF16.self)
-            .components(separatedBy: .controlCharacters).joined(separator: " ")
+            .components(separatedBy: BookmarkStore.disallowedTitleCharacters).joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? String((url.host ?? "ページ").prefix(128)) : value
     }
@@ -85,6 +86,7 @@ actor HistoryStore {
             try db.bind(value, row, 1); try db.bind(url.absoluteString, row, 2)
             guard sqlite3_bind_double(row, 3, visited.timeIntervalSince1970) == SQLITE_OK,
                   sqlite3_step(row) == SQLITE_DONE else { throw HistoryDatabase.Failure.unavailable }
+            if db.changedRows > 0 { try db.markJoinedTitle(value) }
         }
     }
 
@@ -174,7 +176,7 @@ private final class HistoryDatabase {
             defer { sqlite3_finalize(version) }
             guard sqlite3_step(version) == SQLITE_ROW else { throw Failure.invalidData }
             let number = sqlite3_column_int(version, 0)
-            guard (0...2).contains(number) else { throw Failure.newerVersion }
+            guard (0...3).contains(number) else { throw Failure.newerVersion }
             if number == 0 {
                 try transaction {
                     try execute("CREATE TABLE history (url TEXT PRIMARY KEY NOT NULL,title TEXT NOT NULL,visited REAL NOT NULL)")
@@ -207,6 +209,15 @@ private final class HistoryDatabase {
     }
 
     deinit { if let db { sqlite3_close(db) } }
+
+    var changedRows: Int32 { sqlite3_changes(db) }
+
+    func markJoinedTitle(_ title: String) throws {
+        if title.unicodeScalars.contains(where: { $0.value == 0x200C || $0.value == 0x200D }) {
+            // Promote in the write transaction; older readers reject this format.
+            try execute("PRAGMA user_version=3")
+        }
+    }
 
     func entry(_ row: OpaquePointer) throws -> HistoryEntry {
         func text(_ index: Int32, limit: Int) -> String? {
