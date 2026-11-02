@@ -11,6 +11,21 @@ struct WebKitIntegrationTests {}
 extension WebKitIntegrationTests {
 @MainActor
 struct PageInputGuardTests {
+    @Test func actualPDFResponseKeepsJoiningCharactersInItsFilename() async throws {
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        defer { runtime.stop() }
+        let destination = try httpFixtureURL(path: "joined-title.pdf")
+        runtime.load(destination)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !runtime.isPDF, runtime.failure == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(runtime.isPDF)
+        #expect(runtime.failure == nil)
+        #expect(runtime.url == destination)
+        #expect(runtime.title == "👩‍💻-資料.pdf")
+    }
+
     private func httpFixtureURL(environmentKey: String = "LEVISTICA_FIXTURE_URL", path: String) throws -> URL {
         let raw = try #require(ProcessInfo.processInfo.environment[environmentKey], "Run script/test.sh for loopback fixtures.")
         let base = try #require(URL(string: raw))

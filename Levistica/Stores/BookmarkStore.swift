@@ -196,13 +196,13 @@ final class BookmarkStore {
             && title.rangeOfCharacter(from: disallowedTitleCharacters) == nil
     }
 
-    static var disallowedTitleCharacters: CharacterSet {
+    static let disallowedTitleCharacters: CharacterSet = {
         var characters = CharacterSet.controlCharacters
         // These controls form emoji and natural-language text. Other controls
         // remain disallowed, including directional overrides and hidden separators.
         characters.remove(charactersIn: "\u{200C}\u{200D}")
         return characters
-    }
+    }()
 
     private func markJoinedText(title: String, folders: [String]) throws {
         if ([title] + folders).contains(where: { text in

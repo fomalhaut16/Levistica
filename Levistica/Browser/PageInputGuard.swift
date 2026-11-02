@@ -137,7 +137,7 @@ final class PageInputGuard: NSObject, WKScriptMessageHandler {
         let alert = NSAlert()
         alert.messageText = quitting ? "終了前に入力内容を確認してください" : "閉じる前に入力内容を確認してください"
         let label = context.map { String(decoding: $0.utf16.prefix(160), as: UTF16.self)
-            .components(separatedBy: .controlCharacters).joined(separator: " ") }
+            .components(separatedBy: BookmarkStore.disallowedTitleCharacters).joined(separator: " ") }
         alert.informativeText = (label.map { "対象のタブ: " + $0 + "\n" } ?? "") + "入力操作のあったタブが\(tabCount)件あります。保存・送信が済んでいるか確認してください。入力内容を失ったり、添付の送信を中断したりする場合があります。"
         let keep = alert.addButton(withTitle: quitting ? "アプリに戻る" : "タブに戻る")
         let discard = alert.addButton(withTitle: quitting ? "入力を破棄して終了" : "入力を破棄して閉じる")

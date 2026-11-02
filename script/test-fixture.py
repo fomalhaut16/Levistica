@@ -404,13 +404,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/protected.pdf" and "levistica_pdf=synthetic" not in self.headers.get("Cookie", ""):
             self.send_error(403, "Synthetic PDF cookie required")
             return
-        if self.path in ["/fixture.pdf", "/attachment.pdf", "/protected.pdf"]:
+        if self.path in ["/fixture.pdf", "/attachment.pdf", "/protected.pdf", "/joined-title.pdf"]:
             data = synthetic_pdf(self.server.server_address[1])
             self.send_response(200)
             self.send_header("Content-Type", "application/pdf")
             self.send_header("Content-Length", str(len(data)))
             disposition = "attachment" if self.path == "/attachment.pdf" else "inline"
-            self.send_header("Content-Disposition", disposition + '; filename="synthetic.pdf"')
+            filename = "; filename*=UTF-8''" + quote("👩\u200d💻-資料.pdf", safe="") if self.path == "/joined-title.pdf" else '; filename="synthetic.pdf"'
+            self.send_header("Content-Disposition", disposition + filename)
             self.end_headers()
             self.wfile.write(data)
             return
@@ -707,6 +708,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         }
         pages["/fullscreen-dark"] = pages["/fullscreen"].replace(
             "<style>", "<style>html, body { background: #181818; color: white; }", 1)
+        pages["/joined-tab-state"] = pages["/tab-state"].replace("<title>State tab</title>", "<title>👩\u200d💻 作業</title>")
         route = self.path.split("?", 1)[0]
         body = ("<!doctype html><meta charset=utf-8>" + pages.get(route, "Not found")).encode()
         self.send_response(200 if route in pages else 404)

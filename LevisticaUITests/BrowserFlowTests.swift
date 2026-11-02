@@ -2931,6 +2931,23 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testJoinedPDFNameAppearsInTheTab() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 60
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launch()
+        defer { app.terminate() }
+        app.activate()
+        submit(base + "/joined-title.pdf", in: app)
+        XCTAssertTrue(app.staticTexts["webPDFNotice"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["👩‍💻-資料.pdf"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/joined-title.pdf")
+        XCTAssertTrue(attachWindowImage(app, name: "joined-pdf-tab-name"))
+    }
+
+    @MainActor
     func testWebPDFDisplaysAndFindsText() throws {
         continueAfterFailure = false
         executionTimeAllowance = 120
@@ -3316,7 +3333,7 @@ final class BrowserFlowTests: XCTestCase {
         app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
         app.launch()
         app.activate()
-        submit(base + "/tab-state", in: app)
+        submit(base + "/joined-tab-state", in: app)
         let draft = app.webViews.textFields["Draft"]
         XCTAssertTrue(draft.waitForExistence(timeout: 10))
         draft.click()
@@ -3324,13 +3341,23 @@ final class BrowserFlowTests: XCTestCase {
         draft.typeText("synthetic draft to protect")
         waitForInputIndicator(in: app)
         XCTAssertTrue(app.images.matching(identifier: "入力操作あり").firstMatch.waitForExistence(timeout: 5))
-        app.typeKey("w", modifierFlags: .command)
+        app.activate()
+        XCTAssertEqual(app.state, .runningForeground)
+        let browser = app.windows["browser"]
+        let frame = browser.frame
+        XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+        XCTAssertFalse(frame.isEmpty)
+        browser.typeKey("w", modifierFlags: .command)
         let keep = try nativeDialogButton("タブに戻る", in: app)
+        let context = "対象のタブ: 👩‍💻 作業"
+        XCTAssertTrue(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", context, context)).firstMatch.exists)
+        XCTAssertTrue(attachWindowImage(app, name: "joined-discard-context"))
         app.dialogs.firstMatch.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(keep.waitForNonExistence(timeout: 5))
         XCTAssertEqual(draft.value as? String, "synthetic draft to protect")
         XCTAssertTrue(app.webViews.staticTexts["Document loads: 1"].exists)
-        app.typeKey("w", modifierFlags: .command)
+        browser.typeKey("w", modifierFlags: .command)
         try nativeDialogButton("入力を破棄して閉じる", in: app).click()
         XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].waitForExistence(timeout: 5))
         app.terminate()
