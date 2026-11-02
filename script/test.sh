@@ -405,7 +405,8 @@ PYPDFEND
     fi
 elif [[ "$MODE" == --profile-launch-ui ]]; then
     /usr/bin/xcrun xcresulttool get test-results metrics --path "$RUN_DIR/Results.xcresult" >"$RUN_DIR/launch-metrics.json"
-    echo 'Profile launch UI trial completed; inspect its reported metrics separately; no RAM collected.'
+    python3 "$ROOT_DIR/script/profile-launch-workload.py" --validate-metrics "$RUN_DIR/launch-metrics.json" >"$RUN_DIR/profile-launch-timing.json"
+    echo 'One Profile launch metric verified; no RAM comparison or product acceptance.'
 elif [[ "$MODE" == --profile-ui ]]; then
     if [[ -n "$COLLECTOR_PID" ]]; then
         wait "$COLLECTOR_PID"
