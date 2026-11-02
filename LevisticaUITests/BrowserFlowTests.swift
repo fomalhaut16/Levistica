@@ -1866,15 +1866,31 @@ final class BrowserFlowTests: XCTestCase {
         submit(base + "/tab-state", in: app)
         let draft = app.webViews.textFields["Draft"]
         XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        let browser = app.windows["browser"]
+        XCTAssertTrue(browser.exists)
+        XCTAssertTrue(browser.frame.width.isFinite && browser.frame.width > 0)
+        XCTAssertTrue(browser.frame.height.isFinite && browser.frame.height > 0)
         draft.click()
         waitForInputIndicator(in: app)
-        app.typeKey("h", modifierFlags: [.command, .shift])
+        // Target the identified finite window instead of the application event coordinates.
+        browser.typeText("synthetic home shortcut draft")
+        waitForInputIndicator(in: app)
+        XCTAssertEqual(draft.value as? String, "synthetic home shortcut draft")
+        XCTAssertEqual(app.state, .runningForeground)
+        browser.typeKey("h", modifierFlags: [.command, .shift])
         let settings = app.windows["com_apple_SwiftUI_Settings_window"]
         XCTAssertTrue(settings.textFields["homePageField"].waitForExistence(timeout: 10))
-        app.typeKey("w", modifierFlags: .command)
+        XCTAssertEqual(settings.textFields["homePageField"].value as? String, "")
+        XCTAssertTrue(settings.frame.width.isFinite && settings.frame.width > 0)
+        XCTAssertTrue(settings.frame.height.isFinite && settings.frame.height > 0)
+        waitForInputIndicator(in: app)
+        XCTAssertEqual(app.state, .runningForeground)
+        settings.typeKey("w", modifierFlags: .command)
         XCTAssertTrue(settings.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.webViews.staticTexts["Document loads: 1"].exists)
-        XCTAssertTrue(draft.exists)
+        XCTAssertEqual(draft.value as? String, "synthetic home shortcut draft")
+        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/tab-state")
+        XCTAssertTrue(attachWindowImage(app, name: "home-shortcut-web-draft", knownFrame: browser.frame))
     }
 
     @MainActor
