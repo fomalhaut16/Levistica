@@ -17,6 +17,7 @@ import pathlib
 import plistlib
 import re
 import statistics
+import stat
 import sys
 import subprocess
 import tempfile
@@ -78,6 +79,39 @@ def parse_domain(text, pid, app, creator_name="Levistica"):
     return services
 
 
+CHROME_BINARY = pathlib.Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+CHROME_CLONE_PATH = re.compile(
+    r'/private/var/folders/[A-Za-z0-9]{2}/[A-Za-z0-9_]+/X/com\.google\.Chrome\.code_sign_clone/'
+    r'code_sign_clone\.[A-Za-z0-9._-]{6}/Google Chrome\.app(?:\.bundle)?/Contents/MacOS/Google Chrome')
+
+
+def canonical_chrome_hardlink(path):
+    """Normalize only a verified hardlink to the installed Chrome executable.
+
+    Chromium's CodeSignCloneManager hardlinks its main executable into a
+    temporary bundle. A kernel vnode path may then name that link. The name
+    pattern alone never authorizes it: device, inode and metadata must match
+    an unchanged installed executable. Unknown paths retain their raw identity.
+    """
+    if not CHROME_CLONE_PATH.fullmatch(path):
+        return path
+    try:
+        before = os.stat(CHROME_BINARY, follow_symlinks=False)
+        clone = os.stat(path, follow_symlinks=False)
+        after = os.stat(CHROME_BINARY, follow_symlinks=False)
+    except OSError:
+        raise ValueError('Chrome code-sign clone file identity is unavailable') from None
+    def identity(value):
+        return (value.st_dev, value.st_ino, value.st_mode, value.st_uid, value.st_gid,
+                value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_nlink)
+    if identity(before) != identity(after):
+        raise ValueError('Installed Chrome executable changed during hardlink verification')
+    if (not stat.S_ISREG(before.st_mode) or not stat.S_ISREG(clone.st_mode)
+            or before.st_nlink < 2 or identity(before) != identity(clone)):
+        raise ValueError('Code-sign clone is not the installed Chrome executable')
+    return str(CHROME_BINARY)
+
+
 @functools.lru_cache(maxsize=1)
 def _pidpath_function():
     if sys.platform != "darwin":
@@ -102,7 +136,7 @@ def process_executable_path(pid):
     path = buffer.value.decode("utf-8", errors="strict")
     if length >= len(buffer) or not pathlib.Path(path).is_absolute():
         raise ValueError("Invalid kernel executable path")
-    return path
+    return canonical_chrome_hardlink(path)
 
 
 class ProcessIdentitySetChanged(ValueError):
