@@ -3343,10 +3343,11 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(app.images.matching(identifier: "入力操作あり").firstMatch.waitForExistence(timeout: 5))
         app.activate()
         XCTAssertEqual(app.state, .runningForeground)
-        let frame = app.windows["browser"].frame
+        let browser = app.windows["browser"]
+        let frame = browser.frame
         XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
         XCTAssertFalse(frame.isEmpty)
-        app.typeKey("w", modifierFlags: .command)
+        browser.typeKey("w", modifierFlags: .command)
         let keep = try nativeDialogButton("タブに戻る", in: app)
         let context = "対象のタブ: 👩‍💻 作業"
         XCTAssertTrue(app.staticTexts.matching(
@@ -3356,7 +3357,7 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(keep.waitForNonExistence(timeout: 5))
         XCTAssertEqual(draft.value as? String, "synthetic draft to protect")
         XCTAssertTrue(app.webViews.staticTexts["Document loads: 1"].exists)
-        app.typeKey("w", modifierFlags: .command)
+        browser.typeKey("w", modifierFlags: .command)
         try nativeDialogButton("入力を破棄して閉じる", in: app).click()
         XCTAssertTrue(app.staticTexts["1タブ・読み込み済み0"].waitForExistence(timeout: 5))
         app.terminate()
