@@ -1874,7 +1874,7 @@ final class BrowserFlowTests: XCTestCase {
         waitForInputIndicator(in: app)
         // Target the identified finite window instead of the application event coordinates.
         browser.typeText("synthetic home shortcut draft")
-        waitForInputIndicator(in: app)
+        waitForInputIndicator(in: app, directButtonQuery: true)
         XCTAssertEqual(draft.value as? String, "synthetic home shortcut draft")
         XCTAssertEqual(app.state, .runningForeground)
         browser.typeKey("h", modifierFlags: [.command, .shift])
@@ -4644,7 +4644,17 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func waitForInputIndicator(in app: XCUIApplication) {
+    private func waitForInputIndicator(in app: XCUIApplication, directButtonQuery: Bool = false) {
+        if directButtonQuery {
+            // No matching button is at least as strict as no dialog containing that button.
+            // Keep this alternative query local to the home-draft experiment.
+            let began = ProcessInfo.processInfo.systemUptime
+            print("Input source direct check began")
+            let hidden = app.buttons.matching(identifier: "InputSource").firstMatch.waitForNonExistence(timeout: 5)
+            print("Input source direct check ended after \(ProcessInfo.processInfo.systemUptime - began) seconds")
+            XCTAssertTrue(hidden)
+            return
+        }
         // macOS briefly exposes the input-source badge as a dialog on field focus.
         // Let it disappear rather than letting XCTest try to dismiss a stale button.
         let indicator = app.dialogs.containing(.button, identifier: "InputSource").firstMatch
