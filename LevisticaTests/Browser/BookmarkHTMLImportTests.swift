@@ -3,6 +3,16 @@ import Testing
 @testable import Levistica
 
 struct BookmarkHTMLImportTests {
+    @Test func joiningCharactersInImportedTitlesAndFoldersRemainExact() throws {
+        let title = "👩‍💻 開発"
+        let folder = "می\u{200C}خواهم"
+        let preview = try BookmarkHTMLImport.parse(html("<DT><H3>\(folder)</H3><DL><p><DT><A HREF='https://example.com/'>\(title)</A></DL><p>"))
+        #expect(preview.entries.count == 1)
+        #expect(preview.entries.first?.title == title)
+        #expect(preview.entries.first?.folders == [folder])
+        #expect(preview.rejectedCount == 0 && preview.repeatedCount == 0)
+    }
+
     private func html(_ body: String) -> Data {
         Data(("<!DOCTYPE NETSCAPE-Bookmark-file-1><META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\"><TITLE>Bookmarks</TITLE><DL><p>" + body + "</DL><p>").utf8)
     }

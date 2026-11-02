@@ -113,7 +113,7 @@ enum BookmarkHTMLImport {
     }
 
     private static func normalized(_ value: String) -> String {
-        value.components(separatedBy: .controlCharacters).joined(separator: " ")
+        value.components(separatedBy: BookmarkStore.disallowedTitleCharacters).joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

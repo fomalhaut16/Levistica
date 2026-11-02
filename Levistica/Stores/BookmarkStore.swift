@@ -48,7 +48,7 @@ final class BookmarkStore {
                 guard sqlite3_step(version) == SQLITE_ROW else { throw Failure.invalidData }
                 number = sqlite3_column_int(version, 0)
             }
-            guard number == 0 || number == 1 || number == 2 else { throw Failure.newerVersion }
+            guard [0, 1, 2, 3].contains(number) else { throw Failure.newerVersion }
             if number == 0 {
                 try transaction {
                     try createTable("bookmarks")
@@ -106,6 +106,7 @@ final class BookmarkStore {
             try bind(id.uuidString, row, 1); try bind(url.absoluteString, row, 2); try bind(title, row, 3); try bind(Self.encodedFolders(folders), row, 5)
             guard sqlite3_bind_double(row, 4, Date().timeIntervalSince1970) == SQLITE_OK,
                   sqlite3_step(row) == SQLITE_DONE else { throw Failure.unavailable }
+            try markJoinedText(title: title, folders: folders)
         }
         return selected
     }
@@ -128,6 +129,7 @@ final class BookmarkStore {
                 try bind(item.title, row, 3); try bind(Self.encodedFolders(item.folders), row, 5)
                 guard sqlite3_bind_double(row, 4, importedAt - Double(count) * 0.001) == SQLITE_OK,
                       sqlite3_step(row) == SQLITE_DONE else { throw Failure.unavailable }
+                try markJoinedText(title: item.title, folders: item.folders)
                 current.append(item); count += 1
             }
         }
@@ -175,6 +177,7 @@ final class BookmarkStore {
             defer { sqlite3_finalize(row) }
             try bind(title, row, 1); try bind(id.uuidString, row, 2)
             guard sqlite3_step(row) == SQLITE_DONE, sqlite3_changes(db) == 1 else { throw Failure.unavailable }
+            try markJoinedText(title: title, folders: [])
         }
     }
 
@@ -190,7 +193,25 @@ final class BookmarkStore {
 
     static func validTitle(_ title: String) -> Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && title.utf16.count <= 512
-            && title.rangeOfCharacter(from: .controlCharacters) == nil
+            && title.rangeOfCharacter(from: disallowedTitleCharacters) == nil
+    }
+
+    static var disallowedTitleCharacters: CharacterSet {
+        var characters = CharacterSet.controlCharacters
+        // These controls form emoji and natural-language text. Other controls
+        // remain disallowed, including directional overrides and hidden separators.
+        characters.remove(charactersIn: "\u{200C}\u{200D}")
+        return characters
+    }
+
+    private func markJoinedText(title: String, folders: [String]) throws {
+        if ([title] + folders).contains(where: { text in
+            text.unicodeScalars.contains { $0.value == 0x200C || $0.value == 0x200D }
+        }) {
+            // Version 2 readers reject join controls. Promote only when writing
+            // them, in the same transaction, so older apps refuse without mutation.
+            try execute("PRAGMA user_version=3")
+        }
     }
 
     private func transaction(_ body: () throws -> Void) throws {

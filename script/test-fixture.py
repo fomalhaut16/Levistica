@@ -685,6 +685,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                   <button role="menuitemradio" aria-checked="false"
                     onclick="this.setAttribute('aria-checked','true');result.textContent='Selected 720p60'">720p60</button>
                 </div><p id="result" role="status">No selection</p>''',
+            "/bookmark-joined-title": '<title>👩‍💻 開発</title><h1>Joined bookmark title fixture</h1>',
             "/one": '<title>Fixture one</title><h1>Levistica fixture one</h1><a href="/two">Second page</a><a href="levistica-test-native:blocked">Blocked native link</a>',
             "/two": '<title>Fixture two</title><h1>Levistica fixture two</h1><a href="/one">First page</a><input aria-label="Draft">',
             "/fullscreen": '''<style>
