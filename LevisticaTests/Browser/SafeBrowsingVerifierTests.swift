@@ -19,13 +19,14 @@ private enum VerifierFixtures {
         return result
     }
     static func field(_ number: UInt64, _ data: Data) -> Data { integer(number << 3 | 2) + integer(UInt64(data.count)) + data }
-    static func list(_ name: String, prefix: Data?, version: UInt8 = 1, badChecksum: Bool = false) throws -> SafeBrowsingListResponse {
+    static func list(_ name: String, prefix: Data?, version: UInt8 = 1, badChecksum: Bool = false, partial: Bool = false) throws -> SafeBrowsingListResponse {
         let bytes = prefix ?? Data()
         var body = field(1, Data(name.utf8)) + field(2, Data([version]))
         if let prefix {
             let first = prefix.reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
             body += field(4, Data([8]) + integer(first))
         }
+        if partial { body += Data([0x18, 1]) }
         body += field(6, Data([8]) + integer(1800))
         body += field(7, badChecksum ? Data(repeating: 0, count: 32) : Data(SHA256.hash(data: bytes)))
         return try SafeBrowsingListResponse(protobuf: body)
@@ -67,8 +68,8 @@ private actor VerifierRemote: SafeBrowsingRemote {
     func shutdown() { stopped = true; searchStartedSignal.finish() }
     func setFailure(_ value: SafeBrowsingAPIError?) { failure = value }
     func setDelay(_ value: Duration) { delay = value }
-    func replaceList(_ name: String, prefix: Data?, badChecksum: Bool = false) throws {
-        lists[name] = try VerifierFixtures.list(name, prefix: prefix, version: 2, badChecksum: badChecksum)
+    func replaceList(_ name: String, prefix: Data?, badChecksum: Bool = false, partial: Bool = false) throws {
+        lists[name] = try VerifierFixtures.list(name, prefix: prefix, version: 2, badChecksum: badChecksum, partial: partial)
     }
 }
 
@@ -357,6 +358,52 @@ struct SafeBrowsingVerifierTests {
         let recovered = try disk.load("mw-4b")
         #expect(recovered?.requiresFullUpdate == false)
         await second.stop()
+    }
+
+    @Test(arguments: [false, true])
+    func fullRecoveryCannotAcceptAPartialResponse(restart: Bool) async throws {
+        let directory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent("verifier-full-response-" + UUID().uuidString, isDirectory: true)
+        let disk = try SafeBrowsingListCache(directory: directory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let clock = VerifierClock(), remote = try VerifierRemote(prefix: nil)
+        func makeWorker() -> SafeBrowsingVerifier {
+            SafeBrowsingVerifier(remote: remote, disk: disk,
+                loadSuffixes: { try SafeBrowsingPublicSuffixes(text: "example\n") },
+                date: { clock.date() }, instant: { clock.instant() })
+        }
+        let first = makeWorker()
+        _ = await first.refresh()
+        clock.advance(1800)
+        try await remote.replaceList("mw-4b", prefix: nil, badChecksum: true)
+        #expect(await first.refresh().lastIssue == .lookupFailed)
+        let failedSnapshot = try #require(try disk.load("mw-4b"))
+        let worker: SafeBrowsingVerifier
+        if restart { await first.stop(); worker = makeWorker() }
+        else { worker = first }
+        clock.advance(1800)
+        // This no-change delta has a valid checksum for the old list, but the
+        // request carried no version and therefore supplied no delta base.
+        try await remote.replaceList("mw-4b", prefix: nil, partial: true)
+        #expect(await worker.refresh().lastIssue == .lookupFailed)
+        let requests = await remote.fetches
+        #expect(requests.last?.0 == "mw-4b" && requests.last?.1 == nil)
+        let rejected = try #require(try disk.load("mw-4b"))
+        #expect(rejected.requiresFullUpdate)
+        #expect(rejected.updatedAt == failedSnapshot.updatedAt)
+        #expect(rejected.list.version == failedSnapshot.list.version)
+        #expect(await worker.check(url) == .unavailable(.listsUnavailable))
+        let count = requests.filter { $0.0 == "mw-4b" }.count
+        clock.advance(1799)
+        _ = await worker.refresh()
+        let waitingRequests = await remote.fetches
+        #expect(waitingRequests.filter { $0.0 == "mw-4b" }.count == count)
+        clock.advance(1)
+        try await remote.replaceList("mw-4b", prefix: nil)
+        #expect(await worker.refresh().lastIssue == nil)
+        #expect(await worker.status().recentLists == 3)
+        #expect(try disk.load("mw-4b")?.requiresFullUpdate == false)
+        await worker.stop()
     }
 
 }

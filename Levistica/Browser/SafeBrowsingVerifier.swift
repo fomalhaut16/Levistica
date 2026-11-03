@@ -92,7 +92,10 @@ actor SafeBrowsingVerifier {
                 // A rejected update does not waive the server's request interval.
                 nextListRequest[name] = instant().advanced(by: .seconds(response.minimumWait))
                 receivedWait = date().addingTimeInterval(response.minimumWait)
-                let list = try SafeBrowsingPrefixList.applying(response.update, to: lists[name]?.list)
+                // A request without a version has no delta base. In particular,
+                // recovery must not accept a partial response against retained data.
+                let base = version == nil ? nil : lists[name]?.list
+                let list = try SafeBrowsingPrefixList.applying(response.update, to: base)
                 let updated = date()
                 let snapshot = try SafeBrowsingSnapshot(list: list, updatedAt: updated,
                                                        refreshAfter: updated.addingTimeInterval(response.minimumWait))
