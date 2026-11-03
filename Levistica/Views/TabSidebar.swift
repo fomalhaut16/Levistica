@@ -54,9 +54,9 @@ struct TabSidebar: View {
                         HStack {
                             TabStatusIcon(tab: tab)
                             Text(tab.displayTitle).lineLimit(1)
-                            if tab.page?.inputGuard.hasEditedInput == true {
-                                Image(systemName: "pencil").accessibilityLabel("入力操作あり")
-                                    .help("入力操作を検知したタブです。閉じるときに確認します。")
+                            if tab.page?.inputGuard.hasPendingInput == true {
+                                Image(systemName: "pencil").accessibilityLabel("入力の変更あり")
+                                    .help("入力の変更があるタブです。閉じる前に確認します。")
                                     .accessibilityIdentifier("editedInput-\(tab.id)")
                             }
                             Spacer(minLength: 0)
@@ -160,8 +160,8 @@ struct HorizontalTabBar: View {
                                 .accessibilityLabel(tab.displayTitle)
                                 .accessibilityValue(TabStatusIcon.description(for: tab))
                                 .accessibilityAddTraits(tab.id == session.selectedID ? [.isSelected] : [])
-                                if tab.page?.inputGuard.hasEditedInput == true {
-                                    Image(systemName: "pencil").accessibilityLabel("入力操作あり")
+                                if tab.page?.inputGuard.hasPendingInput == true {
+                                    Image(systemName: "pencil").accessibilityLabel("入力の変更あり")
                                 }
                                 Button("タブを閉じる", systemImage: "xmark") { session.closeTab(tab.id) }
                                     .labelStyle(.iconOnly).buttonStyle(.borderless)
