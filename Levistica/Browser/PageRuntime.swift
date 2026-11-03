@@ -15,6 +15,10 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
     var onCreatePage: ((WKWebViewConfiguration, String, Bool) -> WKWebView?)?
     var onOpenLink: ((URLRequest, Bool, String) -> Void)?
     var onClose: (() -> Void)?
+    var navigationSafetyCheck: (@MainActor (URL) async -> SafeBrowsingVerdict)?
+    private(set) var safetyWarningHost: String?
+    @ObservationIgnored private var safetyChecks: [UUID: (Task<Void, Never>, NavigationSafetyCompletion)] = [:]
+
     var onDownload: ((WKDownload) -> Void)?
     @ObservationIgnored private var filePanel: NSOpenPanel?
     private var permitsInitialBlankPage: Bool
@@ -236,6 +240,7 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         activeNavigation = webView.reload()
     }
     func stop() {
+        cancelSafetyChecks()
         inputGuard.cancelDepartureApproval()
         dialogs.cancel()
         webView.stopLoading()
@@ -258,6 +263,19 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        let topLevel = action.targetFrame == nil || action.targetFrame?.isMainFrame == true
+        if topLevel { cancelSafetyChecks() }
+        if localPDF == nil, topLevel, let url = action.request.url,
+           NavigationPolicy.allows(url, isMainFrame: true), navigationSafetyCheck != nil {
+            checkSafety(url) { [weak self] allowed in
+                guard allowed, let self else { decisionHandler(.cancel); return }
+                self.decideNavigation(webView, action: action, decisionHandler: decisionHandler)
+            }
+        } else { decideNavigation(webView, action: action, decisionHandler: decisionHandler) }
+    }
+
+    private func decideNavigation(_ webView: WKWebView, action: WKNavigationAction,
+                                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
         if let localPDF {
             let main = action.targetFrame?.isMainFrame == true
             if action.navigationType == .linkActivated, action.request.httpMethod == "GET",
@@ -329,6 +347,36 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
         decisionHandler(.allow)
     }
 
+    func dismissSafetyWarning() { safetyWarningHost = nil; restoreCommittedLocation() }
+
+    private func cancelSafetyChecks() {
+        let previous = safetyChecks.values
+        safetyChecks.removeAll()
+        for (task, completion) in previous { task.cancel(); completion.finish(false) }
+    }
+
+    private func checkSafety(_ url: URL, completion: @escaping @MainActor (Bool) -> Void) {
+        cancelSafetyChecks()
+        guard let check = navigationSafetyCheck else { completion(true); return }
+        safetyWarningHost = nil
+        let identifier = UUID(), once = NavigationSafetyCompletion(completion)
+        let task = Task { @MainActor [weak self] in
+            let verdict = await check(url)
+            guard let self, self.safetyChecks.removeValue(forKey: identifier) != nil,
+                  !Task.isCancelled else { once.finish(false); return }
+            if case .threat = verdict {
+                self.safetyWarningHost = url.host ?? "選択したページ"
+                self.restoreCommittedLocation()
+                once.finish(false)
+            } else {
+                // Offline/unavailable is not a safety result. The protection owner
+                // exposes degraded status separately; standard WebKit stays enabled.
+                once.finish(true)
+            }
+        }
+        safetyChecks[identifier] = (task, once)
+    }
+
     static func requiresDepartureConfirmation(type: WKNavigationType, current: URL?, destination: URL?) -> Bool {
         // Submitting a form is the explicit send action, not an abandoned draft.
         if type == .formSubmitted || type == .formResubmitted || type == .other { return false }
@@ -394,6 +442,19 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse,
                  decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {
+        // Check the final main-document response as well as the initial action,
+        // including redirect destinations and attachments. Never check subresources.
+        if localPDF == nil, response.isForMainFrame, let url = response.response.url,
+           NavigationPolicy.allows(url, isMainFrame: true), navigationSafetyCheck != nil {
+            checkSafety(url) { [weak self] allowed in
+                guard allowed, let self else { decisionHandler(.cancel); return }
+                self.decideResponse(webView, response: response, decisionHandler: decisionHandler)
+            }
+        } else { decideResponse(webView, response: response, decisionHandler: decisionHandler) }
+    }
+
+    private func decideResponse(_ webView: WKWebView, response: WKNavigationResponse,
+                                decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {
         let disposition = (response.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")?
             .split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased()
         let download = !response.canShowMIMEType || disposition == "attachment"
@@ -582,5 +643,16 @@ struct PageConnectionInfo: Equatable {
         else if origin != nil && scheme == "http" { kind = .http }
         else if origin != nil && scheme == "https" { kind = hasOnlySecureContent ? .https : .mixedContent }
         else { kind = .none }
+    }
+}
+
+
+@MainActor
+private final class NavigationSafetyCompletion {
+    private var completion: ((Bool) -> Void)?
+    init(_ completion: @escaping (Bool) -> Void) { self.completion = completion }
+    func finish(_ allowed: Bool) {
+        let action = completion; completion = nil
+        action?(allowed)
     }
 }

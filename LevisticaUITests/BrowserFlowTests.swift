@@ -3,6 +3,38 @@ import AppKit
 import CryptoKit
 
 final class BrowserFlowTests: XCTestCase {
+    @MainActor
+    func testSafetyWarningCancelsNavigationAndReturnsToPreviousPage() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 60
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
+        let app = XCUIApplication()
+        app.launchEnvironment["LEVISTICA_EPHEMERAL"] = "1"
+        app.launchEnvironment["LEVISTICA_SAFETY_WARNING_FIXTURE"] = "1"
+        app.launchEnvironment["LEVISTICA_SAFETY_WARNING_BASE"] = base
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        submit(base + "/one", in: app)
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 10))
+        submit(base + "/two", in: app)
+        let dismiss = app.buttons["dismissSafeBrowsingWarningButton"]
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["safeBrowsingWarningTitle"].exists)
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.exists)
+        XCTAssertGreaterThan(dismiss.frame.width, 0)
+        XCTAssertGreaterThan(dismiss.frame.height, 0)
+        XCTAssertTrue(window.frame.contains(dismiss.frame))
+        let image = XCTAttachment(screenshot: window.screenshot())
+        image.name = "safe-browsing-generated-warning"
+        image.lifetime = .keepAlways
+        add(image)
+        dismiss.click()
+        XCTAssertTrue(dismiss.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.webViews.staticTexts["Levistica fixture one"].waitForExistence(timeout: 5))
+    }
+
     private enum LaunchVariant: String {
         case profile = "Profile", measurement = "Measurement"
         var bundleIdentifier: String { "dev.fomalhaut16.Levistica." + rawValue.lowercased() }

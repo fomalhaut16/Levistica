@@ -4,6 +4,7 @@ struct PrivacySettingsView: View {
     let preferences: BrowserPreferences
     let history: HistoryLibrary
     let siteData: SiteDataLibrary
+    let protection: SafeBrowsingProtection
     @Binding var section: BrowserSession.SettingsSection
     var body: some View {
         TabView(selection: $section) {
@@ -11,6 +12,8 @@ struct PrivacySettingsView: View {
                 .tabItem { Label("一般", systemImage: "gearshape") }.tag(BrowserSession.SettingsSection.general)
             HistoryPreferencesView(history: history).tabItem { Label("履歴", systemImage: "clock") }.tag(BrowserSession.SettingsSection.history)
             SiteDataSettingsView(library: siteData).tabItem { Label("サイトデータ", systemImage: "externaldrive") }.tag(BrowserSession.SettingsSection.siteData)
+            ProtectionPreferencesView(protection: protection)
+                .tabItem { Label("危険サイト保護", systemImage: "shield") }.tag(BrowserSession.SettingsSection.protection)
         }.frame(width: 620, height: 540)
     }
 }
@@ -154,5 +157,51 @@ private struct HistoryPreferencesView: View {
 
     private func apply(_ days: Int) {
         history.setPreferences(HistoryPreferences(recordingEnabled: history.preferences.recordingEnabled, retentionDays: days))
+    }
+}
+
+
+private struct ProtectionPreferencesView: View {
+    let protection: SafeBrowsingProtection
+    @State private var state = SafeBrowsingProtection.State.stopped
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("危険サイト保護の補完").font(.title2)
+            Text("Googleの脅威一覧を端末に保存し、一致候補のハッシュの一部だけを照会します。照会時には送信元IPもGoogleへ伝わります。URL全体やフォームの内容は送りません。")
+            Text(status).accessibilityIdentifier("safeBrowsingProtectionStatus")
+            HStack {
+                Button("保護を開始") {
+                    state = .starting
+                    Task { state = await protection.startAfterUserRequest() }
+                }.disabled(state == .starting || state == .ready)
+                    .accessibilityIdentifier("startSafeBrowsingProtectionButton")
+                Button("停止") { Task { await protection.stop(); state = .stopped } }
+                    .accessibilityIdentifier("stopSafeBrowsingProtectionButton")
+            }
+            Text("開始時に、専用APIキーを読むためのキーチェーン認証が表示される場合があります。この起動中だけ有効にします。終了後は、次の起動で開始してください。")
+            Text("一覧の準備中や通信失敗時は、追加の照合を完了できません。Googleの情報には誤検知や検知漏れがあります。WebKit標準の警告とTLS検証は常に維持します。")
+            Link("Google Safe Browsingについて", destination: URL(string: "https://safebrowsing.google.com/")!)
+            Spacer()
+        }.padding(24)
+        .task {
+            while !Task.isCancelled {
+                state = await protection.currentState()
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            }
+        }
+    }
+    private var status: String {
+        switch state {
+        case .stopped: "追加の保護は停止中です。"
+        case .starting: "認証と一覧の準備を行っています。"
+        case .ready: "3一覧の準備ができています。ページを開くときに照合します。"
+        case .keyUnavailable(.missing): "専用APIキーが見つかりません。"
+        case .keyUnavailable(.denied), .keyUnavailable(.authorizationRequired): "キーの読み取りが許可されていません。"
+        case .keyUnavailable: "APIキーを使用できません。"
+        case .unavailable(.disabled): "この検証用ビルドでは通常版のキーを使いません。"
+        case .unavailable(.authentication): "APIの認証に失敗しています。キーの設定を確認してください。"
+        case .unavailable(.quota): "APIの利用上限に達しました。追加の照合は一時的に利用できません。"
+        case .unavailable: "追加の照合を完了できていません。時間を置いて一覧の更新を試みます。"
+        }
     }
 }
