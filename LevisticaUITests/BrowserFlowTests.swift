@@ -4465,10 +4465,12 @@ final class BrowserFlowTests: XCTestCase {
             let captureSetup = expectation(description: "Window-only capture setup interval")
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { captureSetup.fulfill() }
             wait(for: [captureSetup], timeout: 3)
-            let click = "Native fullscreen click requested uptime=\(ProcessInfo.processInfo.systemUptime)\n"
+            let click = "Native fullscreen action requested uptime=\(ProcessInfo.processInfo.systemUptime)\n"
             FileHandle.standardOutput.write(Data(click.utf8))
+            app.typeKey("f", modifierFlags: [.control, .command])
+        } else {
+            fullscreenButton.click()
         }
-        fullscreenButton.click()
         let fillsScreen = expectation(for: NSPredicate { _, _ in
             let frame = window.frame
             return abs(frame.width - screen.frame.width) <= 2
