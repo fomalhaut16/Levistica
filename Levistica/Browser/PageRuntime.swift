@@ -366,6 +366,9 @@ final class PageRuntime: NSObject, WKNavigationDelegate, WKUIDelegate {
                   !Task.isCancelled else { once.finish(false); return }
             if case .threat = verdict {
                 self.safetyWarningHost = url.host ?? "選択したページ"
+                // The old document still owns its draft. A blocked departure
+                // must not authorize a later, unrelated navigation to discard it.
+                self.inputGuard.cancelDepartureApproval()
                 self.restoreCommittedLocation()
                 once.finish(false)
             } else {

@@ -120,5 +120,36 @@ struct PageSafetyTests {
         #expect(runtime.safetyWarningHost == nil)
     }
 
+
+    @Test(arguments: [false, true])
+    func blockingAnApprovedDepartureRestoresInputProtection(blockAtResponse: Bool) async throws {
+        let runtime = try await seededPage(); defer { runtime.stop() }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            runtime.webView.evaluateJavaScript(
+                "window.webkit.messageHandlers.levisticaInputActivity.postMessage({frame: 'generated-safety-edit', revision: 1, pending: true}); true",
+                in: nil, in: .world(name: "LevisticaInputActivity")) { result in
+                    continuation.resume(with: result.map { _ in () })
+                }
+        }
+        try await wait { runtime.inputGuard.needsDepartureConfirmation }
+        runtime.inputGuard.approveDeparture()
+        #expect(runtime.inputGuard.needsDepartureConfirmation == false)
+        let originalURL = runtime.url, revision = runtime.documentRevision
+        var checks = 0
+        runtime.navigationSafetyCheck = { _ in
+            checks += 1
+            return !blockAtResponse || checks > 1 ? .threat([.socialEngineering]) : .noListedThreat
+        }
+        runtime.load(try fixture("two"))
+        try await wait { runtime.safetyWarningHost != nil }
+        #expect(checks == (blockAtResponse ? 2 : 1))
+        #expect(runtime.inputGuard.needsDepartureConfirmation)
+        #expect(runtime.inputGuard.hasEditedInput)
+        #expect(runtime.url == originalURL && runtime.documentRevision == revision)
+        runtime.dismissSafetyWarning()
+        #expect(runtime.inputGuard.needsDepartureConfirmation)
+        #expect(runtime.webView.title == "Fixture one")
+    }
+
 }
 }
