@@ -89,6 +89,12 @@ private struct BrowserCommands: Commands {
                 Button("ウィンドウを閉じる") { NSApplication.shared.keyWindow?.performClose(nil) }.keyboardShortcut("w")
             }
         }
+        CommandGroup(after: .windowSize) {
+            Button("全画面表示を切り替える") {
+                NSApplication.shared.keyWindow?.toggleFullScreen(nil)
+            }
+            .keyboardShortcut("f", modifiers: [.control, .command])
+        }
         CommandMenu("ブックマーク") {
             if let session {
                 Button("現在のページを追加") { session.addCurrentBookmark() }.keyboardShortcut("d")

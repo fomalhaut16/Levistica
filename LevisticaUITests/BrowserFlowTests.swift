@@ -4412,6 +4412,33 @@ final class BrowserFlowTests: XCTestCase {
         defer { app.terminate() }
         app.launch()
         app.activate()
+        var window = app.windows["browser"]
+        let screen = try XCTUnwrap(NSScreen.main)
+        let reservedTop = max(screen.safeAreaInsets.top, screen.frame.maxY - screen.visibleFrame.maxY)
+        func fillsNativeScreen(_ frame: CGRect) -> Bool {
+            abs(frame.width - screen.frame.width) <= 2
+                && frame.height >= screen.frame.height - reservedTop - 2
+                && frame.height <= screen.frame.height + 2
+        }
+        // macOS can restore native fullscreen even with ephemeral browser data.
+        // Establish a windowed baseline before looking for the titlebar control.
+        let startedFullscreen = fillsNativeScreen(window.frame)
+        if startedFullscreen {
+            app.typeKey("f", modifierFlags: [.control, .command])
+            let transitionSettled = expectation(description: "Native Space transition settles")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { transitionSettled.fulfill() }
+            wait(for: [transitionSettled], timeout: 3)
+            app.activate()
+            window = app.windows.matching(identifier: "browser").firstMatch
+            XCTAssertTrue(window.waitForExistence(timeout: 10))
+            let windowed = expectation(for: NSPredicate { _, _ in
+                !fillsNativeScreen(window.frame)
+            }, evaluatedWith: nil)
+            wait(for: [windowed], timeout: 10)
+        }
+        XCTAssertFalse(fillsNativeScreen(window.frame))
+        XCTAssertTrue(window.buttons["_XCUI:FullScreenWindow"].exists)
+        print("Native fullscreen baseline: restoredFullscreen=\(startedFullscreen); window=\(window.frame)")
         submit(base + "/fullscreen", in: app)
         if horizontal {
             app.buttons["toggleTabLayoutButton"].click()
@@ -4423,10 +4450,7 @@ final class BrowserFlowTests: XCTestCase {
         waitForInputIndicator(in: app)
         draft.typeText("synthetic fullscreen draft")
         waitForInputIndicator(in: app)
-        let window = app.windows["browser"]
         let before = window.frame
-        let screen = try XCTUnwrap(NSScreen.main)
-        let reservedTop = max(screen.safeAreaInsets.top, screen.frame.maxY - screen.visibleFrame.maxY)
         XCTAssertTrue(attachWindowImage(app, name: "native-fullscreen-before", knownFrame: before))
         let fullscreenButton = window.buttons["_XCUI:FullScreenWindow"]
         XCTAssertTrue(fullscreenButton.exists)
