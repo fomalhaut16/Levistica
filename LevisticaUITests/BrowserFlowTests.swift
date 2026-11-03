@@ -4463,11 +4463,13 @@ final class BrowserFlowTests: XCTestCase {
             let checkpoint = "Native fullscreen capture checkpoint uptime=\(ProcessInfo.processInfo.systemUptime)\n"
             FileHandle.standardOutput.write(Data(checkpoint.utf8))
             let captureSetup = expectation(description: "Window-only capture setup interval")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { captureSetup.fulfill() }
-            wait(for: [captureSetup], timeout: 3)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 25) { captureSetup.fulfill() }
+            wait(for: [captureSetup], timeout: 26)
             let click = "Native fullscreen action requested uptime=\(ProcessInfo.processInfo.systemUptime)\n"
             FileHandle.standardOutput.write(Data(click.utf8))
-            app.typeKey("f", modifierFlags: [.control, .command])
+            if !fillsNativeScreen(window.frame) {
+                app.typeKey("f", modifierFlags: [.control, .command])
+            }
         } else {
             fullscreenButton.click()
         }
