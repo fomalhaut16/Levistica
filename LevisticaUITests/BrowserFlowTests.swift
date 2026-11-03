@@ -4420,9 +4420,9 @@ final class BrowserFlowTests: XCTestCase {
         let draft = app.webViews.textFields["Fullscreen draft"]
         XCTAssertTrue(draft.waitForExistence(timeout: 10))
         draft.click()
-        waitForInputIndicator(in: app)
+        waitForInputIndicator(in: app, directButtonQuery: true)
         draft.typeText("synthetic fullscreen draft")
-        waitForInputIndicator(in: app)
+        waitForInputIndicator(in: app, directButtonQuery: true)
         let window = app.windows["browser"]
         let before = window.frame
         let screen = try XCTUnwrap(NSScreen.main)
@@ -4464,7 +4464,7 @@ final class BrowserFlowTests: XCTestCase {
         // Move away from the titlebar control and dismiss its hover popover.
         // A usable restored page must accept focus without losing the draft.
         draft.click()
-        waitForInputIndicator(in: app)
+        waitForInputIndicator(in: app, directButtonQuery: true)
         XCTAssertEqual(draft.value as? String, "synthetic fullscreen draft")
         XCTAssertTrue(attachWindowImage(app, name: "native-fullscreen-after", knownFrame: window.frame))
         print("Native fullscreen fixture frames: before=\(before); active=\(active); restored=\(window.frame)")
@@ -4647,7 +4647,7 @@ final class BrowserFlowTests: XCTestCase {
     private func waitForInputIndicator(in app: XCUIApplication, directButtonQuery: Bool = false) {
         if directButtonQuery {
             // No matching button is at least as strict as no dialog containing that button.
-            // Keep this alternative query local to the home-draft experiment.
+            // Keep this alternative query opt-in for the home-draft and fullscreen checks.
             let began = ProcessInfo.processInfo.systemUptime
             print("Input source direct check began")
             let hidden = app.buttons.matching(identifier: "InputSource").firstMatch.waitForNonExistence(timeout: 5)
