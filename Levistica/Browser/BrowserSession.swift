@@ -81,9 +81,10 @@ final class BrowserSession {
     private var closedTabs: [ClosedTab] = []
     @ObservationIgnored private var inputConfirmationInProgress = false
     let downloads = DownloadManager()
+    let protection = SafeBrowsingProtection.normalApplication()
     @ObservationIgnored private var siteDataModel: SiteDataLibrary?
     var isDeletingSiteData: Bool { siteDataModel?.isDeleting == true }
-    enum SettingsSection: Hashable { case general, history, siteData }
+    enum SettingsSection: Hashable { case general, history, siteData, protection }
     var settingsSection = SettingsSection.general
     let preferences: BrowserPreferences
     let history: HistoryLibrary
@@ -722,6 +723,26 @@ final class BrowserSession {
     }
 
     private func connect(_ runtime: PageRuntime, to tab: BrowserTab) {
+        runtime.navigationSafetyCheck = { [weak self] url in
+            guard let self else { return .unavailable(.disabled) }
+            return await self.protection.check(url)
+        }
+        #if DEBUG
+        // A single loopback-only warning fixture for isolated UI regression.
+        // Release/Profile/Measurement never compile this injection path.
+        let environment = ProcessInfo.processInfo.environment
+        if environment["LEVISTICA_EPHEMERAL"] == "1",
+           environment["LEVISTICA_SAFETY_WARNING_FIXTURE"] == "1",
+           let raw = environment["LEVISTICA_SAFETY_WARNING_BASE"], let base = URL(string: raw),
+           base.scheme == "http", base.host == "127.0.0.1", base.port != nil,
+           base.user == nil, base.password == nil, base.query == nil, base.fragment == nil,
+           base.path.isEmpty || base.path == "/" {
+            let blocked = base.appendingPathComponent("two")
+            runtime.navigationSafetyCheck = { url in
+                url == blocked ? .threat([.socialEngineering]) : .unavailable(.disabled)
+            }
+        }
+        #endif
         runtime.onVisit = { [weak self, weak tab] url, title, visited in
             guard let self, let tab, self.tabs.contains(where: { $0 === tab }) else { return }
             self.history.record(url: url, title: title, visited: visited)

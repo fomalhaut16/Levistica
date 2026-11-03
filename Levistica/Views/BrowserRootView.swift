@@ -150,7 +150,19 @@ struct BrowserRootView: View {
                 PageFindBar(session: session, tab: tab, page: page).id(tab.id)
             }
             Divider()
-            if let page = tab.page {
+            if let page = tab.page, let host = page.safetyWarningHost {
+                VStack(alignment: .leading, spacing: 18) {
+                    Label("このページは危険な可能性があります", systemImage: "exclamationmark.shield.fill").font(.title2)
+                        .accessibilityIdentifier("safeBrowsingWarningTitle")
+                    Text(host).lineLimit(2).textSelection(.enabled)
+                    Text("Googleの情報では、詐欺や有害なソフトウェアなどの危険がある可能性が示されています。このページへの移動を中止しました。誤検知の場合もあります。")
+                    Button("警告を閉じて前のページへ戻る") { page.dismissSafetyWarning() }
+                        .accessibilityIdentifier("dismissSafeBrowsingWarningButton")
+                    Link("Advisory provided by Google", destination: URL(string: "https://developers.google.com/safe-browsing/v4/advisory")!)
+                    Link("詐欺サイトについて", destination: URL(string: "https://developers.google.com/search/docs/monitor-debug/security/social-engineering")!)
+                    Link("有害なソフトウェアについて", destination: URL(string: "https://developers.google.com/search/docs/monitor-debug/security/malware")!)
+                }.padding(32).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else if let page = tab.page {
                 // A tab can replace its runtime (for example, local PDF to web).
                 // The container owns one WebView, so its lifetime follows that runtime.
                 // Rendering still only attaches the existing view; it never starts a load.
