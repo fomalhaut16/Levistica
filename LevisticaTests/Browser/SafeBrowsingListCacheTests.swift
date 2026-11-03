@@ -139,4 +139,34 @@ struct SafeBrowsingListCacheTests {
         #expect(throws: (any Error).self) { try cache.load("se-4b") }
         #expect(try Data(contentsOf: file) == Data("broken".utf8))
     }
+
+    @Test func fullUpdateMarkerPreservesOriginalAgeAndRequestDeadline() throws {
+        let value = try snapshot()
+        let pending = try SafeBrowsingSnapshot(list: value.list, updatedAt: value.updatedAt,
+            refreshAfter: Date(timeIntervalSince1970: 4000), requiresFullUpdate: true)
+        let restored = try SafeBrowsingSnapshot(encoded: pending.encoded())
+        #expect(restored.requiresFullUpdate)
+        #expect(restored.updatedAt == value.updatedAt)
+        #expect(restored.refreshAfter == Date(timeIntervalSince1970: 4000))
+        #expect(restored.list.prefixChecksum == value.list.prefixChecksum)
+        #expect(restored.isRecent(at: Date(timeIntervalSince1970: 1200)) == false)
+    }
+
+    @Test func oldSnapshotsWithoutTheRecoveryFieldStillLoad() throws {
+        let current = try snapshot().encoded()
+        let length = (8..<12).reduce(UInt32(0)) { ($0 << 8) | UInt32(current[$1]) }
+        let object = try JSONSerialization.jsonObject(with: current.subdata(in: 12..<12+Int(length)))
+        var header = try #require(object as? [String: Any])
+        header.removeValue(forKey: "requiresFullUpdate")
+        let json = try JSONSerialization.data(withJSONObject: header)
+        var old = Data("LSBP001\n".utf8)
+        for shift in [24,16,8,0] { old.append(UInt8(truncatingIfNeeded: UInt32(json.count) >> shift)) }
+        old.append(json); old.append(current.subdata(in: 12+Int(length)..<current.count-32))
+        old.append(contentsOf: SHA256.hash(data: old))
+        let restored = try SafeBrowsingSnapshot(encoded: old)
+        #expect(restored.requiresFullUpdate == false)
+        #expect(restored.list.count == 2)
+        #expect(restored.isRecent(at: Date(timeIntervalSince1970: 1200)))
+    }
+
 }
