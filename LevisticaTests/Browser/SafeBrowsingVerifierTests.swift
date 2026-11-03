@@ -241,4 +241,65 @@ struct SafeBrowsingVerifierTests {
         #expect(await worker.status().refreshing == false)
     }
 
+    @Test(arguments: [SafeBrowsingAPIError.authentication, .quota, .transport])
+    func lookupFailureSurvivesListRefreshUntilAnActualLookupSucceeds(error: SafeBrowsingAPIError) async throws {
+        let full = try #require(hashes().first), clock = VerifierClock()
+        let remote = try VerifierRemote(prefix: Data(full.prefix(4))), worker = verifier(remote, clock: clock)
+        let expected: SafeBrowsingIssue = error == .authentication ? .authentication : error == .quota ? .quota : .lookupFailed
+        _ = await worker.refresh(); await remote.setFailure(error)
+        #expect(await worker.check(url) == .unavailable(expected))
+        _ = await worker.refresh()
+        #expect(await worker.status().lastIssue == expected)
+        #expect(await worker.check(url) == .unavailable(expected))
+        #expect(await remote.fetches.count == 3)
+        #expect(await remote.searches.count == 1)
+        clock.advance(1800); await remote.setFailure(nil)
+        _ = await worker.refresh()
+        #expect(await worker.status().lastIssue == expected)
+        #expect(await remote.fetches.count == 6)
+        #expect(await worker.check(url) == .noListedThreat)
+        #expect(await worker.status().lastIssue == nil)
+        #expect(await remote.searches.count == 2)
+    }
+
+    @Test func aFailedListKeepsItsIssueWhenOnlyOtherListsCanRefresh() async throws {
+        let full = try #require(hashes().first), clock = VerifierClock()
+        let remote = try VerifierRemote(prefix: Data(full.prefix(4))), worker = verifier(remote, clock: clock)
+        _ = await worker.refresh(); clock.advance(1800)
+        try await remote.replaceList("mw-4b", prefix: nil, badChecksum: true)
+        #expect(await worker.refresh().lastIssue == .lookupFailed)
+        clock.advance(60)
+        _ = await worker.refresh()
+        #expect(await worker.status().lastIssue == .lookupFailed)
+        #expect(await remote.fetches.count == 6)
+        #expect(await worker.check(url) == .noListedThreat)
+        #expect(await worker.status().lastIssue == .lookupFailed)
+        clock.advance(1740)
+        try await remote.replaceList("mw-4b", prefix: nil)
+        #expect(await worker.refresh().lastIssue == nil)
+    }
+
+    @Test func cacheWriteFailureRemainsUntilTheFailedFilesAreSaved() async throws {
+        let directory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent("verifier-cache-" + UUID().uuidString, isDirectory: true)
+        let disk = try SafeBrowsingListCache(directory: directory)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        let clock = VerifierClock(), remote = try VerifierRemote(prefix: nil)
+        let worker = SafeBrowsingVerifier(remote: remote, disk: disk,
+            loadSuffixes: { try SafeBrowsingPublicSuffixes(text: "example\n") },
+            date: { clock.date() }, instant: { clock.instant() })
+        #expect(await worker.refresh().lastIssue == .cacheUnavailable)
+        #expect(await worker.status().loadedLists == 3)
+        #expect(await worker.refresh().lastIssue == .cacheUnavailable)
+        #expect(await remote.fetches.count == 3)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        clock.advance(1800)
+        #expect(await worker.refresh().lastIssue == nil)
+        for name in SafeBrowsingPrefixList.names { #expect(try disk.load(name) != nil) }
+    }
+
 }
