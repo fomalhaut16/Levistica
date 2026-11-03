@@ -45,7 +45,11 @@ private actor VerifierRemote: SafeBrowsingRemote {
     var failure: SafeBrowsingAPIError?
     var delay: Duration = .zero
     var stopped = false
+    let searchStarted: AsyncStream<Void>
+    private let searchStartedSignal: AsyncStream<Void>.Continuation
     init(prefix: Data?, hash: Data? = nil, ttl: UInt64 = 300) throws {
+        let signal = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        searchStarted = signal.stream; searchStartedSignal = signal.continuation
         lists = try Dictionary(uniqueKeysWithValues: SafeBrowsingPrefixList.names.map {
             ($0, try VerifierFixtures.list($0, prefix: $0 == "se-4b" ? prefix : nil))
         })
@@ -56,10 +60,11 @@ private actor VerifierRemote: SafeBrowsingRemote {
     }
     func search(prefixes: [Data]) async throws -> SafeBrowsingHashResponse {
         searches.append(prefixes)
+        searchStartedSignal.yield(())
         if delay != .zero { try await Task.sleep(for: delay) }
         if let failure { throw failure }; return response
     }
-    func shutdown() { stopped = true }
+    func shutdown() { stopped = true; searchStartedSignal.finish() }
     func setFailure(_ value: SafeBrowsingAPIError?) { failure = value }
     func setDelay(_ value: Duration) { delay = value }
     func replaceList(_ name: String, prefix: Data?, badChecksum: Bool = false) throws {
@@ -218,11 +223,23 @@ struct SafeBrowsingVerifierTests {
 
     @Test func stoppingAnInFlightLookupCannotPublishAThreatAfterShutdown() async throws {
         let full = try #require(hashes().first)
-        let remote = try VerifierRemote(prefix: Data(full.prefix(4)), hash: full), worker = verifier(remote)
+        let remote = try VerifierRemote(prefix: Data(full.prefix(4)), hash: full), worker = verifier(remote, timeout: .seconds(30))
         _ = await worker.refresh(); await remote.setDelay(.seconds(10))
         let task = Task { await worker.check(url) }
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while await remote.searches.isEmpty, ContinuousClock.now < deadline { await Task.yield() }
+        let signal = remote.searchStarted
+        let observed = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await _ in signal { return true }
+                return false
+            }
+            group.addTask {
+                do { try await Task.sleep(for: .seconds(5)) } catch { return false }
+                return false
+            }
+            defer { group.cancelAll() }
+            return await group.next() ?? false
+        }
+        #expect(observed)
         #expect(await remote.searches.count == 1)
         await worker.stop()
         #expect(await task.value == .unavailable(.disabled))
