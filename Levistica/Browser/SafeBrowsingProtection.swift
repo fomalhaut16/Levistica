@@ -25,6 +25,33 @@ actor SafeBrowsingProtection {
     init(allowed: Bool, dependencies: Dependencies) {
         self.allowed = allowed; self.dependencies = dependencies
     }
+    // Creating this owner does not read a credential or create a directory.
+    // Debug, Profile, Measurement and ephemeral Release cannot use the normal key.
+    static func normalApplication() -> SafeBrowsingProtection {
+        #if DEBUG || LEVISTICA_PROFILE || LEVISTICA_MEASUREMENT
+        let allowed = false
+        #else
+        let environment = ProcessInfo.processInfo.environment
+        let allowed = permitsCredentials(bundleIdentifier: Bundle.main.bundleIdentifier,
+                                          ephemeral: environment["LEVISTICA_EPHEMERAL"],
+                                          sessionTestID: environment["LEVISTICA_SESSION_TEST_ID"])
+        #endif
+        return SafeBrowsingProtection(allowed: allowed, dependencies: .init(
+            readKey: { try SafeBrowsingKeychain.readAfterUserRequest() },
+            makeRemote: { try SafeBrowsingAPI(key: $0) },
+            makeCache: {
+                let root = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask,
+                                                       appropriateFor: nil, create: false)
+                return try SafeBrowsingListCache(directory: root.appendingPathComponent("Levistica/SafeBrowsing", isDirectory: true))
+            },
+            loadSuffixes: { try .bundled() }))
+    }
+
+    static func permitsCredentials(bundleIdentifier: String?, ephemeral: String?, sessionTestID: String?) -> Bool {
+        bundleIdentifier == "dev.fomalhaut16.Levistica"
+            && (ephemeral == nil || ephemeral == "0") && sessionTestID == nil
+    }
+
     deinit { refreshTask?.cancel() }
 
     func currentState() async -> State {

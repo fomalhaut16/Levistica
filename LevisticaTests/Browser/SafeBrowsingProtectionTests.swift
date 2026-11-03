@@ -119,4 +119,19 @@ struct SafeBrowsingProtectionTests {
         #expect(await remote.stopped)
     }
 
+
+    @Test func normalCredentialGateRejectsEveryIsolatedOrUnknownMode() async {
+        #expect(SafeBrowsingProtection.permitsCredentials(bundleIdentifier: "dev.fomalhaut16.Levistica", ephemeral: nil, sessionTestID: nil))
+        for identifier in [nil, "dev.fomalhaut16.Levistica.debug", "dev.fomalhaut16.Levistica.profile", "dev.fomalhaut16.Levistica.measurement"] {
+            #expect(SafeBrowsingProtection.permitsCredentials(bundleIdentifier: identifier, ephemeral: nil, sessionTestID: nil) == false)
+        }
+        for flag in ["1", "invalid"] {
+            #expect(SafeBrowsingProtection.permitsCredentials(bundleIdentifier: "dev.fomalhaut16.Levistica", ephemeral: flag, sessionTestID: nil) == false)
+        }
+        #expect(SafeBrowsingProtection.permitsCredentials(bundleIdentifier: "dev.fomalhaut16.Levistica", ephemeral: nil, sessionTestID: "fixture") == false)
+        // The test target is Debug, so even an explicit action cannot read the real key.
+        let normal = SafeBrowsingProtection.normalApplication()
+        #expect(await normal.startAfterUserRequest() == .unavailable(.disabled))
+    }
+
 }
