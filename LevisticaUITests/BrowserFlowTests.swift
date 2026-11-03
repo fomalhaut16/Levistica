@@ -4403,7 +4403,12 @@ final class BrowserFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func verifyNativeWindowFullscreen(horizontal: Bool) throws {
+    func testDarkNativeWindowFullscreenPreservesDraftAndRestoresLayout() throws {
+        try verifyNativeWindowFullscreen(horizontal: false, path: "fullscreen-dark", captureCheckpoint: true)
+    }
+
+    @MainActor
+    private func verifyNativeWindowFullscreen(horizontal: Bool, path: String = "fullscreen", captureCheckpoint: Bool = false) throws {
         continueAfterFailure = false
         executionTimeAllowance = 120
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["LEVISTICA_FIXTURE_URL"])
@@ -4439,7 +4444,7 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertFalse(fillsNativeScreen(window.frame))
         XCTAssertTrue(window.buttons["_XCUI:FullScreenWindow"].exists)
         print("Native fullscreen baseline: restoredFullscreen=\(startedFullscreen); window=\(window.frame)")
-        submit(base + "/fullscreen", in: app)
+        submit(base + "/" + path, in: app)
         if horizontal {
             app.buttons["toggleTabLayoutButton"].click()
             XCTAssertTrue(app.scrollViews["horizontalTabList"].waitForExistence(timeout: 5))
@@ -4454,7 +4459,20 @@ final class BrowserFlowTests: XCTestCase {
         XCTAssertTrue(attachWindowImage(app, name: "native-fullscreen-before", knownFrame: before))
         let fullscreenButton = window.buttons["_XCUI:FullScreenWindow"]
         XCTAssertTrue(fullscreenButton.exists)
-        fullscreenButton.click()
+        if captureCheckpoint {
+            let checkpoint = "Native fullscreen capture checkpoint uptime=\(ProcessInfo.processInfo.systemUptime)\n"
+            FileHandle.standardOutput.write(Data(checkpoint.utf8))
+            let captureSetup = expectation(description: "Window-only capture setup interval")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 25) { captureSetup.fulfill() }
+            wait(for: [captureSetup], timeout: 26)
+            let click = "Native fullscreen action requested uptime=\(ProcessInfo.processInfo.systemUptime)\n"
+            FileHandle.standardOutput.write(Data(click.utf8))
+            if !fillsNativeScreen(window.frame) {
+                app.typeKey("f", modifierFlags: [.control, .command])
+            }
+        } else {
+            fullscreenButton.click()
+        }
         let fillsScreen = expectation(for: NSPredicate { _, _ in
             let frame = window.frame
             return abs(frame.width - screen.frame.width) <= 2
@@ -4483,7 +4501,7 @@ final class BrowserFlowTests: XCTestCase {
         }, evaluatedWith: nil)
         wait(for: [restored], timeout: 10)
         XCTAssertEqual(draft.value as? String, "synthetic fullscreen draft")
-        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/fullscreen")
+        XCTAssertEqual(app.textFields["addressField"].value as? String, base + "/" + path)
         XCTAssertTrue(app.webViews.staticTexts["windowed"].exists)
         // Move away from the titlebar control and dismiss its hover popover.
         // A usable restored page must accept focus without losing the draft.
