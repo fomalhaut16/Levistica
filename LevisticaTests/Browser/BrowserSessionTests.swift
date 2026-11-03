@@ -968,6 +968,36 @@ struct BrowserSessionTests {
         #expect(session.loadedPageCount == 0)
     }
 
+    @Test func closeAndQuitIgnoreResolvedInputActivity() async throws {
+        let session = BrowserSession(dataStore: .nonPersistent())
+        let tab = session.activeTab
+        let runtime = PageRuntime(dataStore: .nonPersistent())
+        tab.page = runtime
+        defer { runtime.stop() }
+        runtime.webView.loadSimulatedRequest(URLRequest(url: URL(string: "https://fixture.example/")!),
+            responseHTML: "<title>Resolved input fixture</title>")
+        let deadline = ContinuousClock.now + .seconds(10)
+        while runtime.webView.title != "Resolved input fixture", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(runtime.webView.title == "Resolved input fixture")
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            runtime.webView.evaluateJavaScript(
+                "window.webkit.messageHandlers.levisticaInputActivity.postMessage({frame:'fixture',revision:1,pending:false}); true",
+                in: nil, in: .world(name: "LevisticaInputActivity")) { result in
+                    continuation.resume(with: result.map { _ in () })
+                }
+        }
+        let notified = ContinuousClock.now + .seconds(3)
+        while !runtime.inputGuard.hasEditedInput, ContinuousClock.now < notified { await Task.yield() }
+        try #require(runtime.inputGuard.hasEditedInput)
+        // Stop before any modal call if the regression returns.
+        try #require(session.editedTabCount == 0)
+        #expect(session.confirmEditedInputForQuit())
+        session.closeTab(tab.id)
+        #expect(session.tabs.contains { $0.id == tab.id } == false)
+    }
+
     @Test func selectionKeepsTheSameRuntimeAndWebView() {
         let session = BrowserSession(dataStore: .nonPersistent())
         let original = session.activeTab

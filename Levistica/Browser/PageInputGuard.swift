@@ -6,6 +6,7 @@ import WebKit
 final class PageInputGuard: NSObject, WKScriptMessageHandler {
     private var activity = PageInputActivityState()
     var hasEditedInput: Bool { activity.hasEditedInput }
+    var hasPendingInput: Bool { activity.hasPendingInput }
     var needsDepartureConfirmation: Bool { activity.needsDepartureConfirmation }
     func approveDeparture() { activity.approveDeparture() }
     func cancelDepartureApproval() { activity.cancelDepartureApproval() }
@@ -160,7 +161,7 @@ final class PageInputGuard: NSObject, WKScriptMessageHandler {
     }
 }
 
-// Input activity protects close/sleep conservatively. Navigation warnings use
+// Historical activity protects sleep conservatively. Close and navigation use
 // pending edits; accepting one departure covers delegate re-entry until a new
 // trusted edit, commit, cancellation, or failed navigation.
 struct PageInputActivityState {
@@ -168,7 +169,8 @@ struct PageInputActivityState {
     private var frames: [String: (revision: Int, pending: Bool)] = [:]
     private var approved = false
     private var overflowPending = false
-    var needsDepartureConfirmation: Bool { !approved && (overflowPending || frames.values.contains { $0.pending }) }
+    var hasPendingInput: Bool { overflowPending || frames.values.contains { $0.pending } }
+    var needsDepartureConfirmation: Bool { !approved && hasPendingInput }
 
     mutating func receive(frame: String, revision: Int, pending: Bool) {
         guard !frame.isEmpty, frame.utf8.count <= 64, revision >= 0, !pending || revision > 0 else { return }
