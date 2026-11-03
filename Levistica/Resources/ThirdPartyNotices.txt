@@ -1,0 +1,8 @@
+Public Suffix List
+https://publicsuffix.org/list/public_suffix_list.dat
+Version: 2026-10-31_14-17-28_UTC
+Commit: 73f8cc701c084fe07d888ec552b2f0b53281a674
+Copyright: the Public Suffix List contributors.
+License: Mozilla Public License, version 2.0; see MPL-2.0.txt.
+The unmodified source data is included as public_suffix_list.dat.
+This application does not contact publicsuffix.org at runtime.

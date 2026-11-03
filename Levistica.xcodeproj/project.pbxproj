@@ -5,6 +5,16 @@
 	objectVersion = "56";
 	archiveVersion = "1";
 	objects = {
+		80A31EC9891B7B2431B92CAF = { isa = PBXFileReference; path = "Levistica/Resources/ThirdPartyNotices.txt"; lastKnownFileType = text; sourceTree = "<group>"; };
+		CCFC9CD593C1A4BF854BD856 = { isa = PBXBuildFile; fileRef = 80A31EC9891B7B2431B92CAF; };
+		8DCBA5338C02BB947522654C = { isa = PBXFileReference; path = "Levistica/Resources/MPL-2.0.txt"; lastKnownFileType = text; sourceTree = "<group>"; };
+		AD7A0151D8768F819D0E33FE = { isa = PBXBuildFile; fileRef = 8DCBA5338C02BB947522654C; };
+		7FAB2BAE4569410C975F07CB = { isa = PBXFileReference; path = "Levistica/Resources/public_suffix_list.dat"; lastKnownFileType = text; sourceTree = "<group>"; };
+		D93F2C8EB9ED8982E98DD924 = { isa = PBXBuildFile; fileRef = 7FAB2BAE4569410C975F07CB; };
+		99D2D1E702D549228F26E072 = { isa = PBXFileReference; path = "LevisticaTests/Browser/SafeBrowsingURLTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		6DF45DBC00050E55C271FF50 = { isa = PBXBuildFile; fileRef = 99D2D1E702D549228F26E072; };
+		568C0BB3670B8762C36EACD2 = { isa = PBXFileReference; path = "Levistica/Browser/SafeBrowsingURL.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		D9F271D0EF95F2E4C535F2B1 = { isa = PBXBuildFile; fileRef = 568C0BB3670B8762C36EACD2; };
 		9692E761779E62F8C37F5F3A = { isa = PBXFileReference; path = "LevisticaTests/Browser/SafeBrowsingPrefixListTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
 		78455B005D560A79741B34EC = { isa = PBXBuildFile; fileRef = 9692E761779E62F8C37F5F3A; };
 		C8904E9CB41D9C74528007BC = { isa = PBXFileReference; path = "Levistica/Browser/SafeBrowsingPrefixList.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
@@ -358,6 +368,7 @@
 			isa = "PBXSourcesBuildPhase";
 			buildActionMask = "2147483647";
 			files = (
+				D9F271D0EF95F2E4C535F2B1,
 				9006A699FC48F3CE40D66C8F,
 				653B39B15A07E30A15E1C2F1,
 				74D34A8746C151C4448FB2AB,
@@ -443,6 +454,10 @@
 			name = "Levistica";
 			children = (
 				6FB71BAAC7037DC226ED70FA,
+				80A31EC9891B7B2431B92CAF,
+				8DCBA5338C02BB947522654C,
+				7FAB2BAE4569410C975F07CB,
+				568C0BB3670B8762C36EACD2,
 				C8904E9CB41D9C74528007BC,
 				B3CA9B22BCB7911B8CB9B9EC,
 				71C1548D70B371DAA0D0456D,
@@ -497,6 +512,7 @@
 			children = (
 				1A49C9660D7D960C1A3DE762,
 				38A790C253E08FBE11D8D09F,
+				99D2D1E702D549228F26E072,
 				9692E761779E62F8C37F5F3A,
 				BF7653BCF5F4057F06C951FC,
 				AD7088C74305D62C68AD80D3,
@@ -517,6 +533,9 @@
 			isa = "PBXResourcesBuildPhase";
 			buildActionMask = "2147483647";
 			files = (
+				CCFC9CD593C1A4BF854BD856,
+				AD7A0151D8768F819D0E33FE,
+				D93F2C8EB9ED8982E98DD924,
 			);
 			runOnlyForDeploymentPostprocessing = "0";
 		};
@@ -716,6 +735,7 @@
 			isa = "PBXSourcesBuildPhase";
 			buildActionMask = "2147483647";
 			files = (
+				6DF45DBC00050E55C271FF50,
 				DA78AB7BBF9358C45F4F5697,
 				B14E2B4D7C15ECC76B963DAB,
 				78455B005D560A79741B34EC,
