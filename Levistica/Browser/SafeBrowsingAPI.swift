@@ -41,6 +41,8 @@ actor SafeBrowsingAPI {
 
     deinit { session.invalidateAndCancel() }
 
+    func shutdown() { session.invalidateAndCancel() }
+
     func fetchList(_ name: String, version: Data? = nil) async throws -> SafeBrowsingListResponse {
         guard SafeBrowsingPrefixList.names.contains(name), (version?.count ?? 0) <= 1024 else {
             throw SafeBrowsingAPIError.invalidRequest
