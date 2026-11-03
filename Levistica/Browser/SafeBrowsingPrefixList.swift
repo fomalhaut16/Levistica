@@ -122,6 +122,29 @@ struct SafeBrowsingPrefixList: Sendable {
     private let prefixes: [UInt32]
     private let checksum: Data
     var count: Int { prefixes.count }
+    var prefixChecksum: Data { checksum }
+
+    func encodedPrefixes() -> Data {
+        var data = Data(); data.reserveCapacity(prefixes.count * 4)
+        for prefix in prefixes {
+            for shift in [24, 16, 8, 0] { data.append(UInt8(truncatingIfNeeded: prefix >> shift)) }
+        }
+        return data
+    }
+
+    static func restored(name: String, version: Data, prefixBytes: Data, checksum: Data) throws -> Self {
+        guard names.contains(name), !version.isEmpty, version.count <= 1024,
+              prefixBytes.count.isMultiple(of: 4), prefixBytes.count / 4 <= maximumEntries,
+              checksum.count == 32 else { throw SafeBrowsingListError.invalidUpdate }
+        guard Data(SHA256.hash(data: prefixBytes)) == checksum else { throw SafeBrowsingListError.checksumMismatch }
+        var prefixes: [UInt32] = []; prefixes.reserveCapacity(prefixBytes.count / 4)
+        for start in stride(from: prefixBytes.startIndex, to: prefixBytes.endIndex, by: 4) {
+            let value = (0..<4).reduce(UInt32(0)) { ($0 << 8) | UInt32(prefixBytes[start + $1]) }
+            if let previous = prefixes.last, previous >= value { throw SafeBrowsingListError.notIncreasing }
+            prefixes.append(value)
+        }
+        return Self(name: name, version: version, prefixes: prefixes, checksum: checksum)
+    }
 
     func contains(_ prefix: UInt32) -> Bool {
         var low = 0, high = prefixes.count
