@@ -981,9 +981,13 @@ struct BrowserSessionTests {
             try await Task.sleep(for: .milliseconds(20))
         }
         try #require(runtime.webView.title == "Resolved input fixture")
-        _ = try await runtime.webView.evaluateJavaScript(
-            "window.webkit.messageHandlers.levisticaInputActivity.postMessage({frame:'fixture',revision:1,pending:false})",
-            in: nil, in: .world(name: "LevisticaInputActivity"))
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            runtime.webView.evaluateJavaScript(
+                "window.webkit.messageHandlers.levisticaInputActivity.postMessage({frame:'fixture',revision:1,pending:false}); true",
+                in: nil, in: .world(name: "LevisticaInputActivity")) { result in
+                    continuation.resume(with: result.map { _ in () })
+                }
+        }
         let notified = ContinuousClock.now + .seconds(3)
         while !runtime.inputGuard.hasEditedInput, ContinuousClock.now < notified { await Task.yield() }
         try #require(runtime.inputGuard.hasEditedInput)
