@@ -641,6 +641,36 @@ struct PagePendingInputTests {
         #expect(js.exception == nil)
     }
 
+    @Test func resolvedEditsStopCloseWarningsWithoutErasingActivity() {
+        var state = PageInputActivityState()
+        state.receive(frame: "main", revision: 1, pending: true)
+        #expect(state.hasPendingInput)
+        state.approveDeparture()
+        // Approval belongs to a navigation, never to close or quit.
+        #expect(state.hasPendingInput)
+        #expect(state.needsDepartureConfirmation == false)
+        state.receive(frame: "child", revision: 1, pending: true)
+        state.receive(frame: "main", revision: 1, pending: false)
+        #expect(state.hasPendingInput)
+        state.receive(frame: "child", revision: 1, pending: false)
+        #expect(state.hasPendingInput == false)
+        #expect(state.hasEditedInput)
+        state.receive(frame: "main", revision: 2, pending: true)
+        #expect(state.hasPendingInput)
+    }
+
+    @Test func searchingDoesNotCreateACloseWarning() throws {
+        let js = try context()
+        js.evaluateScript("field.type='search';edit('query');")
+        let revision = try #require(js.evaluateScript("messages.at(-1).revision")?.toInt32())
+        let pending = try #require(js.evaluateScript("lastPending()")).toBool()
+        var state = PageInputActivityState()
+        state.receive(frame: "search", revision: Int(revision), pending: pending)
+        #expect(state.hasEditedInput)
+        #expect(state.hasPendingInput == false)
+        #expect(js.exception == nil)
+    }
+
     @Test func frameLimitFailsConservativelyWithoutDroppingProtection() {
         var state = PageInputActivityState()
         for index in 0..<128 { state.receive(frame: "frame-\(index)", revision: 0, pending: false) }
@@ -650,6 +680,7 @@ struct PagePendingInputTests {
         state.approveDeparture()
         #expect(state.needsDepartureConfirmation == false)
         state.receive(frame: "overflow", revision: 2, pending: true)
+        #expect(state.hasPendingInput)
         #expect(state.needsDepartureConfirmation)
     }
 

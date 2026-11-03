@@ -635,7 +635,7 @@ final class BrowserSession {
         persistSession()
     }
 
-    var editedTabCount: Int { tabs.filter { $0.page?.inputGuard.hasEditedInput == true }.count }
+    var editedTabCount: Int { tabs.filter { $0.page?.inputGuard.hasPendingInput == true }.count }
 
     func confirmEditedInputForQuit() -> Bool {
         let count = editedTabCount
@@ -656,7 +656,7 @@ final class BrowserSession {
             downloads.notice = "ダウンロード中です。転送を取り消すか、完了してからタブを閉じてください。"
             return
         }
-        if confirmEditedInput, tab.page?.inputGuard.hasEditedInput == true {
+        if confirmEditedInput, tab.page?.inputGuard.hasPendingInput == true {
             selectedID = id
             guard confirmInputDiscard(tabCount: 1, quitting: false, context: tab.displayTitle) else {
                 if tabs.contains(where: { $0 === tab }) { selectedID = id; persistSession() }
