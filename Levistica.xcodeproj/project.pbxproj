@@ -5,6 +5,10 @@
 	objectVersion = "56";
 	archiveVersion = "1";
 	objects = {
+		9692E761779E62F8C37F5F3A = { isa = PBXFileReference; path = "LevisticaTests/Browser/SafeBrowsingPrefixListTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		78455B005D560A79741B34EC = { isa = PBXBuildFile; fileRef = 9692E761779E62F8C37F5F3A; };
+		C8904E9CB41D9C74528007BC = { isa = PBXFileReference; path = "Levistica/Browser/SafeBrowsingPrefixList.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		653B39B15A07E30A15E1C2F1 = { isa = PBXBuildFile; fileRef = C8904E9CB41D9C74528007BC; };
 		1A49C9660D7D960C1A3DE762 = { isa = PBXFileReference; path = "LevisticaTests/Stores/BookmarkImportStoreTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
 		DA78AB7BBF9358C45F4F5697 = { isa = PBXBuildFile; fileRef = 1A49C9660D7D960C1A3DE762; };
 		38A790C253E08FBE11D8D09F = { isa = PBXFileReference; path = "LevisticaTests/Browser/BookmarkHTMLImportTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
@@ -355,6 +359,7 @@
 			buildActionMask = "2147483647";
 			files = (
 				9006A699FC48F3CE40D66C8F,
+				653B39B15A07E30A15E1C2F1,
 				74D34A8746C151C4448FB2AB,
 				492B2DD7EB42A857302B17A5,
 				04A1139D2C0128F848875553,
@@ -438,6 +443,7 @@
 			name = "Levistica";
 			children = (
 				6FB71BAAC7037DC226ED70FA,
+				C8904E9CB41D9C74528007BC,
 				B3CA9B22BCB7911B8CB9B9EC,
 				71C1548D70B371DAA0D0456D,
 				FD852BD7C6E6FDEF84743F16,
@@ -491,6 +497,7 @@
 			children = (
 				1A49C9660D7D960C1A3DE762,
 				38A790C253E08FBE11D8D09F,
+				9692E761779E62F8C37F5F3A,
 				BF7653BCF5F4057F06C951FC,
 				AD7088C74305D62C68AD80D3,
 				F33CDB952F8497650CE70C03,
@@ -711,6 +718,7 @@
 			files = (
 				DA78AB7BBF9358C45F4F5697,
 				B14E2B4D7C15ECC76B963DAB,
+				78455B005D560A79741B34EC,
 				1F6DF2B09CE07E7B7D73B27C,
 				1DC57427B849C429C39A80C8,
 				9EEF9369977FADEA57406577,
