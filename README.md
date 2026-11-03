@@ -44,6 +44,7 @@ CONFIGURATION=Release ./script/build_and_run.sh --install-package-local PACKAGE_
 | ブックマークへ追加 | Cmd-D |
 | 履歴 | Cmd-Y |
 | PDFを開く | Cmd-O |
+| 全画面表示を切り替える | Ctrl-Cmd-F |
 | 設定 | Cmd-, |
 | 終了 | Cmd-Q |
 
