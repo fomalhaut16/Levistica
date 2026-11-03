@@ -4424,7 +4424,7 @@ final class BrowserFlowTests: XCTestCase {
         // Establish a windowed baseline before looking for the titlebar control.
         let startedFullscreen = fillsNativeScreen(window.frame)
         if startedFullscreen {
-            app.typeKey(.escape, modifierFlags: [])
+            app.typeKey("f", modifierFlags: [.control, .command])
             app.activate()
             let windowed = expectation(for: NSPredicate { _, _ in
                 !fillsNativeScreen(window.frame)
@@ -4432,6 +4432,7 @@ final class BrowserFlowTests: XCTestCase {
             wait(for: [windowed], timeout: 10)
         }
         XCTAssertFalse(fillsNativeScreen(window.frame))
+        XCTAssertTrue(window.buttons["_XCUI:FullScreenWindow"].exists)
         print("Native fullscreen baseline: restoredFullscreen=\(startedFullscreen); window=\(window.frame)")
         submit(base + "/fullscreen", in: app)
         if horizontal {
