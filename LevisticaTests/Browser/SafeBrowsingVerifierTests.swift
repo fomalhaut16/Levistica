@@ -289,7 +289,8 @@ struct SafeBrowsingVerifierTests {
         _ = await worker.refresh()
         #expect(await worker.status().lastIssue == .lookupFailed)
         #expect(await remote.fetches.count == 6)
-        #expect(await worker.check(url) == .noListedThreat)
+        #expect(await worker.check(url) == .unavailable(.listsUnavailable))
+        #expect(await remote.searches.count == 1)
         #expect(await worker.status().lastIssue == .lookupFailed)
         clock.advance(1740)
         try await remote.replaceList("mw-4b", prefix: nil)
@@ -317,6 +318,45 @@ struct SafeBrowsingVerifierTests {
         clock.advance(1800)
         #expect(await worker.refresh().lastIssue == nil)
         for name in SafeBrowsingPrefixList.names { #expect(try disk.load(name) != nil) }
+    }
+
+
+    @Test func restartKeepsTheFullUpdateRequirementAndServerWait() async throws {
+        let directory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent("verifier-restart-" + UUID().uuidString, isDirectory: true)
+        let disk = try SafeBrowsingListCache(directory: directory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let clock = VerifierClock(), firstRemote = try VerifierRemote(prefix: nil)
+        func worker(_ remote: VerifierRemote) -> SafeBrowsingVerifier {
+            SafeBrowsingVerifier(remote: remote, disk: disk,
+                loadSuffixes: { try SafeBrowsingPublicSuffixes(text: "example\n") },
+                date: { clock.date() }, instant: { clock.instant() })
+        }
+        let first = worker(firstRemote)
+        _ = await first.refresh()
+        let original = try disk.load("mw-4b")
+        let originalDate = try #require(original?.updatedAt)
+        clock.advance(1800)
+        try await firstRemote.replaceList("mw-4b", prefix: nil, badChecksum: true)
+        #expect(await first.refresh().lastIssue == .lookupFailed)
+        await first.stop()
+        let savedValue = try disk.load("mw-4b")
+        let saved = try #require(savedValue)
+        #expect(saved.requiresFullUpdate && saved.updatedAt == originalDate)
+        let secondRemote = try VerifierRemote(prefix: nil), second = worker(secondRemote)
+        #expect(await second.status().recentLists == 2)
+        #expect(await second.status().lastIssue == .lookupFailed)
+        _ = await second.refresh()
+        #expect(await secondRemote.fetches.contains { $0.0 == "mw-4b" } == false)
+        #expect(await second.check(url) == .unavailable(.listsUnavailable))
+        clock.advance(1800)
+        #expect(await second.refresh().lastIssue == nil)
+        let requests = await secondRemote.fetches
+        let reset = try #require(requests.first { $0.0 == "mw-4b" })
+        #expect(reset.1 == nil)
+        let recovered = try disk.load("mw-4b")
+        #expect(recovered?.requiresFullUpdate == false)
+        await second.stop()
     }
 
 }

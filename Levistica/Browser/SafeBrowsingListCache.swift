@@ -8,6 +8,7 @@ struct SafeBrowsingSnapshot: Sendable {
     let list: SafeBrowsingPrefixList
     let updatedAt: Date
     let refreshAfter: Date
+    let requiresFullUpdate: Bool
     private static let magic = Data("LSBP001\n".utf8)
     static let maximumBytes = SafeBrowsingPrefixList.maximumEntries * 4 + 16_384 + 64
 
@@ -18,18 +19,19 @@ struct SafeBrowsingSnapshot: Sendable {
         let checksum: Data
         let updatedAt: Date
         let refreshAfter: Date
+        let requiresFullUpdate: Bool?
     }
 
     // Freshness is separate from the server's earliest next-request time.
     func isRecent(at now: Date, maximumAge: TimeInterval = 86_400) -> Bool {
         let age = now.timeIntervalSince(updatedAt)
-        return maximumAge.isFinite && maximumAge >= 0 && age >= 0 && age <= maximumAge
+        return !requiresFullUpdate && maximumAge.isFinite && maximumAge >= 0 && age >= 0 && age <= maximumAge
     }
 
     func encoded() throws -> Data {
         try Self.checkDates(updatedAt, refreshAfter)
         let header = Header(name: list.name, version: list.version, count: list.count,
-                            checksum: list.prefixChecksum, updatedAt: updatedAt, refreshAfter: refreshAfter)
+                            checksum: list.prefixChecksum, updatedAt: updatedAt, refreshAfter: refreshAfter, requiresFullUpdate: requiresFullUpdate)
         // Date's own reference-date encoding avoids a lossy epoch conversion.
         let encoder = JSONEncoder()
         let metadata = try encoder.encode(header)
@@ -42,9 +44,10 @@ struct SafeBrowsingSnapshot: Sendable {
         return data
     }
 
-    init(list: SafeBrowsingPrefixList, updatedAt: Date, refreshAfter: Date) throws {
+    init(list: SafeBrowsingPrefixList, updatedAt: Date, refreshAfter: Date, requiresFullUpdate: Bool = false) throws {
         try Self.checkDates(updatedAt, refreshAfter)
         self.list = list; self.updatedAt = updatedAt; self.refreshAfter = refreshAfter
+        self.requiresFullUpdate = requiresFullUpdate
     }
 
     init(encoded input: Data) throws {
@@ -68,6 +71,7 @@ struct SafeBrowsingSnapshot: Sendable {
         list = try SafeBrowsingPrefixList.restored(name: header.name, version: header.version,
                                                  prefixBytes: data.subdata(in: prefixesStart..<body.count), checksum: header.checksum)
         updatedAt = header.updatedAt; refreshAfter = header.refreshAfter
+        requiresFullUpdate = header.requiresFullUpdate ?? false
     }
 
     private static func checkDates(_ updated: Date, _ refresh: Date) throws {

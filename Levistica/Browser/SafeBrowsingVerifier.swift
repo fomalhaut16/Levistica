@@ -83,6 +83,7 @@ actor SafeBrowsingVerifier {
             if let deadline = nextListRequest[name] {
                 if instant() < deadline { continue }
             } else if let stored = lists[name], date() < stored.refreshAfter { continue }
+            var receivedWait: Date?
             do {
                 let version = requireFullRefresh.contains(name) ? nil : lists[name]?.list.version
                 let response = try await remote.fetchList(name, version: version)
@@ -90,6 +91,7 @@ actor SafeBrowsingVerifier {
                 guard response.update.name == name else { throw SafeBrowsingAPIError.invalidResponse }
                 // A rejected update does not waive the server's request interval.
                 nextListRequest[name] = instant().advanced(by: .seconds(response.minimumWait))
+                receivedWait = date().addingTimeInterval(response.minimumWait)
                 let list = try SafeBrowsingPrefixList.applying(response.update, to: lists[name]?.list)
                 let updated = date()
                 let snapshot = try SafeBrowsingSnapshot(list: list, updatedAt: updated,
@@ -106,6 +108,7 @@ actor SafeBrowsingVerifier {
                 if stopped || Task.isCancelled { break }
                 if let failure = error as? SafeBrowsingListError, failure == .checksumMismatch {
                     requireFullRefresh.insert(name)
+                    if let receivedWait { preserveFullUpdateRequirement(name, until: receivedWait) }
                 }
                 let failure = Self.classify(error)
                 listIssues[name] = failure
@@ -169,10 +172,27 @@ actor SafeBrowsingVerifier {
         catch { return }
         if let disk {
             for name in SafeBrowsingPrefixList.names.sorted() {
-                do { lists[name] = try disk.load(name) }
-                catch { cacheFailures.insert(name) }
+                do {
+                    lists[name] = try disk.load(name)
+                    if lists[name]?.requiresFullUpdate == true {
+                        requireFullRefresh.insert(name)
+                        listIssues[name] = .lookupFailed
+                    }
+                } catch { cacheFailures.insert(name) }
             }
         }
+    }
+
+    private func preserveFullUpdateRequirement(_ name: String, until nextRequest: Date) {
+        // Retain verified prefixes and their original age. A rejected update
+        // never becomes fresh data; a restart must still request a full list.
+        guard let previous = lists[name] else { return } // No saved version means full already.
+        do {
+            let pending = try SafeBrowsingSnapshot(list: previous.list, updatedAt: previous.updatedAt,
+                refreshAfter: max(previous.refreshAfter, nextRequest), requiresFullUpdate: true)
+            lists[name] = pending
+            if let disk { try disk.save(pending) }
+        } catch { cacheFailures.insert(name) }
     }
 
     // A successful operation clears only its own failure. Skipping a request
