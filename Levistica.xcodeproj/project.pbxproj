@@ -5,6 +5,10 @@
 	objectVersion = "56";
 	archiveVersion = "1";
 	objects = {
+		7BB691CEC30031104218404E = { isa = PBXFileReference; path = "LevisticaTests/Browser/SafeBrowsingProtectionTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		2DF12B9F74B48A06D7A6C01A = { isa = PBXBuildFile; fileRef = 7BB691CEC30031104218404E; };
+		A11E38E9ABD1ABF86833EA53 = { isa = PBXFileReference; path = "Levistica/Browser/SafeBrowsingProtection.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+		2121F629EA12E8077D255092 = { isa = PBXBuildFile; fileRef = A11E38E9ABD1ABF86833EA53; };
 		38AF15BE0B4D6E1D7C2C3EEC = { isa = PBXFileReference; path = "LevisticaTests/Browser/SafeBrowsingKeychainTests.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
 		91162E06E7DB1189DD1BA96B = { isa = PBXBuildFile; fileRef = 38AF15BE0B4D6E1D7C2C3EEC; };
 		C03B88537246ABDCC87F2BFB = { isa = PBXFileReference; path = "Levistica/Browser/SafeBrowsingKeychain.swift"; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
@@ -390,6 +394,7 @@
 			files = (
 				D9F271D0EF95F2E4C535F2B1,
 				9006A699FC48F3CE40D66C8F,
+				2121F629EA12E8077D255092,
 				069963092315FD46BF6F33E8,
 				5CC5C3F3C802986488E7C1E4,
 				B94E55844230C7A602EB4BB4,
@@ -479,6 +484,7 @@
 			name = "Levistica";
 			children = (
 				6FB71BAAC7037DC226ED70FA,
+				A11E38E9ABD1ABF86833EA53,
 				C03B88537246ABDCC87F2BFB,
 				57BF737A4751D45754C31BFD,
 				11F80E42F1AC99034A92BC81,
@@ -542,6 +548,7 @@
 			children = (
 				1A49C9660D7D960C1A3DE762,
 				38A790C253E08FBE11D8D09F,
+				7BB691CEC30031104218404E,
 				38AF15BE0B4D6E1D7C2C3EEC,
 				9DE53011E62085E71F0444B7,
 				C34381E5DBBC1F3801A3DC23,
@@ -773,6 +780,7 @@
 				6DF45DBC00050E55C271FF50,
 				DA78AB7BBF9358C45F4F5697,
 				B14E2B4D7C15ECC76B963DAB,
+				2DF12B9F74B48A06D7A6C01A,
 				91162E06E7DB1189DD1BA96B,
 				0B9DFA925BF282914FF2FAE5,
 				E0C912056A05A3DC2336F9D3,
