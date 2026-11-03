@@ -19,6 +19,11 @@ struct SafeBrowsingRice32: Decodable, Sendable {
         case firstValue, riceParameter, entriesCount, encodedData
     }
 
+    init(firstValue: UInt32, riceParameter: Int, entriesCount: Int, encodedData: Data) {
+        self.firstValue = firstValue; self.riceParameter = riceParameter
+        self.entriesCount = entriesCount; self.encodedData = encodedData
+    }
+
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         firstValue = try c.decodeIfPresent(UInt32.self, forKey: .firstValue) ?? 0
@@ -87,6 +92,13 @@ struct SafeBrowsingPrefixUpdate: Decodable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case name, version, partialUpdate, compressedRemovals, additionsFourBytes, sha256Checksum
         case additionsEightBytes, additionsSixteenBytes, additionsThirtyTwoBytes
+    }
+
+    init(name: String, version: Data, partialUpdate: Bool, compressedRemovals: SafeBrowsingRice32?,
+         additionsFourBytes: SafeBrowsingRice32?, sha256Checksum: Data?) {
+        self.name = name; self.version = version; self.partialUpdate = partialUpdate
+        self.compressedRemovals = compressedRemovals; self.additionsFourBytes = additionsFourBytes
+        self.sha256Checksum = sha256Checksum
     }
 
     init(from decoder: any Decoder) throws {
