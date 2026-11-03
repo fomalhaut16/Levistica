@@ -44,7 +44,9 @@ actor SafeBrowsingVerifier {
     private var prepared = false
     private var stopped = false
     private var refreshing = false
-    private var issue: SafeBrowsingIssue?
+    private var listIssues: [String: SafeBrowsingIssue] = [:]
+    private var lookupIssue: SafeBrowsingIssue?
+    private var cacheFailures = Set<String>()
     private var lists: [String: SafeBrowsingSnapshot] = [:]
     private var nextListRequest: [String: ContinuousClock.Instant] = [:]
     private var requireFullRefresh = Set<String>()
@@ -65,7 +67,7 @@ actor SafeBrowsingVerifier {
     func status() -> Status {
         prepare()
         return Status(loadedLists: lists.count, recentLists: lists.values.filter { usable($0) }.count,
-                      refreshing: refreshing, lastIssue: issue)
+                      refreshing: refreshing, lastIssue: lastIssue)
     }
 
     // The owner schedules refreshes. A page check never starts a bulk download.
@@ -75,7 +77,6 @@ actor SafeBrowsingVerifier {
         guard !stopped, suffixes != nil, !refreshing,
               refreshBackoff.map({ instant() >= $0 }) ?? true else { return status() }
         refreshing = true
-        issue = nil
         defer { refreshing = false }
         for name in SafeBrowsingPrefixList.names.sorted() {
             if stopped || Task.isCancelled { break }
@@ -95,20 +96,22 @@ actor SafeBrowsingVerifier {
                                                        refreshAfter: updated.addingTimeInterval(response.minimumWait))
                 lists[name] = snapshot
                 requireFullRefresh.remove(name)
+                listIssues[name] = nil
                 nextListRequest[name] = instant().advanced(by: .seconds(response.minimumWait))
                 if let disk {
-                    do { try disk.save(snapshot) }
-                    catch { issue = .cacheUnavailable }
+                    do { try disk.save(snapshot); cacheFailures.remove(name) }
+                    catch { cacheFailures.insert(name) }
                 }
             } catch {
                 if stopped || Task.isCancelled { break }
                 if let failure = error as? SafeBrowsingListError, failure == .checksumMismatch {
                     requireFullRefresh.insert(name)
                 }
-                issue = Self.classify(error)
-                let wait: Double = issue == .authentication ? 1800 : issue == .quota ? 300 : 60
+                let failure = Self.classify(error)
+                listIssues[name] = failure
+                let wait: Double = failure == .authentication ? 1800 : failure == .quota ? 300 : 60
                 refreshBackoff = instant().advanced(by: .seconds(wait))
-                if issue == .authentication || issue == .quota { lookupBackoff = refreshBackoff }
+                if failure == .authentication || failure == .quota { lookupBackoff = refreshBackoff }
                 break
             }
         }
@@ -140,7 +143,7 @@ actor SafeBrowsingVerifier {
         if candidates.isEmpty { return allRecent ? .noListedThreat : .unavailable(.listsUnavailable) }
         let missing = candidates.filter { lookupCache[$0] == nil }
         if missing.isEmpty { return allRecent ? .noListedThreat : .unavailable(.listsUnavailable) }
-        if let deadline = lookupBackoff, now < deadline { return .unavailable(issue ?? .lookupFailed) }
+        if let deadline = lookupBackoff, now < deadline { return .unavailable(lastIssue ?? .lookupFailed) }
         do {
             let result = try await resolve(Set(missing))
             guard !stopped else { return .unavailable(.disabled) }
@@ -153,7 +156,7 @@ actor SafeBrowsingVerifier {
     }
 
     func stop() async {
-        stopped = true; issue = .disabled
+        stopped = true
         for task in pending.values { task.cancel() }
         pending.removeAll(); lookupCache.removeAll(); lists.removeAll()
         await remote.shutdown()
@@ -163,13 +166,25 @@ actor SafeBrowsingVerifier {
         guard !prepared, !stopped else { return }
         prepared = true
         do { suffixes = try loadSuffixes() }
-        catch { issue = .resources; return }
+        catch { return }
         if let disk {
             for name in SafeBrowsingPrefixList.names.sorted() {
                 do { lists[name] = try disk.load(name) }
-                catch { issue = .cacheUnavailable }
+                catch { cacheFailures.insert(name) }
             }
         }
+    }
+
+    // A successful operation clears only its own failure. Skipping a request
+    // because it is not due is not evidence that an earlier failure recovered.
+    private var lastIssue: SafeBrowsingIssue? {
+        if stopped { return .disabled }
+        if prepared, suffixes == nil { return .resources }
+        if let lookupIssue { return lookupIssue }
+        for name in SafeBrowsingPrefixList.names.sorted() {
+            if let failure = listIssues[name] { return failure }
+        }
+        return cacheFailures.isEmpty ? nil : .cacheUnavailable
     }
 
     private func usable(_ snapshot: SafeBrowsingSnapshot) -> Bool {
@@ -215,12 +230,13 @@ actor SafeBrowsingVerifier {
                     lookupCache[prefix] = CachedLookup(matches: result.response.matches.filter { Data($0.hash.prefix(4)) == prefix }, expires: expiry)
                 }
             }
-            if owner, (issue == .lookupFailed || issue == .authentication || issue == .quota || issue == .busy) { issue = nil }
+            if owner { lookupIssue = nil }
             return result.response
         } catch {
             if owner, !stopped {
-                issue = Self.classify(error)
-                let wait: Double = issue == .authentication ? 1800 : issue == .quota ? 300 : 60
+                let failure = Self.classify(error)
+                lookupIssue = failure
+                let wait: Double = failure == .authentication ? 1800 : failure == .quota ? 300 : 60
                 lookupBackoff = instant().advanced(by: .seconds(wait))
             }
             throw error
